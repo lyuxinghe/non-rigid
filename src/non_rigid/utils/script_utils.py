@@ -29,9 +29,10 @@ from non_rigid.models.tax3d import (
     DiffusionTransformerNetwork,
     SceneDisplacementModule,
     CrossDisplacementModule,
+    UpgradeCrossDisplacementModule,
 )
 
-from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule
+from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, UpgradeDataModule
 
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
@@ -91,7 +92,11 @@ def create_model(cfg):
     elif cfg.model.name == "regression":
         network_fn = RegressionNetwork
         module_fn = RegressionModule
-
+    elif cfg.model.name == "upgrade":
+        network_fn = DiffusionTransformerNetwork
+        # module_fn = Tax3dModule
+        module_fn = UpgradeCrossDisplacementModule
+        
     # create network and model
     network = network_fn(model_cfg=cfg.model)
     model = module_fn(network=network, cfg=cfg)
@@ -108,7 +113,10 @@ def create_datamodule(cfg):
 
     # check dataset name
     if cfg.dataset.name == "proc_cloth":
-        datamodule_fn = ProcClothFlowDataModule
+        if cfg.model.name == "upgrade":
+            datamodule_fn = UpgradeDataModule
+        else:
+            datamodule_fn = ProcClothFlowDataModule
     else:
         raise ValueError(f"Invalid dataset name: {cfg.dataset.name}")
 

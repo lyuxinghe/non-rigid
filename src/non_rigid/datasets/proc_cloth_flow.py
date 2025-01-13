@@ -544,7 +544,169 @@ class DeformablePlacementDataset(data.Dataset):
         return item
 
 
+class UpgradeDeformablePlacementDataset(data.Dataset):
+    def __init__(self, root, dataset_cfg, split):
+        super().__init__()
+        self.root = root
+        self.split = split
+        self.dataset_dir = self.root / self.split
+        self.num_demos = int(len(os.listdir(self.dataset_dir)))
+        print(self.num_demos)
+        self.dataset_cfg = dataset_cfg
 
+        # determining dataset size - if not specified, use all demos in directory once
+        size = self.dataset_cfg.train_size if "train" in self.split else self.dataset_cfg.val_size
+        if size is not None:
+            self.size = size
+        else:
+            self.size = self.num_demos
+
+        # setting sample sizes
+        self.scene = self.dataset_cfg.scene
+        self.sample_size_action = self.dataset_cfg.sample_size_action
+        self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
+        self.world_frame = self.dataset_cfg.world_frame
+
+    def __len__(self):
+        return self.size
+    
+    def __getitem__(self, index):
+        # loop over the dataset multiple times - allows for arbitrary dataset and batch size
+        file_index = index % self.num_demos
+        # load data
+        demo = np.load(self.dataset_dir / f"demo_{file_index}.npz", allow_pickle=True)
+        action_pc = torch.as_tensor(demo["action_pc"]).float()
+        action_seg = torch.as_tensor(demo["action_seg"]).int()
+        anchor_pc = torch.as_tensor(demo["anchor_pc"]).float()
+        anchor_seg = torch.as_tensor(demo["anchor_seg"]).int()
+        flow = torch.as_tensor(demo["flow"]).float()
+
+        # initializing item with source-dependent fields
+        if self.dataset_cfg.source == "dedo":
+            # speed_factor = torch.as_tensor(demo["speed_factor"]).float()
+            # rot = torch.as_tensor(demo["rot"]).float()
+            # trans = torch.as_tensor(demo["trans"]).float()
+            # deform_params = demo["deform_params"].item()
+
+            item = {
+                "rot": torch.as_tensor(demo["rot"]).float(),
+                "trans": torch.as_tensor(demo["trans"]).float(),
+                "deform_params": demo["deform_params"].item(),
+            }
+        elif self.dataset_cfg.source == "real":
+            # speed_factor = torch.ones(1)
+            # rot = torch.zeros(3)
+            # trans = torch.zeros(3)
+
+            item = {
+                "rot": torch.zeros(3),
+                "trans": torch.zeros(3),
+            }
+        else:
+            raise ValueError(f"Unknown source: {self.dataset_cfg.source}")
+        
+        # initializing item
+        # item = {
+        #     "rot": rot,
+        #     "trans": trans,
+        #     "deform_params": deform_params,
+        #     # "speed_factor": speed_factor,
+        # }
+
+        # downsample action
+        if self.sample_size_action > 0 and action_pc.shape[0] > self.sample_size_action:
+            action_pc, action_pc_indices = downsample_pcd(action_pc.unsqueeze(0), self.sample_size_action, type=self.dataset_cfg.downsample_type)
+            action_pc = action_pc.squeeze(0)
+            action_seg = action_seg[action_pc_indices.squeeze(0)]
+            flow = flow[action_pc_indices.squeeze(0)]
+
+        # downsample anchor
+        if self.sample_size_anchor > 0 and anchor_pc.shape[0] > self.sample_size_anchor:
+            anchor_pc, anchor_pc_indices = downsample_pcd(anchor_pc.unsqueeze(0), self.sample_size_anchor, type=self.dataset_cfg.downsample_type)
+            anchor_pc = anchor_pc.squeeze(0)
+            anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
+
+        # randomly occlude the anchor
+        if self.dataset_cfg.anchor_occlusion:
+            anchor_pc_temp, temp_mask = plane_occlusion(anchor_pc, return_mask=True)
+            if anchor_pc_temp.shape[0] > self.sample_size_anchor:
+                anchor_pc = anchor_pc_temp
+                anchor_seg = anchor_seg[temp_mask]
+
+        # goal action point cloud
+        goal_action_pc = action_pc + flow
+
+        ### Common Terms ###
+        P_A = action_pc
+        P_B = anchor_pc
+        P_A_star = goal_action_pc
+
+        # calculate reference centers
+        y = P_B.mean(axis=0)
+        y_action = P_A.mean(axis=0)
+
+        # center anchor and action
+        P_B_prime = P_B - y                 # P_B'
+        P_A_prime = P_A - y_action          # P_A'
+        P_A_star_prime = P_A_star - y       # P_A*'
+
+        # generate random SE3 transform
+        T0 = random_se3(
+            N=1,
+            rot_var=self.dataset_cfg.rotation_variance,
+            trans_var=self.dataset_cfg.translation_variance,
+            rot_sample_method=self.dataset_cfg.action_transform_type,
+        )
+        T1 = random_se3(
+            N=1,
+            rot_var=self.dataset_cfg.rotation_variance,
+            trans_var=self.dataset_cfg.translation_variance,
+            rot_sample_method=self.dataset_cfg.anchor_transform_type,
+        )
+
+        # record coordinate transformation matrices
+        T_goal2world = T1.inverse().compose(
+            Translate(y.unsqueeze(0))
+        )
+        T_action2world = T0.inverse().compose(
+            Translate(y_action.unsqueeze(0))
+        )
+        
+        # perform random SE3 transform 
+        P_A_star_prime_ = T1.transform_points(P_A_star_prime)
+        P_B_prime_ = T1.transform_points(P_B_prime)
+        P_A_prime_ = T0.transform_points(P_A_prime)
+
+        P_A_star_ = T1.transform_points(P_A_star)
+        P_B_ = T1.transform_points(P_B)
+        P_A_ = T0.transform_points(P_A)
+
+        y_ = P_B_.mean(axis=0)
+        y_action_ = P_A_.mean(axis=0) 
+        
+        # create one-hot encoding
+        P_A_one_hot = torch.tensor([[1, 0]], dtype=torch.float).repeat(P_A_.shape[0], 1)  # Shape: [512, 2]
+        P_B_one_hot = torch.tensor([[0, 1]], dtype=torch.float).repeat(P_B_.shape[0], 1)  # Shape: [512, 2]
+
+        gt_flow = P_A_star_prime_ - P_A_prime_
+        item["pc"] = P_A_star_prime_ # Action points in goal position
+        item["pc_action"] = P_A_prime_ # Action points in starting position for context
+        item["pc_anchor"] = P_B_prime_ # Anchor points in goal position
+        item["seg"] = action_seg
+        item["seg_anchor"] = anchor_seg
+        item["flow"] = gt_flow
+        item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0)
+        item["T_action2world"] = T_action2world.get_matrix().squeeze(0)
+        item["P_A"] = P_A_
+        item["P_B"] = P_B_
+        item["P_A_star"] = P_A_star_
+        item["y"] = y_
+        item["y_action"] = y_action_
+        item["P_A_one_hot"] = P_A_one_hot
+        item["P_B_one_hot"] = P_B_one_hot
+
+        return item
+      
 
 DATASET_FN = {
     # "cloth": ProcClothFlowDataset,
@@ -553,6 +715,12 @@ DATASET_FN = {
     "point": DeformablePlacementDataset,# ProcClothPointDataset,
 }
 
+UPGRADE_DATASET_FN = {
+    # "cloth": ProcClothFlowDataset,
+    # "cloth_point": ProcClothPointDataset,
+    "flow": UpgradeDeformablePlacementDataset, #ProcClothFlowDataset,
+    "point": UpgradeDeformablePlacementDataset, # ProcClothPointDataset,
+}
 
 # TODO: rename this to Deformable Data Module or something
 class ProcClothFlowDataModule(L.LightningDataModule):
@@ -614,6 +782,109 @@ class ProcClothFlowDataModule(L.LightningDataModule):
             self.root, self.dataset_cfg, "val_tax3d"
         )
         self.val_ood_dataset = DATASET_FN[self.dataset_cfg.type](
+            self.root, self.dataset_cfg, "val_ood_tax3d"
+        )
+    
+    def train_dataloader(self):
+        return data.DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True if self.stage == "fit" else False,
+            num_workers=self.num_workers,
+            collate_fn=cloth_collate_fn,
+        )
+    
+    def val_dataloader(self):
+        val_dataloader = data.DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=cloth_collate_fn,
+        )
+        val_ood_dataloader = data.DataLoader(
+            self.val_ood_dataset,
+            batch_size=self.val_batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=cloth_collate_fn,
+        )
+        return val_dataloader, val_ood_dataloader
+
+
+# custom collate function to handle deform params
+def cloth_collate_fn(batch):
+    # batch is a list of dictionaries
+    # we need to convert it to a dictionary of lists
+    keys = batch[0].keys()
+    out = {k: None for k in keys}
+    for k in keys:
+        if k == "deform_params":
+            out[k] = [item[k] for item in batch]
+        else:
+            out[k] = torch.stack([item[k] for item in batch])
+    return out
+
+
+class UpgradeDataModule(L.LightningDataModule):
+    def __init__(self, batch_size, val_batch_size, num_workers, dataset_cfg):# type, scene):
+        super().__init__()
+        # self.root = root
+        self.batch_size = batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.stage = None
+        self.dataset_cfg = dataset_cfg
+
+        # setting root directory based on dataset type
+        data_dir = os.path.expanduser(dataset_cfg.data_dir)
+        self.cloth_geometry = self.dataset_cfg.cloth_geometry
+        self.cloth_pose = self.dataset_cfg.cloth_pose
+        self.anchor_geometry = self.dataset_cfg.anchor_geometry
+        self.anchor_pose = self.dataset_cfg.anchor_pose
+        self.hole = self.dataset_cfg.hole
+        exp_dir = (
+            f'cloth={self.cloth_geometry}-{self.cloth_pose} ' + \
+            f'anchor={self.anchor_geometry}-{self.anchor_pose} ' + \
+            f'hole={self.hole}'
+        )
+        self.root = Path(data_dir) / exp_dir
+
+    def prepare_data(self) -> None:
+        pass
+
+    def setup(self, stage: str = "fit"):
+        self.stage = stage
+
+        # dataset sanity checks
+        if self.dataset_cfg.scene and not self.dataset_cfg.world_frame:
+            raise ValueError("Scene inputs require a world frame.")
+
+        # if not in train mode, don't use rotation augmentations
+        if self.stage != "fit":
+            print("-------Turning off rotation augmentation for validation/inference.-------")
+            self.dataset_cfg.action_transform_type = "identity"
+            self.dataset_cfg.anchor_transform_type = "identity"
+            self.dataset_cfg.rotation_variance = 0.0
+            self.dataset_cfg.translation_variance = 0.0
+        # if world frame, don't mean-center the point clouds
+        if self.dataset_cfg.world_frame:
+            print("-------Turning off mean-centering for world frame predictions.-------")
+            self.dataset_cfg.center_type = "none"
+            self.dataset_cfg.action_context_center_type = "none"
+            #self.dataset_cfg.action_transform_type = "identity"
+            #self.dataset_cfg.anchor_transform_type = "identity"
+            #self.dataset_cfg.rotation_variance = 0.0
+            #self.dataset_cfg.translation_variance = 0.0
+        
+        
+        self.train_dataset = UPGRADE_DATASET_FN[self.dataset_cfg.type](
+            self.root, self.dataset_cfg, "train_tax3d"
+        )
+        self.val_dataset = UPGRADE_DATASET_FN[self.dataset_cfg.type](
+            self.root, self.dataset_cfg, "val_tax3d"
+        )
+        self.val_ood_dataset = UPGRADE_DATASET_FN[self.dataset_cfg.type](
             self.root, self.dataset_cfg, "val_ood_tax3d"
         )
     

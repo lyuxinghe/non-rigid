@@ -25,7 +25,8 @@ from non_rigid.models.dit.models import (
     DiT_PointCloud_Unc_Cross,
     Rel3D_DiT_PointCloud_Unc_Cross,
     DiT_PointCloud_Cross,
-    DiT_PointCloud
+    DiT_PointCloud,
+    Upgrade_DiT_PointCloud_Cross,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -59,6 +60,11 @@ def DiT_PointCloud_xS(use_rotary, **kwargs):
     hidden_size = 132 if use_rotary else 128
     return DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
+def Upgrade_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    hidden_size = 132 if use_rotary else 128
+    return Upgrade_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+
 # TODO: clean up all unused functions
 DiT_models = {
     "DiT_pcu_S": DiT_pcu_S,
@@ -69,14 +75,17 @@ DiT_models = {
     "DiT_PointCloud_Cross_xS": DiT_PointCloud_Cross_xS,
     # TODO: add the SD model here
     "DiT_PointCloud_xS": DiT_PointCloud_xS,
+    # Upgrade: Option 1
+    "Upgrade_DiT_PointCloud_Cross_xS": Upgrade_DiT_PointCloud_Cross_xS,
 }
 
 
 def get_model(model_cfg):
     #rotary = "Rel3D_" if model_cfg.rotary else ""
-    cross = "Cross_" if model_cfg.name == "df_cross" else ""
+    cross = "Cross_" if model_cfg.name == "df_cross" or "upgrade" else ""
+    upgrade = "Upgrade_" if model_cfg.name == "upgrade" else ""
     # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
-    model_name = f"DiT_PointCloud_{cross}{model_cfg.size}"
+    model_name = f"{upgrade}DiT_PointCloud_{cross}{model_cfg.size}"
     return DiT_models[model_name]
 
 
@@ -493,6 +502,77 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         pc_action = pc_action.permute(0, 2, 1) # channel first
         pc_anchor = pc_anchor.permute(0, 2, 1) # channel first
         model_kwargs = dict(x0=pc_action, y=pc_anchor)
+        return model_kwargs
+    
+    def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
+        """
+        Get world-frame predictions from the given batch and predictions.
+        """
+        T_action2world = Transform3d(
+            matrix=expand_pcd(batch["T_action2world"].to(self.device), num_samples)
+        )
+        T_goal2world = Transform3d(
+            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
+        )
+
+        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
+        pc_action_world = T_action2world.transform_points(pc_action)
+        pred_flow_world = pred_point_world - pc_action_world
+        results_world = [
+            T_goal2world.transform_points(res) for res in pred_dict["results"]
+        ]
+        return pred_flow_world, pred_point_world, results_world
+
+    def get_viz_args(self, batch, viz_idx):
+        """
+        Get visualization arguments for wandb logging.
+        """
+        pc_pos_viz = batch["pc"][viz_idx, :, :3]
+        pc_action_viz = batch["pc_action"][viz_idx, :, :3]
+        pc_anchor_viz = batch["pc_anchor"][viz_idx, :, :3]
+        viz_args = {
+            "pc_pos_viz": pc_pos_viz,
+            "pc_action_viz": pc_action_viz,
+            "pc_anchor_viz": pc_anchor_viz,
+        }
+        return viz_args
+    
+class UpgradeCrossDisplacementModule(DenseDisplacementDiffusionModule):
+    """
+    Object-centric DDD module. Applies cross attention between action and anchor objects.
+    """
+    def __init__(self, network, cfg) -> None:
+        super().__init__(network, cfg)
+
+    def get_model_kwargs(self, batch, num_samples=None):
+        pc_action = batch["pc_action"].to(self.device)
+        pc_anchor = batch["pc_anchor"].to(self.device)
+        P_A = batch["P_A"].to(self.device)
+        P_B = batch["P_B"].to(self.device)
+        y_ref = batch["y"].to(self.device)
+        y_action = batch["y_action"].to(self.device)
+        P_A_one_hot = batch["P_A_one_hot"].to(self.device)
+        P_B_one_hot = batch["P_B_one_hot"].to(self.device)
+
+        if num_samples is not None:
+            # expand point clouds if num_samples is provided; used for WTA predictions
+            pc_action = expand_pcd(pc_action, num_samples)
+            pc_anchor = expand_pcd(pc_anchor, num_samples)
+            P_A = expand_pcd(P_A, num_samples)
+            P_B = expand_pcd(P_B, num_samples)
+            y_ref = expand_pcd(y_ref, num_samples)
+            y_action = expand_pcd(y_action, num_samples)
+            P_A_one_hot = expand_pcd(P_A_one_hot, num_samples)
+            P_B_one_hot = expand_pcd(P_B_one_hot, num_samples)
+
+        pc_action = pc_action.permute(0, 2, 1)  # channel first
+        pc_anchor = pc_anchor.permute(0, 2, 1)  # channel first
+        P_A = P_A.permute(0, 2, 1)              # channel first
+        P_B = P_B.permute(0, 2, 1)              # channel first
+        P_A_one_hot = P_A_one_hot.permute(0, 2, 1)    # channel first
+        P_B_one_hot = P_B_one_hot.permute(0, 2, 1)    # channel first
+
+        model_kwargs = dict(x0=pc_action, y=pc_anchor, P_A=P_A, P_B=P_B, y_ref=y_ref, y_action=y_action, P_A_one_hot=P_A_one_hot, P_B_one_hot=P_B_one_hot)
         return model_kwargs
     
     def get_world_preds(self, batch, num_samples, pc_action, pred_dict):

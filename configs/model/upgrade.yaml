@@ -1,0 +1,30 @@
+name: upgrade
+
+# Model settings
+type: point # (flow, point) Type of model
+size: xS # (xs, s, ...) Architecture of DiT
+in_channels: 3 # Number of input channels
+learn_sigma: True # Learn sigma for diffusion
+rotary: False # Use rotary embedding for diffusion
+
+# model encoders
+x_encoder: mlp # Encoder current timestep x
+y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
+x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)
+
+# feature encoders
+onehot_encoder: mlp # Enooder for one-hot encoding of anchor/action
+context_encoder: mlp # Encoder for the relative context (action pcd in different frames, e.g. P_A - y, P_A - y_action)
+flow_encoder: mlp # Encoder for the noisy flow (flow P_A_hat - P_A with different normalization, e.g. P_A - y, P_A - y_action)
+
+# enabled features
+feature_context_type: action_mean # [anchor_mean, action_mean, all], reference type
+feature_normalize_type: unit # [unnorm, unit, clip, zeromean, all], normalization method for the noisy flow feature
+
+# diffusion settings
+diff_train_steps: 100 # Number of diffusion steps during training
+diff_inference_steps: 100 # Number of diffusion steps during inference
+diff_noise_schedule: linear # (linear, cosine) Noise schedule for diffusion
+diff_noise_scale: 1.0 # Scale of noise for diffusion
+diff_type: gaussian
+
