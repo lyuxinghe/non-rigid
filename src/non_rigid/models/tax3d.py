@@ -26,7 +26,8 @@ from non_rigid.models.dit.models import (
     Rel3D_DiT_PointCloud_Unc_Cross,
     DiT_PointCloud_Cross,
     DiT_PointCloud,
-    Upgrade_DiT_PointCloud_Cross,
+    Upgrade_Option1_DiT_PointCloud_Cross,
+    Upgrade_Option2_DiT_PointCloud_Cross,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -60,10 +61,16 @@ def DiT_PointCloud_xS(use_rotary, **kwargs):
     hidden_size = 132 if use_rotary else 128
     return DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
-def Upgrade_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
+def Upgrade_Option1_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
     hidden_size = 132 if use_rotary else 128
-    return Upgrade_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Upgrade_Option1_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+
+def Upgrade_Option2_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    hidden_size = 132 if use_rotary else 128
+    return Upgrade_Option2_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+
 
 # TODO: clean up all unused functions
 DiT_models = {
@@ -76,16 +83,29 @@ DiT_models = {
     # TODO: add the SD model here
     "DiT_PointCloud_xS": DiT_PointCloud_xS,
     # Upgrade: Option 1
-    "Upgrade_DiT_PointCloud_Cross_xS": Upgrade_DiT_PointCloud_Cross_xS,
+    "Upgrade_Option1_DiT_PointCloud_Cross_xS": Upgrade_Option1_DiT_PointCloud_Cross_xS,
+    # Upgrade: Option 2
+    "Upgrade_Option2_DiT_PointCloud_Cross_xS": Upgrade_Option2_DiT_PointCloud_Cross_xS,
 }
 
 
 def get_model(model_cfg):
     #rotary = "Rel3D_" if model_cfg.rotary else ""
     cross = "Cross_" if model_cfg.name == "df_cross" or "upgrade" else ""
-    upgrade = "Upgrade_" if model_cfg.name == "upgrade" else ""
+    
+    if model_cfg.name == "upgrade":
+        if model_cfg.upgrade_option == "option_1":
+            upgrade = "Upgrade_"
+            option = "Option1_"
+        elif model_cfg.upgrade_option == "option_2":
+            upgrade = "Upgrade_"
+            option = "Option2_"
+    else:
+        upgrade = ""
+        option = ""
+
     # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
-    model_name = f"{upgrade}DiT_PointCloud_{cross}{model_cfg.size}"
+    model_name = f"{upgrade}{option}DiT_PointCloud_{cross}{model_cfg.size}"
     return DiT_models[model_name]
 
 
