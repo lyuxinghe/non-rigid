@@ -1,4 +1,4 @@
-name: df_cross
+name: pn2_df_cross
 
 # Model settings
 type: point # (flow, point) Type of model
@@ -9,11 +9,12 @@ center_noise: False # Center noise for diffusion
 rotary: False # Use rotary embedding for diffusion
 cross_atten: True # Use cross attention for diffusion
 feature: off # (flow, point, off) Type of feature base
-encoder_backbone: mlp # (mlp, pn2)
+encoder_backbone: pn2 # (mlp, pn2)
 
-x_encoder: mlp # Encoder current timestep x
-y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
-x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)
+# encoding before passing into PN2 (default to off)
+x_pre_encoder: off # (mlp, off) Encoder current timestep x
+y_pre_encoder: off # (mlp, dgcnn, off) Encoder for y object (e.g. anchor pcd)
+x0_pre_encoder: off # (mlp, dgcnn, off) Encoder for x0 object (e.g. action pcd)
 
 # diffusion settings
 diff_train_steps: 100 # Number of diffusion steps during training

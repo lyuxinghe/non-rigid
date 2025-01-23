@@ -29,7 +29,7 @@ from non_rigid.models.tax3d import (
     DiffusionTransformerNetwork,
     SceneDisplacementModule,
     CrossDisplacementModule,
-    UpgradeCrossDisplacementModule,
+    FeatureCrossDisplacementModule,
 )
 
 from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, UpgradeDataModule
@@ -92,11 +92,17 @@ def create_model(cfg):
     elif cfg.model.name == "regression":
         network_fn = RegressionNetwork
         module_fn = RegressionModule
-    elif cfg.model.name == "upgrade":
+    elif cfg.model.name == "feature_df_cross":
         network_fn = DiffusionTransformerNetwork
         # module_fn = Tax3dModule
-        module_fn = UpgradeCrossDisplacementModule
-        
+        module_fn = FeatureCrossDisplacementModule
+    elif cfg.model.name == "pn2_df_cross":
+        network_fn = DiffusionTransformerNetwork
+        # module_fn = Tax3dModule
+        module_fn = CrossDisplacementModule
+    else:
+        raise ValueError(f"Invalid model name: {cfg.model.name}")
+
     # create network and model
     network = network_fn(model_cfg=cfg.model)
     model = module_fn(network=network, cfg=cfg)
@@ -113,7 +119,7 @@ def create_datamodule(cfg):
 
     # check dataset name
     if cfg.dataset.name == "proc_cloth":
-        if cfg.model.name == "upgrade":
+        if "feature" in cfg.model.name:
             datamodule_fn = UpgradeDataModule
         else:
             datamodule_fn = ProcClothFlowDataModule
@@ -159,7 +165,12 @@ def load_checkpoint_config_from_wandb(current_cfg, task_overrides, entity, proje
     # grab run config from wandb
     api = wandb.Api()
     run_cfg = OmegaConf.create(api.run(f"{entity}/{project}/{run_id}").config)
-
+    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ run_cfg @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+    print(run_cfg)
+    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ current_cfg @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+    print(current_cfg)
+    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
     # check for consistency between task overrides and original run config
     inconsistent_keys = []
     for ovrd in task_overrides:
@@ -189,6 +200,7 @@ def load_checkpoint_config_from_wandb(current_cfg, task_overrides, entity, proje
         current_cfg.dataset.train_size = None
         current_cfg.dataset.val_size = None
     current_cfg.dataset.data_dir = current_data_dir
+    #current_cfg.model.name= "feature_df_cross"
     return current_cfg
 
 # This matching function

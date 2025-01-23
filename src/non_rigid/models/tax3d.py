@@ -26,8 +26,10 @@ from non_rigid.models.dit.models import (
     Rel3D_DiT_PointCloud_Unc_Cross,
     DiT_PointCloud_Cross,
     DiT_PointCloud,
-    Upgrade_Option1_DiT_PointCloud_Cross,
-    Upgrade_Option2_DiT_PointCloud_Cross,
+    DiT_PointCloud_Cross_Point_Feature,
+    DiT_PointCloud_Cross_Flow_Feature,
+    PN2_DiT_PointCloud_Cross,
+    PN2_DiT_PointCloud,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -58,19 +60,34 @@ def DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
 
 def DiT_PointCloud_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("DiffusionTransformerNetwork: DiT_PointCloud_xS")
     hidden_size = 132 if use_rotary else 128
     return DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
-def Upgrade_Option1_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
+def DiT_PointCloud_Cross_Point_Feature_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("DiffusionTransformerNetwork: DiT_PointCloud_Cross_Point_Feature_xS")
     hidden_size = 132 if use_rotary else 128
-    return Upgrade_Option1_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return DiT_PointCloud_Cross_Point_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
-def Upgrade_Option2_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
+def DiT_PointCloud_Cross_Flow_Feature_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("DiffusionTransformerNetwork: DiT_PointCloud_Cross_Flow_Feature_xS")
     hidden_size = 132 if use_rotary else 128
-    return Upgrade_Option2_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
+def PN2_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_Cross_xS")
+    hidden_size = 132 if use_rotary else 128
+    return PN2_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+
+
+def PN2_DiT_PointCloud_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_xS")
+    hidden_size = 132 if use_rotary else 128
+    return PN2_DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
 # TODO: clean up all unused functions
 DiT_models = {
@@ -82,30 +99,26 @@ DiT_models = {
     "DiT_PointCloud_Cross_xS": DiT_PointCloud_Cross_xS,
     # TODO: add the SD model here
     "DiT_PointCloud_xS": DiT_PointCloud_xS,
-    # Upgrade: Option 1
-    "Upgrade_Option1_DiT_PointCloud_Cross_xS": Upgrade_Option1_DiT_PointCloud_Cross_xS,
-    # Upgrade: Option 2
-    "Upgrade_Option2_DiT_PointCloud_Cross_xS": Upgrade_Option2_DiT_PointCloud_Cross_xS,
+    # option 1
+    "DiT_PointCloud_Cross_Point_Feature_xS": DiT_PointCloud_Cross_Point_Feature_xS,
+    # option 2
+    "DiT_PointCloud_Cross_Flow_Feature_xS": DiT_PointCloud_Cross_Flow_Feature_xS,
+    # TAX3D+PN2 (cross-atten)
+    "PN2_DiT_PointCloud_Cross_xS": PN2_DiT_PointCloud_Cross_xS,
+    # TAX3D+PN2 (self-atten)
+    "PN2_DiT_PointCloud_xS": PN2_DiT_PointCloud_xS,
+
 }
 
 
 def get_model(model_cfg):
     #rotary = "Rel3D_" if model_cfg.rotary else ""
-    cross = "Cross_" if model_cfg.name == "df_cross" or "upgrade" else ""
-    
-    if model_cfg.name == "upgrade":
-        if model_cfg.upgrade_option == "option_1":
-            upgrade = "Upgrade_"
-            option = "Option1_"
-        elif model_cfg.upgrade_option == "option_2":
-            upgrade = "Upgrade_"
-            option = "Option2_"
-    else:
-        upgrade = ""
-        option = ""
+    cross = "Cross_" if model_cfg.cross_atten else ""
+    feature = "Point_Feature_" if model_cfg.feature == "point" else "Flow_Feature_" if model_cfg.feature == "flow" else ""
+    encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
 
     # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
-    model_name = f"{upgrade}{option}DiT_PointCloud_{cross}{model_cfg.size}"
+    model_name = f"{encoder}DiT_PointCloud_{cross}{feature}{model_cfg.size}"
     return DiT_models[model_name]
 
 
@@ -557,7 +570,7 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         }
         return viz_args
     
-class UpgradeCrossDisplacementModule(DenseDisplacementDiffusionModule):
+class FeatureCrossDisplacementModule(DenseDisplacementDiffusionModule):
     """
     Object-centric DDD module. Applies cross attention between action and anchor objects.
     """

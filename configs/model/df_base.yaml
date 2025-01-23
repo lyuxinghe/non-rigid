@@ -7,6 +7,9 @@ in_channels: 6 # Number of input channels
 learn_sigma: True
 center_noise: False
 rotary: False
+cross_atten: True # Use cross attention for diffusion
+feature: off # (flow, point, off) Type of feature base
+encoder_backbone: mlp # (mlp, pn2)
 
 # diffusion settings
 # TODO: combine these into one param

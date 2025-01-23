@@ -7,8 +7,7 @@
 # 4. the rest of the arguments for the train.py script
 
 # Example usage:
-# ./multi_cloth_train.sh 0 cross_point_relative online
-# ./multi_cloth_train.sh 1 scene_flow disabled dataset.multi_cloth.hole=single dataset.multi_cloth.size=100
+# ./train_upgrade.sh 0 feature_df_cross online dataset.train_size=400 dataset.data_dir=/data/lyuxing/tax3d/proccloth/ dataset.cloth_geometry=multi dataset.hole=single wandb.group=tax3d_upgrade
 
 GPU_INDEX=$1
 MODEL_TYPE=$2
@@ -19,12 +18,23 @@ shift
 COMMAND=$@
 
 
-if [ $MODEL_TYPE == "upgrade" ]; then
-  echo "Training upgrade model with command: $COMMAND."
+if [ $MODEL_TYPE == "feature_df_cross" ]; then
+  echo "Training feature_df_cross model with command: $COMMAND."
 
-  MODEL_PARAMS="model=upgrade model.type=point"
-  DATASET_PARAMS="dataset=proc_cloth dataset.type=point dataset.scene=False dataset.world_frame=False"
+  MODEL_PARAMS="model=feature_df_cross model.type=flow"
+  DATASET_PARAMS="dataset=proc_cloth dataset.type=flow dataset.scene=False dataset.world_frame=False"
 
+elif [ $MODEL_TYPE == "pn2_df_cross" ]; then
+  echo "Training pn2_df_cross model with command: $COMMAND."
+
+  MODEL_PARAMS="model=pn2_df_cross model.type=flow"
+  DATASET_PARAMS="dataset=proc_cloth dataset.type=flow dataset.scene=False dataset.world_frame=False"
+
+elif [ $MODEL_TYPE == "pn2_df" ]; then
+  echo "Training pn2_df model with command: $COMMAND."
+
+  MODEL_PARAMS="model=pn2_df model.type=flow"
+  DATASET_PARAMS="dataset=proc_cloth dataset.type=flow dataset.scene=False dataset.world_frame=False"
 else
   echo "Invalid model type."
 fi
