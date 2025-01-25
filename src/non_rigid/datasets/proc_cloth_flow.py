@@ -826,7 +826,7 @@ def cloth_collate_fn(batch):
     return out
 
 
-class UpgradeDataModule(L.LightningDataModule):
+class ProcClothFlowFeatureDataModule(L.LightningDataModule):
     def __init__(self, batch_size, val_batch_size, num_workers, dataset_cfg):# type, scene):
         super().__init__()
         # self.root = root

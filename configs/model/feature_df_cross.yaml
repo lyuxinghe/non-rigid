@@ -8,18 +8,18 @@ learn_sigma: True # Learn sigma for diffusion
 rotary: False # Use rotary embedding for diffusion
 cross_atten: True
 feature: flow # (flow, point) Type of feature base
-encoder_backbone: mlp # (mlp, pn2)
+encoder_backbone: dgcnn # (mlp, pn2)
 
 # model encoders
-x_encoder: off # (mlp, off) Encoder current timestep x
+x_encoder: mlp # (mlp, dgcnn, off) Encoder current timestep x
 y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
 x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)
 
 # feature encoders
-onehot_encoder: off # (mlp, off) Enooder for one-hot encoding of anchor/action. off set the value to False
-recon_encoder: mlp # (mlp, off) Encoder for reconstructed pcd of action (not used in option 1)
-context_encoder: off # (mlp, off) Encoder for the relative context (action pcd in different frames, e.g. P_A - y, P_A - y_action)
-flow_encoder: mlp # (mlp, off) Encoder for the noisy flow (flow P_A_hat - P_A with different normalization, e.g. P_A - y, P_A - y_action)
+onehot_encoder: off # (mlp, dgcnn, off) Enooder for one-hot encoding of anchor/action. off set the value to False
+recon_encoder: dgcnn # (mlp, dgcnn, off) Encoder for reconstructed pcd of action (not used in option 1)
+context_encoder: dgcnn # (mlp, dgcnn, off) Encoder for the relative context (action pcd in different frames, e.g. P_A - y, P_A - y_action)
+flow_encoder: dgcnn # (mlp, dgcnn, off) Encoder for the noisy flow (flow P_A_hat - P_A with different normalization, e.g. P_A - y, P_A - y_action)
 
 # enabled features
 feature_context_type: action_mean # [anchor_mean, action_mean, all], reference type

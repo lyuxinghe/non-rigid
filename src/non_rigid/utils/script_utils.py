@@ -32,7 +32,7 @@ from non_rigid.models.tax3d import (
     FeatureCrossDisplacementModule,
 )
 
-from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, UpgradeDataModule
+from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, ProcClothFlowFeatureDataModule
 
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
@@ -120,7 +120,7 @@ def create_datamodule(cfg):
     # check dataset name
     if cfg.dataset.name == "proc_cloth":
         if "feature" in cfg.model.name:
-            datamodule_fn = UpgradeDataModule
+            datamodule_fn = ProcClothFlowFeatureDataModule
         else:
             datamodule_fn = ProcClothFlowDataModule
     else:

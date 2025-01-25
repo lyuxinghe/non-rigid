@@ -19,8 +19,10 @@ from typing import Optional
 
 from non_rigid.nets.dgcnn import DGCNN
 from non_rigid.models.dit.relative_encoding import RotaryPositionEncoding3D, MultiheadRelativeAttentionWrapper
+import non_rigid.models.pointnet2.pn2_pyg as pn2_pyg
+import non_rigid.models.pointnet2.pn2 as pn2
 
-import rpad.pyg.nets.pointnet2 as pnp_original
+#import rpad.pyg.nets.pointnet2 as pnp_original
 from torch_geometric.data import Data
 
 
@@ -1014,12 +1016,8 @@ class DiT_PointCloud_Cross(nn.Module):
             x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
             y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
 
-        breakpoint()
-
         # encode x, y, x0 features
         x_emb = self.x_embedder(x)
-
-        breakpoint()
 
         if self.model_cfg.x0_encoder is not None:
             assert x0 is not None, "x0 features must be provided if x0_encoder is not None"
@@ -1044,9 +1042,7 @@ class DiT_PointCloud_Cross(nn.Module):
 
         # final layer
         x = self.final_layer(x, t_emb)
-        breakpoint()
         x = x.permute(0, 2, 1)
-        breakpoint()
         return x
 
 
@@ -1145,17 +1141,17 @@ class PN2_DiT_PointCloud(nn.Module):
             raise ValueError(f"Invalid x0_pre_encoder: {self.model_cfg.x0_pre_encoder}")
 
         # x embedding (pcd features)
-        self.x_embedder = pnp_original.PN2Dense(
+        self.x_embedder = pn2_pyg.PN2Dense(
             in_channels=3,  # additional 3 channels for x0 feature
             out_channels=hidden_size,
-            p=pnp_original.PN2DenseParams(),
+            p=pn2_pyg.PN2DenseParams(),
         )
 
         # y embedding (pcd features)
-        self.y_embedder = pnp_original.PN2Dense(
+        self.y_embedder = pn2_pyg.PN2Dense(
             in_channels=0,  # no additional feature
             out_channels=hidden_size,
-            p=pnp_original.PN2DenseParams(),
+            p=pn2_pyg.PN2DenseParams(),
         )
 
         # Timestamp embedding
@@ -1253,37 +1249,8 @@ class PN2_DiT_PointCloud(nn.Module):
         )
         encoded_pcd = self.x_embedder(context.cuda())
         '''
-
         '''
         ### VARIANT 1 ###
-        B, D, N = y.shape
-        
-        # construct features
-        f_x = torch.cat([x, x0], dim=1) # concatinate features x and x0
-        f_x = f_x.permute(0, 2, 1).reshape(-1, D*2)  # Shape: (B * N, D*2), 2 for 2 features
-        f_y = y.permute(0, 2, 1).reshape(-1, D)
-
-        # construct pos
-        pos_x = x0.permute(0, 2, 1).reshape(-1, D)  # using original action as positional grouping for PN2
-        pos_y = y.permute(0, 2, 1).reshape(-1, D)   # using original anchor as positional grouping for PN2
-
-        # construct batch
-        batch_idx_x = torch.arange(B).repeat_interleave(N)  # Shape: (B * N,)
-        batch_idx_y = torch.arange(B).repeat_interleave(N)  # Shape: (B * N,)
-
-        data_x = Data(x=f_x, pos=pos_x, batch=batch_idx_x)
-        data_y = Data(x=f_y, pos=pos_y, batch=batch_idx_y)
-
-        # PN2 embedding
-        x = self.x_embedder(data_x.cuda())
-        y_emb = self.y_embedder(data_y.cuda())
-
-        x = x.reshape(B, N, -1)             # reshape back to (N, N, d_embed)
-        y_emb = y_emb.reshape(B, N, -1)     # reshape back to (N, N, d_embed)
-        '''        
-
-        
-        ### VARIANT 2 ###
         B, D, N = y.shape
         
         # construct features
@@ -1308,52 +1275,38 @@ class PN2_DiT_PointCloud(nn.Module):
         x = x.reshape(B, N, -1)             # reshape back to (B, N, d_embed)
         y_emb = y_emb.reshape(B, N, -1)     # reshape back to (B, N, d_embed)
         
-
-        '''
-        ### VARIANT 3 ###
-        B, D, N = y.shape
-        
-        # construct features
-        f_x = None
-        f_y = None
-
-        # construct pos
-        pos_x = x0.permute(0, 2, 1).reshape(-1, D)  # using original action as positional grouping for PN2
-        pos_y = y.permute(0, 2, 1).reshape(-1, D)   # using original anchor as positional grouping for PN2
-
-        # construct batch
-        batch_idx_x = torch.arange(B).repeat_interleave(N)  # Shape: (B * N,)
-        batch_idx_y = torch.arange(B).repeat_interleave(N)  # Shape: (B * N,)
-
-        data_x = Data(x=f_x, pos=pos_x, batch=batch_idx_x)
-        data_y = Data(x=f_y, pos=pos_y, batch=batch_idx_y)
-
-        # PN2 embedding
-        x0_emb = self.x_embedder(data_x.cuda())
-        y_emb = self.y_embedder(data_y.cuda())
-
-        x0_emb = x.reshape(B, N, -1)             # reshape back to (B, N, d_embed)
-        y_emb = y_emb.reshape(B, N, -1)     # reshape back to (B, N, d_embed)
-        
-        # encode x features
-        x = x.permute(0, 2, 1)
-        x = torch.cat([x, x0_emb], dim=-1)
-        '''
         # timestep embedding
         t_emb = self.t_embedder(t)
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                x = block(x, y_emb, t_emb, x_pos, y_pos)
-            else:
-                x = block(x, t_emb)
+            x = block(x, t_emb)
 
         # final layer
         x = self.final_layer(x, t_emb)
         x = x.permute(0, 2, 1)
         return x
+        '''
 
+        ### VARIANT 2 ###
+        B, D, N = y.shape
+
+
+
+
+
+
+        # timestep embedding
+        t_emb = self.t_embedder(t)
+
+        # forward pass through DiT blocks
+        for block in self.blocks:
+            x = block(x, t_emb)
+
+        # final layer
+        x = self.final_layer(x, t_emb)
+        x = x.permute(0, 2, 1)
+        return x
 
 
 class PN2_DiT_PointCloud_Cross(nn.Module):
@@ -1475,26 +1428,68 @@ class PN2_DiT_PointCloud_Cross(nn.Module):
         )
         '''
 
-        
-        ### VARIANT 2 ###
+        '''
+        ### VARIANT 2.1.1 ###
+        # We'll use pn2_pyg.PN2Shallow code bade
         # We'll use PN2 as encoder for x0+x and y seperatelt. 
         # 1. For the PN2 for action object, noise x will be used as feature, and x0 will be used for positional encoding. 
         # 2. For the PN2 for anchor object, there will be no feature, and y will be used for positional encoding.
 
         # x embedding (pcd features)
-        self.x_embedder = pnp_original.PN2Dense(
+        self.x_embedder = pn2_pyg.PN2Shallow(
             in_channels=3,  # additional 3 channels for x0 feature
             out_channels=hidden_size,
-            p=pnp_original.PN2DenseParams(),
+            p=pn2_pyg.PN2ShallowParams(),
         )
 
         # y embedding (pcd features)
-        self.y_embedder = pnp_original.PN2Dense(
+        self.y_embedder = pn2_pyg.PN2Shallow(
             in_channels=0,  # no additional feature
             out_channels=hidden_size,
-            p=pnp_original.PN2DenseParams(),
+            p=pn2_pyg.PN2ShallowParams(),
+        )
+        '''
+        
+        ### VARIANT 2.1.2 ###
+        # We'll use pn2_pyg.PN2Dense code bade
+        # We'll use PN2 as encoder for x0+x and y seperatelt. 
+        # 1. For the PN2 for action object, noise x will be used as feature, and x0 will be used for positional encoding. 
+        # 2. For the PN2 for anchor object, there will be no feature, and y will be used for positional encoding.
+
+        # x embedding (pcd features)
+        self.x_embedder = pn2_pyg.PN2Dense(
+            in_channels=3,  # additional 3 channels for x0 feature
+            out_channels=hidden_size,
+            p=pn2_pyg.PN2DenseParams(),
+        )
+
+        # y embedding (pcd features)
+        self.y_embedder = pn2_pyg.PN2Dense(
+            in_channels=0,  # no additional feature
+            out_channels=hidden_size,
+            p=pn2_pyg.PN2DenseParams(),
         )
         
+
+        '''
+        ### VARIANT 2.2.1 ###
+        # We'll use pn2 code bade
+        # We'll use PN2 as encoder for x0+x and y seperatelt. 
+        # 1. For the PN2 for action object, noise x will be used as feature, and x0 will be used for positional encoding. 
+        # 2. For the PN2 for anchor object, there will be no feature, and y will be used for positional encoding.
+
+        # x embedding (pcd features)
+        self.x_embedder = pn2.PointNet2SSG(
+            out_channels=hidden_size,
+            additional_channel=3,
+        )
+
+        # y embedding (pcd features)
+        self.y_embedder = pn2.PointNet2SSG(
+            out_channels=hidden_size,
+            additional_channel=0,
+        )
+        '''
 
         '''
         ### VARIANT 3 ###
@@ -1641,11 +1636,11 @@ class PN2_DiT_PointCloud_Cross(nn.Module):
         '''        
 
         
-        ### VARIANT 2 ###
+        ### VARIANT 2.1 ###
         B, D, N = y.shape
         
         # construct features
-        f_x = x.permute(0, 2, 1).reshape(-1, D)  # Shape: (B * N, D*2), 2 for 2 features
+        f_x = x.permute(0, 2, 1).reshape(-1, D)  # Shape: (B * N, D)
         f_y = None
 
         # construct pos
@@ -1668,7 +1663,25 @@ class PN2_DiT_PointCloud_Cross(nn.Module):
         x = x.reshape(B, N, -1)             # reshape back to (B, N, d_embed)
         y_emb = y_emb.reshape(B, N, -1)     # reshape back to (B, N, d_embed)
         
+        '''
+        ### VARIANT 2.2 ###
+        B, D, N = y.shape
+        
+        # construct xyz
+        # input data = [B,C,N]
+        # data[:,:3,:] = pos, trailing channels are features
+        data_x = torch.cat([x0, x], dim=1)
+        data_y = y
 
+        # PN2 embedding
+        #breakpoint()
+        x = self.x_embedder(data_x.cuda())
+        #breakpoint()
+        y_emb = self.y_embedder(data_y.cuda())
+
+        x = x.reshape(B, N, -1)             # reshape back to (B, N, d_embed)
+        y_emb = y_emb.reshape(B, N, -1)     # reshape back to (B, N, d_embed)
+        '''
         '''
         ### VARIANT 3 ###
         B, D, N = y.shape
@@ -2109,31 +2122,31 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
 
         if self.model_cfg.x_encoder not in [None, False]:
             self.num_features += 1
-            print("Using Noisy-flow Encoding Feature!")
+            print("Using Noisy-flow Encoding Feature with Encoder {}".format(self.model_cfg.x_encoder))
 
         if self.model_cfg.onehot_encoder not in [None, False]:
             self.num_features += 1
-            print("Using One-Hot Encoding Feature!")
+            print("Using One-Hot Encoding Feature with Encoder {}".format(self.model_cfg.onehot_encoder))
 
         if self.model_cfg.recon_encoder not in [None, False]:
             self.num_features += 1
-            print("Using Reconstructed Goal PCD Feature")
+            print("Using Reconstructed Goal PCD Feature with Encoder {}".format(self.model_cfg.recon_encoder))
 
         if self.model_cfg.context_encoder not in [None, False]:
             if self.model_cfg.feature_context_type == "all":
                 self.num_features += len(feature_context_types) -1
-                print("Using All Contextual Features!")
+                print("Using All Contextual Features with Encoder {}".format(self.model_cfg.context_encoder))
             elif self.model_cfg.feature_context_type in feature_context_types:
                 self.num_features += 1
-                print("Using {} Context Feature".format(self.model_cfg.feature_context_type))
+                print("Using {} Context Feature with Encoder {}".format(self.model_cfg.feature_context_type, self.model_cfg.context_encoder))
 
         if self.model_cfg.flow_encoder not in [None, False]:
             if self.model_cfg.feature_normalize_type == "all":
                 self.num_features += len(feature_normalize_types) -1
-                print("Using All Flow Features!")
+                print("Using All Flow Features with Encoder {}".format(self.model_cfg.flow_encoder))
             elif self.model_cfg.feature_normalize_type in feature_normalize_types:
                 self.num_features += 1  
-                print("Using {} Flow Feature".format(self.model_cfg.feature_normalize_type))
+                print("Using {} Flow Feature with Encoder {}".format(self.model_cfg.feature_normalize_type, self.model_cfg.flow_encoder))
         
         assert self.num_features in [1, 2, 3, 4, 8], "Invalid total number of {} features!".format(self.num_features)
         
@@ -2161,6 +2174,8 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
                 padding=0,
                 bias=True,
             )
+        elif self.model_cfg.x_encoder == "dgcnn":
+            self.x_embedder = DGCNN(input_dims=in_channels, emb_dims=main_hidden_size)
         elif not self.model_cfg.x_encoder:
             self.x_embedder = None
         else:
@@ -2177,9 +2192,7 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
                 bias=True,
             )
         elif self.model_cfg.y_encoder == "dgcnn":
-            self.y_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=main_hidden_size
-            )
+            self.y_embedder = DGCNN(input_dims=in_channels, emb_dims=main_hidden_size)
         else:
             raise ValueError(f"Invalid y_encoder: {self.model_cfg.y_encoder}")            
 
@@ -2215,6 +2228,8 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
                 padding=0,
                 bias=True,
             )
+        elif self.model_cfg.onehot_encoder == "dgcnn":
+            self.onehot_encoder = DGCNN(input_dims=2, emb_dims=per_hidden_size)
         elif not self.model_cfg.onehot_encoder:
             self.onehot_encoder = None
         else:
@@ -2229,6 +2244,8 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
                 padding=0,
                 bias=True,
             )
+        elif self.model_cfg.recon_encoder == "dgcnn":
+            self.recon_encoder = DGCNN(input_dims=in_channels, emb_dims=per_hidden_size)
         elif not self.model_cfg.recon_encoder:
             self.recon_encoder = None
         else:
@@ -2251,12 +2268,20 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
             else:
                 self.context_encoders[self.model_cfg.feature_context_type] = nn.Conv1d(
                     in_channels,
-                    per_hidden_size,   # BUG: Need to set this to main_hidden_size when noise_flow is None and num_features=3
+                    per_hidden_size,
                     kernel_size=1,
                     stride=1,
                     padding=0,
                     bias=True,
                 )
+        elif self.model_cfg.context_encoder == "dgcnn":
+            assert self.model_cfg.feature_context_type in feature_context_types, "feature_context_type must be one of [\"anchor_mean\", \"action_mean\", \"all\"]"
+            self.context_encoders = nn.ModuleDict()
+            if self.model_cfg.feature_context_type == "all":
+                for c_type in feature_context_types:
+                    self.context_encoders[c_type] = DGCNN(input_dims=in_channels, emb_dims=per_hidden_size)
+            else:
+                self.context_encoders[self.model_cfg.feature_context_type] = DGCNN(input_dims=in_channels, emb_dims=per_hidden_size)
         elif not self.model_cfg.context_encoder:
             self.context_encoders = None
         else:
@@ -2279,12 +2304,20 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
             else:
                 self.flow_encoders[self.model_cfg.feature_normalize_type] = nn.Conv1d(
                     in_channels,
-                    per_hidden_size,
+                    per_hidden_size,   # BUG: Need to set this to main_hidden_size when noise_flow is None and num_features=3
                     kernel_size=1,
                     stride=1,
                     padding=0,
                     bias=True,
                 )
+        elif self.model_cfg.flow_encoder == "dgcnn":
+            assert self.model_cfg.feature_normalize_type in feature_normalize_types, "feature_normalize_types must be one of [\"unnorm\", \"unit\", \"clip\", \"zeromean\", \"all\"]"
+            self.flow_encoders = nn.ModuleDict()
+            if self.model_cfg.feature_normalize_type == "all":
+                for n_type in feature_normalize_types:
+                    self.flow_encoders[n_type] = DGCNN(input_dims=in_channels, emb_dims=per_hidden_size)
+            else:
+                self.flow_encoders[self.model_cfg.feature_normalize_type] = DGCNN(input_dims=in_channels, emb_dims=per_hidden_size) # BUG: Need to set this to main_hidden_size when noise_flow is None and num_features=3
         elif not self.model_cfg.flow_encoder:
             self.flow_encoders = None
         else:
@@ -2317,7 +2350,7 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
         self.apply(_basic_init)
 
         # Initialize x_embed like nn.Linear (instead of nn.Conv2d):
-        if self.x_embedder is not None:
+        if self.model_cfg.x_encoder == "mlp":
             w = self.x_embedder.weight.data
             nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
             nn.init.constant_(self.x_embedder.bias, 0)
@@ -2522,7 +2555,7 @@ class PN2_DiT_PointCloud_Cross_Flow_Feature(nn.Module):
         if self.model_cfg.x_encoder is not None:
             if self.model_cfg.onehot_encoder not in [None, False]:
                 self.num_features += 1
-                print("Using One-Hot Encoding Feature!")
+                print("Using One-Hot Encoding Feature")
 
             if self.model_cfg.recon_encoder not in [None, False]:
                 self.num_features += 1
@@ -2531,7 +2564,7 @@ class PN2_DiT_PointCloud_Cross_Flow_Feature(nn.Module):
             if self.model_cfg.context_encoder not in [None, False]:
                 if self.model_cfg.feature_context_type == "all":
                     self.num_features += len(feature_context_types) -1
-                    print("Using All Contextual Features!")
+                    print("Using All Contextual Features")
                 elif self.model_cfg.feature_context_type in feature_context_types:
                     self.num_features += 1
                     print("Using {} Context Feature".format(self.model_cfg.feature_context_type))
@@ -2539,7 +2572,7 @@ class PN2_DiT_PointCloud_Cross_Flow_Feature(nn.Module):
             if self.model_cfg.flow_encoder not in [None, False]:
                 if self.model_cfg.feature_normalize_type == "all":
                     self.num_features += len(feature_normalize_types) -1
-                    print("Using All Flow Features!")
+                    print("Using All Flow Features")
                 elif self.model_cfg.feature_normalize_type in feature_normalize_types:
                     self.num_features += 1  
                     print("Using {} Flow Feature".format(self.model_cfg.feature_normalize_type))

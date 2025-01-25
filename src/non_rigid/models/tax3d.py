@@ -409,6 +409,22 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             self.global_step % self.additional_train_logging_period == 0
         )
 
+        # Perform gradient monitoring after backward pass
+        max_grad = 0
+        for name, param in self.network.named_parameters():
+            if param.grad is not None:
+                grad_norm = param.grad.data.norm(2).item()  # Compute L2 norm of gradient
+                max_grad = max(max_grad, grad_norm)
+        #print(max_grad)
+        # Log gradient norm
+        self.log("train/max_grad_norm", max_grad, prog_bar=True)
+        if max_grad > 1e3:  # Example threshold for gradient explosion
+            self.log("train/grad_warning", 1.0)
+            print(f"Warning: Exploding gradient detected! Max Gradient Norm: {max_grad:.4f}")
+
+        # Register a backward hook to monitor gradients
+        #self.trainer.on_after_backward = monitor_gradients
+
         # additional logging
         if do_additional_logging:
             # winner-take-all predictions
@@ -640,3 +656,23 @@ class FeatureCrossDisplacementModule(DenseDisplacementDiffusionModule):
             "pc_anchor_viz": pc_anchor_viz,
         }
         return viz_args
+    
+
+
+
+
+
+
+
+
+
+        # Gradient monitoring
+        max_grad = 0
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                grad_norm = param.grad.data.norm(2).item()  # L2 norm of the gradient
+                max_grad = max(max_grad, grad_norm)
+
+        print(f"Max Gradient Norm: {max_grad:.4f}")
+        if max_grad > 1e3:  # Threshold for gradient explosion
+            print(f"Warning: Exploding gradient detected! Max Gradient Norm: {max_grad:.4f}")

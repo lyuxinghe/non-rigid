@@ -1,4 +1,4 @@
-lr: 8e-5
+lr: 1e-4
 lr_warmup_steps: 100
 weight_decay: 1e-5
 epochs: 50000
