@@ -165,12 +165,7 @@ def load_checkpoint_config_from_wandb(current_cfg, task_overrides, entity, proje
     # grab run config from wandb
     api = wandb.Api()
     run_cfg = OmegaConf.create(api.run(f"{entity}/{project}/{run_id}").config)
-    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ run_cfg @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-    print(run_cfg)
-    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ current_cfg @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-    print(current_cfg)
-    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+
     # check for consistency between task overrides and original run config
     inconsistent_keys = []
     for ovrd in task_overrides:
@@ -200,7 +195,7 @@ def load_checkpoint_config_from_wandb(current_cfg, task_overrides, entity, proje
         current_cfg.dataset.train_size = None
         current_cfg.dataset.val_size = None
     current_cfg.dataset.data_dir = current_data_dir
-    #current_cfg.model.name= "feature_df_cross"
+
     return current_cfg
 
 # This matching function
