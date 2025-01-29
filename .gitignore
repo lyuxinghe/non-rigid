@@ -387,3 +387,5 @@ wandb_artifacts/
 logs/
 
 .singularity_images/
+/scripts/vis
+/scripts/draft.py
