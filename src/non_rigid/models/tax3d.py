@@ -19,6 +19,7 @@ from torch_geometric.nn import fps
 
 from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
+from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
 from non_rigid.models.dit.diffusion import create_diffusion
 from non_rigid.models.dit.models import DiT_PointCloud_Unc as DiT_pcu
 from non_rigid.models.dit.models import (
@@ -150,6 +151,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         super().__init__()
         self.network = network
         self.model_cfg = cfg.model
+        self.dataset_cfg = cfg.dataset
+        self.wandb_cfg = cfg.wandb
         self.prediction_type = self.model_cfg.type # flow or point
         self.mode = cfg.mode # train or eval
 
@@ -325,11 +328,13 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         ground_truth = batch[self.label_key].to(self.device)
         seg = batch["seg"].to(self.device)
+        goal_pc = batch["pc"].to(self.device)
 
         # re-shaping and expanding for winner-take-all
         bs = ground_truth.shape[0]
         ground_truth = expand_pcd(ground_truth, num_samples)
         seg = expand_pcd(seg, num_samples)
+        goal_pc = expand_pcd(goal_pc, num_samples)
 
         # generating diffusion predictions
         # TODO: this should probably specific full_prediction=False
@@ -346,12 +351,46 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         winner = torch.argmin(rmse, dim=-1)
         rmse_wta = rmse[torch.arange(bs), winner]
         pred_wta = pred[torch.arange(bs), winner]
-        return {
-            "pred": pred,
-            "pred_wta": pred_wta,
-            "rmse": rmse,
-            "rmse_wta": rmse_wta,
-        }
+
+        if self.dataset_cfg.material == "rigid":
+            T_goal2world = Transform3d(
+                matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
+            )
+
+            pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
+            goal_point_world = T_goal2world.transform_points(goal_pc)
+            
+            translation_errs, rotation_errs = svd_estimation(pred_point_world, goal_point_world, return_magnitude=True)
+
+            translation_errs = translation_errs.reshape(bs, num_samples)
+            rotation_errs = rotation_errs.reshape(bs, num_samples)
+
+            trans_winner = torch.argmin(translation_errs, dim=-1)
+            rot_winner = torch.argmin(rotation_errs, dim=-1)
+
+            translation_err_wta = translation_errs[torch.arange(bs), trans_winner]
+            rotation_err_wta = rotation_errs[torch.arange(bs), rot_winner]
+            
+            return {
+                "pred": pred,
+                "pred_wta": pred_wta,
+                "rmse": rmse,
+                "rmse_wta": rmse_wta,
+                "trans": translation_errs,
+                "trans_wta": translation_err_wta,
+                "rot": rotation_errs,
+                "rot_wta": rotation_err_wta,
+            }
+
+        else:
+            return {
+                "pred": pred,
+                "pred_wta": pred_wta,
+                "rmse": rmse,
+                "rmse_wta": rmse_wta,
+            }
+
+
 
     def log_viz_to_wandb(self, batch, pred_wta_dict, tag):
         """
@@ -409,43 +448,62 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             self.global_step % self.additional_train_logging_period == 0
         )
 
+        '''
         # Perform gradient monitoring after backward pass
         max_grad = 0
         for name, param in self.network.named_parameters():
             if param.grad is not None:
                 grad_norm = param.grad.data.norm(2).item()  # Compute L2 norm of gradient
                 max_grad = max(max_grad, grad_norm)
-        #print(max_grad)
+        
         # Log gradient norm
         self.log("train/max_grad_norm", max_grad, prog_bar=True)
         if max_grad > 1e3:  # Example threshold for gradient explosion
             self.log("train/grad_warning", 1.0)
             print(f"Warning: Exploding gradient detected! Max Gradient Norm: {max_grad:.4f}")
-
-        # Register a backward hook to monitor gradients
-        #self.trainer.on_after_backward = monitor_gradients
+        '''
 
         # additional logging
         if do_additional_logging:
-            # winner-take-all predictions
-            pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
+            # TODO: VERIFY WHETHER THIS SHOULD BE TURNED INTO EVAL & NO GRAD!
+            self.eval()
+            with torch.no_grad():
+                # winner-take-all predictions
+                pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
 
-            ####################################################
-            # logging training wta metrics
-            ####################################################
-            self.log_dict(
-                {
-                    "train/rmse": pred_wta_dict["rmse"].mean(),
-                    "train/rmse_wta": pred_wta_dict["rmse_wta"].mean(),
-                },
-                add_dataloader_idx=False,
-                prog_bar=True,
-            )
+                ####################################################
+                # logging training wta metrics
+                ####################################################
+                self.log_dict(
+                    {
+                        "train/rmse": pred_wta_dict["rmse"].mean(),
+                        "train/rmse_wta": pred_wta_dict["rmse_wta"].mean(),
+                    },
+                    add_dataloader_idx=False,
+                    prog_bar=True,
+                )
 
-            ####################################################
-            # logging visualizations
-            ####################################################
-            self.log_viz_to_wandb(batch, pred_wta_dict, "train")
+                if self.dataset_cfg.material == "rigid":
+                    ####################################################
+                    # logging rigid metrics (translation & rotation)
+                    ####################################################
+                    self.log_dict(
+                        {
+                            "train/trans": pred_wta_dict["trans"].mean(),
+                            "train/trans_wta": pred_wta_dict["trans_wta"].mean(),
+                            "train/rot": pred_wta_dict["rot"].mean(),
+                            "train/rot_wta": pred_wta_dict["rot_wta"].mean(),
+                        },
+                        add_dataloader_idx=False,
+                        prog_bar=True,
+                    )
+
+                ####################################################
+                # logging visualizations
+                ####################################################
+                self.log_viz_to_wandb(batch, pred_wta_dict, "train")
+
+                
 
         return loss
 
@@ -470,6 +528,21 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             prog_bar=True,
         )
 
+        if self.dataset_cfg.material == "rigid":
+            ####################################################
+            # logging rigid metrics (translation & rotation)
+            ####################################################
+            self.log_dict(
+                {
+                    f"val_trans_{dataloader_idx}": pred_wta_dict["trans"].mean(),
+                    f"val_trans_wta_{dataloader_idx}": pred_wta_dict["trans_wta"].mean(),
+                    f"val_rot_{dataloader_idx}": pred_wta_dict["rot"].mean(),
+                    f"val_rot_wta_{dataloader_idx}": pred_wta_dict["rot_wta"].mean(),
+                },
+                add_dataloader_idx=False,
+                prog_bar=True,
+            )
+
         ####################################################
         # logging visualizations
         ####################################################
@@ -479,12 +552,24 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         Prediction step for model evaluation. Computes winner-take-all metrics.
         """
-        # winner-take-all predictions
-        pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
-        return {
-            "rmse": pred_wta_dict["rmse"],
-            "rmse_wta": pred_wta_dict["rmse_wta"],
-        }
+        if self.dataset_cfg.material == "rigid":
+            # winner-take-all predictions
+            pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
+            return {
+                "rmse": pred_wta_dict["rmse"],
+                "rmse_wta": pred_wta_dict["rmse_wta"],
+                "trans": pred_wta_dict["trans"].mean(),
+                "trans_wta": pred_wta_dict["trans_wta"].mean(),
+                "rot": pred_wta_dict["rot"].mean(),
+                "rot_wta": pred_wta_dict["rot_wta"].mean(),
+            }
+        else:
+            # winner-take-all predictions
+            pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
+            return {
+                "rmse": pred_wta_dict["rmse"],
+                "rmse_wta": pred_wta_dict["rmse_wta"],
+            }
     
 
 
@@ -657,22 +742,3 @@ class FeatureCrossDisplacementModule(DenseDisplacementDiffusionModule):
         }
         return viz_args
     
-
-
-
-
-
-
-
-
-
-        # Gradient monitoring
-        max_grad = 0
-        for name, param in model.named_parameters():
-            if param.grad is not None:
-                grad_norm = param.grad.data.norm(2).item()  # L2 norm of the gradient
-                max_grad = max(max_grad, grad_norm)
-
-        print(f"Max Gradient Norm: {max_grad:.4f}")
-        if max_grad > 1e3:  # Threshold for gradient explosion
-            print(f"Warning: Exploding gradient detected! Max Gradient Norm: {max_grad:.4f}")

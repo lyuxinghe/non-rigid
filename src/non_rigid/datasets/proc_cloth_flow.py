@@ -544,14 +544,14 @@ class DeformablePlacementDataset(data.Dataset):
         return item
 
 
-class UpgradeDeformablePlacementDataset(data.Dataset):
+class DeformablePlacementFeatureDataset(data.Dataset):
     def __init__(self, root, dataset_cfg, split):
         super().__init__()
         self.root = root
         self.split = split
         self.dataset_dir = self.root / self.split
         self.num_demos = int(len(os.listdir(self.dataset_dir)))
-        print(self.num_demos)
+        print("Split: {}, Num of Demo: {}".format(self.split, self.num_demos))
         self.dataset_cfg = dataset_cfg
 
         # determining dataset size - if not specified, use all demos in directory once
@@ -715,11 +715,11 @@ DATASET_FN = {
     "point": DeformablePlacementDataset,# ProcClothPointDataset,
 }
 
-UPGRADE_DATASET_FN = {
+F_DATASET_FN = {
     # "cloth": ProcClothFlowDataset,
     # "cloth_point": ProcClothPointDataset,
-    "flow": UpgradeDeformablePlacementDataset, #ProcClothFlowDataset,
-    "point": UpgradeDeformablePlacementDataset, # ProcClothPointDataset,
+    "flow": DeformablePlacementFeatureDataset, #ProcClothFlowDataset,
+    "point": DeformablePlacementFeatureDataset, # ProcClothPointDataset,
 }
 
 # TODO: rename this to Deformable Data Module or something
@@ -878,13 +878,13 @@ class ProcClothFlowFeatureDataModule(L.LightningDataModule):
             #self.dataset_cfg.translation_variance = 0.0
         
         
-        self.train_dataset = UPGRADE_DATASET_FN[self.dataset_cfg.type](
+        self.train_dataset = F_DATASET_FN[self.dataset_cfg.type](
             self.root, self.dataset_cfg, "train_tax3d"
         )
-        self.val_dataset = UPGRADE_DATASET_FN[self.dataset_cfg.type](
+        self.val_dataset = F_DATASET_FN[self.dataset_cfg.type](
             self.root, self.dataset_cfg, "val_tax3d"
         )
-        self.val_ood_dataset = UPGRADE_DATASET_FN[self.dataset_cfg.type](
+        self.val_ood_dataset = F_DATASET_FN[self.dataset_cfg.type](
             self.root, self.dataset_cfg, "val_ood_tax3d"
         )
     

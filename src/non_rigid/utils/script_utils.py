@@ -33,7 +33,7 @@ from non_rigid.models.tax3d import (
 )
 
 from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, ProcClothFlowFeatureDataModule
-
+from non_rigid.datasets.rigid import RigidDataModule, RigidFeatureDataModule
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
 
@@ -123,6 +123,11 @@ def create_datamodule(cfg):
             datamodule_fn = ProcClothFlowFeatureDataModule
         else:
             datamodule_fn = ProcClothFlowDataModule
+    elif cfg.dataset.name == "ndf":
+        if "feature" in cfg.model.name:
+            datamodule_fn = RigidFeatureDataModule
+        else:
+            datamodule_fn = RigidDataModule
     else:
         raise ValueError(f"Invalid dataset name: {cfg.dataset.name}")
 

@@ -70,6 +70,7 @@ def maybe_apply_augmentations(
     min_num_points: int,
     ball_occlusion_param: Dict[str, Any],
     plane_occlusion_param: Dict[str, Any],
+    return_mask=True,
 ) -> torch.Tensor:
     """
     Potentially applies augmentations to the point cloud, considering the dataset configuration e.g. min. number of points.
@@ -88,24 +89,30 @@ def maybe_apply_augmentations(
         return points
 
     new_points = points
+    new_mask = torch.ones(new_points.shape[0], dtype=torch.bool)
+
     # Maybe apply ball occlusion
     if torch.rand(1) < ball_occlusion_param["ball_occlusion"]:
-        temp_points = ball_occlusion(
-            new_points, radius=ball_occlusion_param["ball_radius"], return_mask=False
+        temp_points, temp_mask = ball_occlusion(
+            new_points, radius=ball_occlusion_param["ball_radius"], return_mask=True
         )
         assert isinstance(temp_points, torch.Tensor)
         if temp_points.shape[0] > min_num_points:
             new_points = temp_points
+            new_mask = new_mask * temp_mask
 
     # Maybe apply plane occlusion
     if torch.rand(1) < plane_occlusion_param["plane_occlusion"]:
-        temp_points = plane_occlusion(
+        temp_points, temp_mask = plane_occlusion(
             new_points,
             stand_off=plane_occlusion_param["plane_standoff"],
-            return_mask=False,
+            return_mask=True,
         )
         assert isinstance(temp_points, torch.Tensor)
         if temp_points.shape[0] > min_num_points:
             new_points = temp_points
+            new_mask = new_mask * temp_mask
 
+    if return_mask:
+        return new_points, new_mask
     return new_points

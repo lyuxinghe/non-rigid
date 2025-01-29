@@ -42,6 +42,6 @@ fi
 WANDB_MODE=$WANDB_MODE python train.py \
   $MODEL_PARAMS \
   $DATASET_PARAMS \
-  wandb.group=proc_cloth \
+  wandb.group=tax3d_upgrade \
   resources.gpus=[${GPU_INDEX}] \
   $COMMAND

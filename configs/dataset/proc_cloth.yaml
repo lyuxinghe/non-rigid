@@ -4,6 +4,7 @@ data_dir: "~/Documents/data/proccloth/"
 # data_dir : "~/Documents/data/real world"
 type: point # (flow, point) Type of dataset
 source: real # (real, dedo, etc.) Source of the dataset
+material: deform
 
 train_size: null # (int, null) Length of the train dataset
 val_size: null # (int, null) Length of the validation dataset

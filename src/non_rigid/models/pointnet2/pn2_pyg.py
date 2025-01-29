@@ -148,7 +148,6 @@ class FPModule(torch.nn.Module):
 
         # Run them
         x = self.net(x)
-        breakpoint()
         return x, pos_skip, batch_skip
 
 
@@ -262,7 +261,6 @@ class PN2Shallow(nn.Module):
             out_channels: The dimension of the per-point output channels.
             p: Architecture and hyperparameters for the network. Default is the original set from the paper.
         """
-        #breakpoint()
         super().__init__()
 
         self.in_ch = in_channels
@@ -373,7 +371,6 @@ class PN2Dense(nn.Module):
             out_channels: The dimension of the per-point output channels.
             p: Architecture and hyperparameters for the network. Default is the original set from the paper.
         """
-        #breakpoint()
         super().__init__()
 
         self.in_ch = in_channels
