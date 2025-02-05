@@ -1452,7 +1452,7 @@ class PN2_DiT_PointCloud_Cross(nn.Module):
         
         ### VARIANT 2.1.2 ###
         # We'll use pn2_pyg.PN2Dense code bade
-        # We'll use PN2 as encoder for x0+x and y seperatelt. 
+        # We'll use PN2 as encoder for x0+x and y seperately. 
         # 1. For the PN2 for action object, noise x will be used as feature, and x0 will be used for positional encoding. 
         # 2. For the PN2 for anchor object, there will be no feature, and y will be used for positional encoding.
 
@@ -2417,12 +2417,11 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
             add_emb = self.x_embedder(x)
             x_emb = torch.cat([x_emb, add_emb], dim=1)
 
-        '''
-        if self.model_cfg.x0_encoder is not None:
-            assert x0 is not None, "x0 features must be provided if x0_encoder is not None"
-            x0_emb = self.x0_embedder(x0)
-            x_emb = torch.cat([x_emb, x0_emb], dim=1)
-        '''
+        #if self.model_cfg.x0_encoder is not None:
+        #    assert x0 is not None, "x0 features must be provided if x0_encoder is not None"
+        #    x0_emb = self.x0_embedder(x0)
+        #    x_emb = torch.cat([x_emb, x0_emb], dim=1)
+        
         if self.onehot_encoder is not None:
             assert P_A_one_hot is not None, "P_A_one_hot features must be provided if onehot_encoder is not None"
             add_emb = self.onehot_encoder(P_A_one_hot)

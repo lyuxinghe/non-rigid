@@ -7,31 +7,39 @@
 # 4. the rest of the arguments for the train.py script
 
 # Example usage:
-# ./multi_cloth_train.sh 0 cross_point_relative online
-# ./multi_cloth_train.sh 1 scene_flow disabled dataset.multi_cloth.hole=single dataset.multi_cloth.size=100
+# ./train_rigid.sh 0 cross_flow_relative ndf offline
+# ./train_rigid.sh 0 cross_flow_relative rpdiff offline
+
+# Resuming from a crashed run:
+#./train_rigid.sh 0 feature_df_cross rpdiff online checkpoint.run_id=2nekrf5u checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-02-02/12-14-50/checkpoints/last.ckpt'
+
 
 GPU_INDEX=$1
 MODEL_TYPE=$2
-WANDB_MODE=$3
+DATASET_NAME=$3
+WANDB_MODE=$4
+shift
 shift
 shift
 shift
 COMMAND=$@
 
-
-# relative frame cross flow
 if [ $MODEL_TYPE == "cross_flow_relative" ]; then
-  echo "Training relative flow model on NDF with command: $COMMAND."
+  echo "Training cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=flow"
-  DATASET_PARAMS="dataset=ndf dataset.type=flow dataset.scene=False dataset.world_frame=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False"
+
 elif [ $MODEL_TYPE == "feature_df_cross" ]; then
-  echo "Training feature_df_cross model with command: $COMMAND."
+  echo "Training feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=feature_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=ndf dataset.type=flow dataset.scene=False dataset.world_frame=False"
-else
-  echo "Invalid model type."
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False"
+elif [ $MODEL_TYPE == "pn2_df_cross" ]; then
+  echo "Training pointnet++ w/ cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=pn2_df_cross model.type=flow"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False"
 fi
 
 WANDB_MODE=$WANDB_MODE python train.py \
@@ -40,6 +48,9 @@ WANDB_MODE=$WANDB_MODE python train.py \
   wandb.group=tax3d_upgrade_rigid \
   resources.gpus=[${GPU_INDEX}] \
   $COMMAND
+
+
+
 
 <<COMMENT
 # scene flow model - no object centric processing

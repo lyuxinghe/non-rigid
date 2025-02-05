@@ -11,14 +11,14 @@ feature: flow # (flow, point) Type of feature base
 encoder_backbone: mlp # (mlp, pn2)
 
 # model encoders
-x_encoder: mlp # (mlp, dgcnn, off) Encoder current timestep x
+x_encoder: off # (mlp, dgcnn, off) Encoder current timestep x
 y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
 x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)
 
 # feature encoders
 onehot_encoder: off # (mlp, dgcnn, off) Enooder for one-hot encoding of anchor/action. off set the value to False
 recon_encoder: mlp # (mlp, dgcnn, off) Encoder for reconstructed pcd of action (not used in option 1)
-context_encoder: off # (mlp, dgcnn, off) Encoder for the relative context (action pcd in different frames, e.g. P_A - y, P_A - y_action)
+context_encoder: mlp # (mlp, dgcnn, off) Encoder for the relative context (action pcd in different frames, e.g. P_A - y, P_A - y_action)
 flow_encoder: mlp # (mlp, dgcnn, off) Encoder for the noisy flow (flow P_A_hat - P_A with different normalization, e.g. P_A - y, P_A - y_action)
 
 # enabled features

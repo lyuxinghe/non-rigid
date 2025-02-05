@@ -118,12 +118,12 @@ def create_datamodule(cfg):
         )
 
     # check dataset name
-    if cfg.dataset.name == "proc_cloth":
+    if cfg.dataset.name == "deform":
         if "feature" in cfg.model.name:
             datamodule_fn = ProcClothFlowFeatureDataModule
         else:
             datamodule_fn = ProcClothFlowDataModule
-    elif cfg.dataset.name == "ndf":
+    elif cfg.dataset.material == "rigid":
         if "feature" in cfg.model.name:
             datamodule_fn = RigidFeatureDataModule
         else:

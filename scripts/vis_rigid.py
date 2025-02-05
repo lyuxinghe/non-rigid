@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import open3d as o3d
+from tqdm import tqdm
 
 def visualize_point_cloud_with_ply(file_path, save_dir, views="all"):
     """
@@ -71,7 +72,101 @@ def visualize_point_cloud_with_ply(file_path, save_dir, views="all"):
         del scene  # Ensure the renderer is destroyed
 
 
-def visualize_point_cloud(file_path, save_dir, views="all"):
+def rpdiff_visualize_point_cloud(file_path, save_dir, views="all", num_vis=100):
+    # Define supported views
+    supported_views = ["default", "top", "side", "diagonal"]
+
+    # Determine which views to render
+    views_to_render = supported_views if views == "all" else [views]
+
+    # Handle directory input
+    if os.path.isdir(file_path):
+        input_dir = os.path.basename(os.path.normpath(file_path))  # Name of input directory
+        save_dir = os.path.join(save_dir, input_dir)  # Create output folder for the directory
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Get all NPZ files in the directory
+        npz_files = [os.path.join(file_path, f) for f in os.listdir(file_path) if f.endswith(".npz")]
+
+        if not npz_files:
+            print(f"No NPZ files found in directory: {file_path}")
+            return
+
+        npz_files = npz_files[:num_vis]
+
+        # Process all NPZ files with tqdm progress bar
+        for npz_file in tqdm(npz_files, desc="Processing NPZ files"):
+            visualize_point_cloud(npz_file, save_dir, views_to_render)
+    
+    else:
+        # Process a single NPZ file
+        visualize_point_cloud(file_path, save_dir, views)
+
+
+def visualize_point_cloud(file_path, save_dir, views_to_render):
+    """Processes and visualizes a single point cloud file."""
+    
+    # Create the subdirectory based on the input file name
+    file_name = os.path.splitext(os.path.basename(file_path))[0]
+    file_save_dir = os.path.join(save_dir, file_name)
+    os.makedirs(file_save_dir, exist_ok=True)
+
+    # Load the NPZ file
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    data = np.load(file_path, allow_pickle=True)
+
+    anchor_pc = data['multi_obj_final_pcd'].item()['parent']
+    action_pc = data['multi_obj_final_pcd'].item()['child']
+
+    # Create Open3D point clouds
+    action_cloud = o3d.geometry.PointCloud()
+    anchor_cloud = o3d.geometry.PointCloud()
+    action_cloud.points = o3d.utility.Vector3dVector(action_pc)
+    anchor_cloud.points = o3d.utility.Vector3dVector(anchor_pc)
+    action_cloud.paint_uniform_color([1, 0, 0])  # Red
+    anchor_cloud.paint_uniform_color([0, 0, 1])  # Blue
+
+    # Compute bounding box for dynamic camera positioning
+    combined_cloud = action_cloud + anchor_cloud
+    bounding_box = combined_cloud.get_axis_aligned_bounding_box()
+    center = bounding_box.get_center()
+    extent = bounding_box.get_extent()
+
+    # Define camera positions for views
+    camera_views = {
+        "default": center + np.array([0, 0, max(extent) * 2.5]),
+        "top": center + np.array([0, max(extent) * 2.5, 0]),
+        "side": center + np.array([max(extent) * 2.5, 0, 0]),
+        "diagonal": center + np.array([max(extent) * 2.5, max(extent) * 2.5, max(extent) * 2.5]),
+    }
+
+
+    # Render and save each view
+    width, height = 1920, 1080  # Resolution
+    for view in views_to_render:
+        eye = camera_views[view]
+        up = [0, 1, 0]
+
+        # Create OffscreenRenderer
+        scene = o3d.visualization.rendering.OffscreenRenderer(width, height)
+        scene.scene.add_geometry("action", action_cloud, o3d.visualization.rendering.MaterialRecord())
+        scene.scene.add_geometry("anchor", anchor_cloud, o3d.visualization.rendering.MaterialRecord())
+        scene.scene.camera.look_at(center.tolist(), eye.tolist(), up)
+
+        # Render the image and save it
+        image = scene.render_to_image()
+        save_path = os.path.join(file_save_dir, f"{view}_view.png")
+        o3d.io.write_image(save_path, image)
+        print(f"Saved {view} view visualization to {save_path}")
+
+        # Explicitly clear the renderer to free up resources
+        scene.scene.clear_geometry()
+        del scene  # Ensure the renderer is destroyed
+
+
+def ndf_visualize_point_cloud(file_path, save_dir, views="all"):
     # Define supported views
     supported_views = ["default", "top", "side", "diagonal"]
 
@@ -148,7 +243,7 @@ def visualize_point_cloud(file_path, save_dir, views="all"):
         del scene  # Ensure the renderer is destroyed
 
 
-def are_anchor_pcds_identical(file_paths):
+def are_anchor_pcds_identical_ndf(file_paths):
     """
     Check if the anchor point clouds from a list of .npz files are identical.
 
@@ -196,13 +291,37 @@ def are_anchor_pcds_identical(file_paths):
     return True
 
 
+def are_anchor_pcds_identical_rpdiff(file_path):
+    """
+    Check if the anchor point clouds from a list of .npz files are identical.
+
+    Args:
+        file_path: File paths to .npz files.
+
+    Returns:
+        bool: True if all anchor point clouds are identical, False otherwise.
+    """
+    if not file_path:
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    demo = np.load(file_path, allow_pickle=True)
+
+    parent_start_pcd = demo['multi_obj_start_pcd'].item()['parent']
+    child_start_pcd = demo['multi_obj_start_pcd'].item()['child']
+    parent_final_pcd = demo['multi_obj_final_pcd'].item()['parent']
+    child_final_pcd = demo['multi_obj_final_pcd'].item()['child']
+    relative_trans = demo['relative_trans']
+
+    breakpoint()
+    return True
+
 if __name__ == "__main__":
-    '''
-    file_path = "/data/lyuxing/tax3d/ndf/mugplace/train_data/renders/0_init_obj_points.npz"  # Replace with actual file path
+    
+    file_path = "/home/lyuxing/Desktop/third_party/rpdiff/src/rpdiff/data/task_demos/mug_rack_easy_single_test/task_name_mug_on_rack/"  # Replace with actual file path
     save_dir = "./vis"  # Directory to save the visualizations
     views = "all"  # Use "all" or any single view like "default", "top", "side", "diagonal"
-    visualize_point_cloud(file_path, save_dir, views)
-    '''
+    rpdiff_visualize_point_cloud(file_path, save_dir, views, num_vis=100)
+    
     '''
     file_list = [
         "/data/lyuxing/tax3d/ndf/mugplace/train_data/renders/0_init_obj_points.npz",
@@ -211,8 +330,15 @@ if __name__ == "__main__":
     ]  # Replace with the actual file paths
     are_anchor_pcds_identical(file_list)
     '''
-
+    
+    '''
     file_path = "/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_ndf_df_cross/2025-01-26/15-24-03/vis/step_0_viz.ply"
     save_dir = "./vis"
     views = "all" 
     visualize_point_cloud_with_ply(file_path, save_dir, views)
+    '''
+    
+    '''
+    file_path = '/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single/task_name_mug_on_rack/demo_aug_91_1.npz'
+    are_anchor_pcds_identical_rpdiff(file_path)
+    '''

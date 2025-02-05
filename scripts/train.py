@@ -109,6 +109,13 @@ def main(cfg):
     else:
         group = cfg.wandb.group
 
+    if cfg.checkpoint.run_id:
+        resume = 'must'
+        id = cfg.checkpoint.run_id
+    else:
+        resume = 'allow'
+        id = None
+
     logger = WandbLogger(
         entity=cfg.wandb.entity,
         project=cfg.wandb.project,
@@ -120,6 +127,8 @@ def main(cfg):
         job_type=cfg.job_type,
         save_code=True,  # This just has the main script.
         group=group,
+        resume=resume,
+        id = id,
     )
 
     ######################################################################
@@ -213,7 +222,7 @@ def main(cfg):
     ######################################################################
     # Train the model.
     ######################################################################
-
+    '''
     # this might be a little too "pythonic"
     if cfg.checkpoint.run_id:
         print(
@@ -229,9 +238,41 @@ def main(cfg):
         # #     {k.partition(".")[2]: v for k, v, in ckpt["state_dict"].items()}
         # # )
         # model.load_state_dict(ckpt["state_dict"])
+    
+
     else:
         print("Starting training from scratch.")
         ckpt_file = None
+    '''
+    if cfg.checkpoint.run_id:
+        print("Attempting to resume training from WandB checkpoint:", cfg.checkpoint.reference)
+
+        api = wandb.Api()
+        artifact_dir = cfg.wandb.artifact_dir
+
+        try:
+            artifact = api.artifact(cfg.checkpoint.reference, type="model")
+            ckpt_file = artifact.get_path("model.ckpt").download(root=artifact_dir)
+            print(f"Successfully downloaded checkpoint from WandB: {ckpt_file}")
+
+        except Exception as e:
+            print(f"Failed to load checkpoint from WandB. Error: {e}")
+
+            if cfg.checkpoint.local_ckpt:
+                print(f"Attempting to load from local path: {cfg.checkpoint.local_ckpt}")
+
+                try:
+                    ckpt_file = cfg.checkpoint.local_ckpt
+                    with open(ckpt_file, "rb") as f:
+                        print(f"Successfully loaded local checkpoint: {ckpt_file}")
+                except Exception as e:
+                    print(f"Failed to load checkpoint from local path. Error: {e}")
+                    ckpt_file = None  # Fallback to training from scratch
+
+    else:
+        print("Starting training from scratch.")
+        ckpt_file = None
+
 
     trainer.fit(model, datamodule=datamodule, ckpt_path=ckpt_file)
 

@@ -21,7 +21,7 @@ seed: 42
 task_type: None # Set during training loop based on dataset.
 
 resources:
-  num_workers: 4
+  num_workers: 16
   gpus:
     - 0
 
@@ -30,6 +30,7 @@ checkpoint:
   # If we want to load a model for a specific run, we can change that here.
   run_id: False
   reference: ${wandb.entity}/${wandb.project}/model-${checkpoint.run_id}:latest
+  local_ckpt: False
 
 wandb:
   # Assume no group provided, we will create a default one.

@@ -86,6 +86,9 @@ def maybe_apply_augmentations(
     """
 
     if points.shape[0] < min_num_points:
+        if return_mask:
+            mask = torch.ones(points.shape[0], dtype=torch.bool)
+            return points, mask
         return points
 
     new_points = points
