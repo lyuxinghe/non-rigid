@@ -1,4 +1,4 @@
-name: feature_df_cross
+name: pn2_feature_df_cross
 
 # Model settings
 type: flow # (flow, point) Type of model
@@ -8,15 +8,11 @@ learn_sigma: True # Learn sigma for diffusion
 rotary: False # Use rotary embedding for diffusion
 cross_atten: True
 feature: flow # (flow, point) Type of feature base
-encoder_backbone: mlp # (mlp, pn2)
+encoder_backbone: pn2 # (mlp, pn2)
 encoder_style: concat # (indiv, concat)
 
-# model encoders
-x_encoder: mlp # (mlp, dgcnn, off) Encoder current timestep x
-y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
-x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)
-
 # feature encoders
+noise_encoder: mlp # (mlp, dgcnn, off) Encoder for noisy-flow (aka. the diffusion variable). off set the value to False
 onehot_encoder: off # (mlp, dgcnn, off) Enooder for one-hot encoding of anchor/action. off set the value to False
 recon_encoder: mlp # (mlp, dgcnn, off) Encoder for reconstructed pcd of action (not used in option 1)
 context_encoder: mlp # (mlp, dgcnn, off) Encoder for the relative context (action pcd in different frames, e.g. P_A - y, P_A - y_action)
@@ -24,7 +20,7 @@ flow_encoder: mlp # (mlp, dgcnn, off) Encoder for the noisy flow (flow P_A_hat -
 
 # features types
 feature_context_type: action_mean # [anchor_mean, action_mean, all], reference type
-feature_normalize_type: zeromean # [unnorm, unit, clip, zeromean, all], normalization method for the noisy flow feature
+feature_flow_type: zeromean # [unnorm, unit, clip, zeromean, all], normalization method for the noisy flow feature
 
 # diffusion settings
 diff_train_steps: 100 # Number of diffusion steps during training

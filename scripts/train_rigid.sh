@@ -40,6 +40,11 @@ elif [ $MODEL_TYPE == "pn2_df_cross" ]; then
 
   MODEL_PARAMS="model=pn2_df_cross model.type=flow"
   DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False"
+elif [ $MODEL_TYPE == "pn2_feature_df_cross" ]; then
+  echo "Training pointnet++ w/ feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=pn2_feature_df_cross model.type=flow"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False"
 fi
 
 WANDB_MODE=$WANDB_MODE python train.py \

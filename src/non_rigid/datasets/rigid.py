@@ -546,12 +546,10 @@ class RPDiffDataset(data.Dataset):
         goal_anchor_pc = torch.as_tensor(parent_final_pcd).float()  # same as anchor_pc
         relative_trans = torch.as_tensor(relative_trans).float()
 
-        # TODO: apply scale factor if needed
-        # But if so, need to also adjust relative_trans
-        # Add distractor anchor point clouds
-        
-        #action_pc *= self.dataset_cfg.pcd_scale_factor
-        #pointanchor_pcs_anchor *= self.dataset_cfg.pcd_scale_factor
+        # TODO: apply scale factor to adjust relative_trans aw
+        action_pc *= self.dataset_cfg.pcd_scale_factor
+        anchor_pc *= self.dataset_cfg.pcd_scale_factor
+        goal_action_pc *= self.dataset_cfg.pcd_scale_factor
 
         action_seg = torch.ones(action_pc.shape[0], dtype=torch.bool)
         anchor_seg = torch.ones(anchor_pc.shape[0], dtype=torch.bool)
@@ -755,12 +753,10 @@ class RPDiffFeatureDataset(data.Dataset):
         goal_anchor_pc = torch.as_tensor(parent_final_pcd).float()  # same as anchor_pc
         relative_trans = torch.as_tensor(relative_trans).float()
 
-        # TODO: apply scale factor if needed
-        # But if so, need to also adjust relative_trans
-        # Add distractor anchor point clouds
-        
-        #action_pc *= self.dataset_cfg.pcd_scale_factor
-        #pointanchor_pcs_anchor *= self.dataset_cfg.pcd_scale_factor
+        # TODO: apply scale factor to adjust relative_trans aw
+        action_pc *= self.dataset_cfg.pcd_scale_factor
+        anchor_pc *= self.dataset_cfg.pcd_scale_factor
+        goal_action_pc *= self.dataset_cfg.pcd_scale_factor
 
         action_seg = torch.ones(action_pc.shape[0], dtype=torch.bool)
         anchor_seg = torch.ones(anchor_pc.shape[0], dtype=torch.bool)
@@ -920,12 +916,16 @@ DATASET_FN = {
 '''
 DATASET_FN = {
     "ndf": NDFDataset,
+    "ndf_fit": NDFDataset,
     "rpdiff": RPDiffDataset,
+    "rpdiff_fit": RPDiffDataset,
 }
 
 F_DATASET_FN = {
     "ndf": NDFFeatureDataset,
+    "ndf_fit": NDFFeatureDataset,
     "rpdiff": RPDiffFeatureDataset,
+    "rpdiff_fit": RPDiffFeatureDataset,
 }
 
 class RigidDataModule(L.LightningModule):

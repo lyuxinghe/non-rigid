@@ -31,6 +31,7 @@ from non_rigid.models.dit.models import (
     DiT_PointCloud_Cross_Flow_Feature,
     PN2_DiT_PointCloud_Cross,
     PN2_DiT_PointCloud,
+    PN2_DiT_PointCloud_Cross_Flow_Feature,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -83,12 +84,17 @@ def PN2_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
     hidden_size = 132 if use_rotary else 128
     return PN2_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
-
 def PN2_DiT_PointCloud_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
     print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_xS")
     hidden_size = 132 if use_rotary else 128
     return PN2_DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+
+def PN2_DiT_PointCloud_Cross_Flow_Feature_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_Cross_Flow_Feature_xS")
+    hidden_size = 132 if use_rotary else 128
+    return PN2_DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
 # TODO: clean up all unused functions
 DiT_models = {
@@ -108,6 +114,8 @@ DiT_models = {
     "PN2_DiT_PointCloud_Cross_xS": PN2_DiT_PointCloud_Cross_xS,
     # TAX3D+PN2 (self-atten)
     "PN2_DiT_PointCloud_xS": PN2_DiT_PointCloud_xS,
+    # Feature_TAX3D+PN2
+    "PN2_DiT_PointCloud_Cross_Flow_Feature_xS": PN2_DiT_PointCloud_Cross_Flow_Feature_xS,
 
 }
 
@@ -353,6 +361,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         pred_wta = pred[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
+            scaling_factor = self.dataset_cfg.pcd_scale_factor
+
             T_goal2world = Transform3d(
                 matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
             )
@@ -360,6 +370,9 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
             goal_point_world = T_goal2world.transform_points(goal_pc)
             
+            pred_point_world = pred_point_world / scaling_factor
+            goal_point_world = goal_point_world / scaling_factor
+
             translation_errs, rotation_errs = svd_estimation(pred_point_world, goal_point_world, return_magnitude=True)
 
             translation_errs = translation_errs.reshape(bs, num_samples)

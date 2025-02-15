@@ -100,6 +100,10 @@ def create_model(cfg):
         network_fn = DiffusionTransformerNetwork
         # module_fn = Tax3dModule
         module_fn = CrossDisplacementModule
+    elif cfg.model.name == "pn2_feature_df_cross":
+        network_fn = DiffusionTransformerNetwork
+        # module_fn = Tax3dModule
+        module_fn = FeatureCrossDisplacementModule
     else:
         raise ValueError(f"Invalid model name: {cfg.model.name}")
 
@@ -118,7 +122,7 @@ def create_datamodule(cfg):
         )
 
     # check dataset name
-    if cfg.dataset.name == "deform":
+    if cfg.dataset.material == "deform":
         if "feature" in cfg.model.name:
             datamodule_fn = ProcClothFlowFeatureDataModule
         else:

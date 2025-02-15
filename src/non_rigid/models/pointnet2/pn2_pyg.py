@@ -201,7 +201,7 @@ class PN2Encoder(nn.Module):
         return x
 
 @dataclass
-class PN2ShallowParams:
+class PN2SAGAParams:
     ###########################################################################
     # SET AGGREGATION
     ###########################################################################
@@ -239,12 +239,12 @@ class PN2ShallowParams:
     out_act: Literal["none", "softmax", "relu"] = "none"
 
 
-class PN2Shallow(nn.Module):
+class PN2SAGA(nn.Module):
     def __init__(
         self,
         in_channels: int = 0,
         out_channels: int = 3,
-        p: PN2ShallowParams = PN2ShallowParams(),
+        p: PN2SAGAParams = PN2SAGAParams(),
     ):
         """The PointNet++ "dense" network architecture, as proposed in the original paper.
         In general, the parameters "p" are architecture or hyperparameter choices for the network.
@@ -272,6 +272,106 @@ class PN2Shallow(nn.Module):
 
         # The Feature Propagation modules. This is the decoder.
         self.fp2 = FPModule(p.gsa_outdim + p.sa1_outdim, p.sa1_outdim, p.fp2)
+        self.fp1 = FPModule(p.sa1_outdim + in_channels, p.fp1_outdim, p.fp1)
+
+        # Final linear layers at the output.
+        self.lin1 = torch.nn.Linear(p.fp1_outdim, p.lin1_dim)
+        self.lin2 = torch.nn.Linear(p.lin1_dim, out_channels)
+        self.out_act = p.out_act
+
+    def forward(self, data: Data):
+        sa0_out = (data.x, data.pos, data.batch)
+
+        # Encode.
+        sa1_out = self.sa1(*sa0_out)
+        sa2_out = self.sa2(*sa1_out)
+
+        # Decode.
+        fp2_out = self.fp2(*sa2_out, *sa1_out)
+        x, _, _ = self.fp1(*fp2_out, *sa0_out)
+
+        # Final layers.
+        x = F.leaky_relu(self.lin1(x))
+        x = self.lin2(x)
+
+        if self.out_act != "none":
+            raise ValueError()
+
+        return x
+
+
+@dataclass
+class PN2SASAParams:
+    ###########################################################################
+    # SET AGGREGATION
+    ###########################################################################
+
+    # Layer 1. See SAParams for description.
+    sa1: SAParams = SAParams(
+        0.2, 0.2, MLPParams((64, 64), out_act="none", batch_norm=True), 64
+    )
+    sa1_outdim: int = 128
+
+    # Layer 2. See SAParams for description.
+    sa2: SAParams = SAParams(
+        0.25, 0.4, MLPParams((128, 128), out_act="none", batch_norm=False), 64
+    )
+    sa2_outdim: int = 256
+
+    ###########################################################################
+    # FEATURE PROPAGATION
+    # Since this is the decoder, execution happens 3->2->1.
+    ###########################################################################
+
+    # Layer 2. See FPParams for description.
+    fp2: FPParams = FPParams(MLPParams((256,), out_act="none", batch_norm=False), k=1)
+
+    # Layer 1. See FPParams for description.
+    fp1: FPParams = FPParams(
+        MLPParams((128, 128), out_act="none", batch_norm=False), k=3
+    )
+    fp1_outdim: int = 128
+
+    # Dimensions of the final linear layer.
+    lin1_dim: int = 128
+
+    # Output layer activation.
+    out_act: Literal["none", "softmax", "relu"] = "none"
+
+
+class PN2SASA(nn.Module):
+    def __init__(
+        self,
+        in_channels: int = 0,
+        out_channels: int = 3,
+        p: PN2SASAParams = PN2SASAParams(),
+    ):
+        """The PointNet++ "dense" network architecture, as proposed in the original paper.
+        In general, the parameters "p" are architecture or hyperparameter choices for the network.
+        The other arguments are structural ones, determining the input and output dimensionality.
+
+        It's a bit of a U-Net architecture, so I've written some automatic wiring to make sure that
+        the layers all agree.
+
+        Args:
+            in_channels: The number of non-XYZ channels attached to each point. For instance, no additional
+                         features would have in_channels=0, RGB features would be in_channels=3, a binary mask
+                         would be in_channels=1, etc. For a point cloud passed to the network with N points,
+                         the `x` property must be set on the object to a float tensor of shape [N x in_channels].
+            out_channels: The dimension of the per-point output channels.
+            p: Architecture and hyperparameters for the network. Default is the original set from the paper.
+        """
+        super().__init__()
+
+        self.in_ch = in_channels
+        self.out_ch = out_channels
+
+        # Construct the set aggregation modules. This is the encoder.
+        self.sa1 = SAModule(3 + self.in_ch, p.sa1_outdim, p=p.sa1)
+        self.sa2 = SAModule(3 + p.sa1_outdim, p.sa2_outdim, p=p.sa2)
+
+        # The Feature Propagation modules. This is the decoder.
+        self.fp2 = FPModule(p.sa2_outdim + p.sa1_outdim, p.sa1_outdim, p.fp2)
         self.fp1 = FPModule(p.sa1_outdim + in_channels, p.fp1_outdim, p.fp1)
 
         # Final linear layers at the output.
