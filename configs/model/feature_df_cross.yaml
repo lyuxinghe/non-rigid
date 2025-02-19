@@ -9,7 +9,7 @@ rotary: False # Use rotary embedding for diffusion
 cross_atten: True
 feature: flow # (flow, point) Type of feature base
 encoder_backbone: mlp # (mlp, pn2)
-encoder_style: concat # (indiv, concat)
+encoder_style: indiv # (indiv, concat)
 
 # model encoders
 x_encoder: mlp # (mlp, dgcnn, off) Encoder current timestep x
@@ -32,4 +32,5 @@ diff_inference_steps: 100 # Number of diffusion steps during inference
 diff_noise_schedule: linear # (linear, cosine) Noise schedule for diffusion
 diff_noise_scale: 1.0 # Scale of noise for diffusion
 diff_type: gaussian
+diff_translation_noise_scale: False # Scale of translation noise for diffusion, or False for disable   
 

@@ -1,11 +1,16 @@
 import numpy as np
 import os
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
-def load_proccloth(dir):
+
+def load_proccloth(dir, num_demos = None):
     npz_files = [f for f in os.listdir(dir) if f.endswith('.npz')]
     loaded_action = []
     loaded_anchor = []
+
+    if num_demos:
+        npz_files = npz_files[:num_demos]
 
     for npz_file in npz_files:
         file_path = os.path.join(dir, npz_file)
@@ -15,10 +20,13 @@ def load_proccloth(dir):
     
     return loaded_action, loaded_anchor
 
-def load_ndf(dir):
+def load_ndf(dir, num_demos = None):
     npz_files = [f for f in os.listdir(dir) if f.endswith('_teleport_obj_points.npz')]
     loaded_action = []
     loaded_anchor = []
+
+    if num_demos:
+        npz_files = npz_files[:num_demos]
 
     for npz_file in npz_files:
         file_path = os.path.join(dir, npz_file)
@@ -35,10 +43,13 @@ def load_ndf(dir):
 
     return loaded_action, loaded_anchor
 
-def load_rpdiff(dir):
+def load_rpdiff(dir, num_demos = None):
     npz_files = [f for f in os.listdir(dir) if f.endswith('.npz')]
     loaded_action = []
     loaded_anchor = []
+
+    if num_demos:
+        npz_files = npz_files[:num_demos]
 
     for npz_file in npz_files:
         file_path = os.path.join(dir, npz_file)
@@ -107,9 +118,74 @@ def calculate_mean_bounding_box_excluding_outliers(pcd_list, min_side_length=np.
 
     return mean_bbox_size, mean_bbox_volume, valid_mask
 
+def compute_pcd_mean_distance(action_pcds, anchor_pcds, scaling_factor=1.0):
+    """
+    Compute the Euclidean distance (L2 norm) between the mean points of action and anchor point clouds.
+
+    Args:
+        action_pcds (list of np.ndarray): List of action point clouds.
+        anchor_pcds (list of np.ndarray): List of anchor point clouds.
+        scaling_factor (float): Factor to scale the PCD before computing the mean.
+
+    Returns:
+        np.ndarray: Array of distances between action and anchor mean points.
+    """
+    distances = []
+    
+    for action_pcd, anchor_pcd in tqdm(zip(action_pcds, anchor_pcds), total=len(action_pcds), desc="Computing distances"):
+        # Scale point clouds
+        action_pcd = action_pcd * scaling_factor
+        anchor_pcd = anchor_pcd * scaling_factor
+
+        # Compute mean point for each PCD
+        action_mean = np.mean(action_pcd, axis=0)
+        anchor_mean = np.mean(anchor_pcd, axis=0)
+
+        # Compute Euclidean distance between mean points
+        distance = np.linalg.norm(action_mean - anchor_mean)
+        distances.append(distance)
+
+    return np.array(distances)
+
+
+def compute_and_plot_pcd_mean_distance(action_pcds, anchor_pcds, scaling_factor=1.0, save_dir="./vis/measure_pcd/"):
+    """
+    Compute the mean point distance between action and anchor PCDs and plot the distribution.
+
+    Args:
+        action_pcds (list of np.ndarray): List of action point clouds.
+        anchor_pcds (list of np.ndarray): List of anchor point clouds.
+        scaling_factor (float): Factor to scale the PCD before computing distances.
+
+    Returns:
+        np.ndarray: Array of mean point distances.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Compute distances
+    distances = compute_pcd_mean_distance(action_pcds, anchor_pcds, scaling_factor)
+
+    # Plot distribution of distances
+    plt.figure(figsize=(8, 5))
+    plt.hist(distances, bins=30, color='blue', alpha=0.7, edgecolor='black')
+    plt.xlabel("L2 Distance between Action and Anchor Mean Points")
+    plt.ylabel("Frequency")
+    plt.title("Distribution of Mean Point Distances")
+    plt.grid(True)
+    plt.savefig(os.path.join(save_dir, "mean_distance_hist.jpg"))
+
+    # Print summary statistics
+    print(f"Mean Distance: {np.mean(distances):.4f}")
+    print(f"Median Distance: {np.median(distances):.4f}")
+    print(f"Max Distance: {np.max(distances):.4f}")
+    print(f"Min Distance: {np.min(distances):.4f}")
+
+    return distances
+
 # Example usage
 if __name__ == "__main__":
     # Create a list of example point clouds
+    '''
     proccloth_action, proccloth_anchor = load_proccloth(dir='/data/lyuxing/tax3d/proccloth/cloth=multi-fixed anchor=single-random hole=single/train_tax3d/')
 
     mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(proccloth_action, scaling_factor=1)
@@ -131,15 +207,16 @@ if __name__ == "__main__":
     mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(ndf_anchor, scaling_factor=15)
     print(f"NDF Anchor Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
     print(f"NDF Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
+    '''
 
+    rpdiff_action, rpdiff_anchor = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single/task_name_mug_on_rack', num_demos=3)
 
-
-    rpdiff_action, rpdiff_anchor = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single/task_name_mug_on_rack')
-
-    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_action, scaling_factor=1)
+    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_action, scaling_factor=1.0)
     print(f"RPDiff Action Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
     print(f"RPDiff Action Mean Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
 
-    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_anchor, scaling_factor=1)
+    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_anchor, scaling_factor=1.0)
     print(f"RPDiff Anchor Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
     print(f"RPDiff Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
+
+    compute_and_plot_pcd_mean_distance(rpdiff_action, rpdiff_anchor, scaling_factor=1.0)

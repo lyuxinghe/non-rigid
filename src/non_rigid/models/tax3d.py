@@ -217,7 +217,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             num_warmup_steps=self.lr_warmup_steps,
             num_training_steps=self.num_training_steps,
         )
-        return [optimizer], [lr_scheduler]
+        return {'optimizer': optimizer, 'lr_scheduler': {'scheduler': lr_scheduler, 'interval': 'step'}}
 
     def get_model_kwargs(self, batch, nun_samples=None):
         """
@@ -244,12 +244,15 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         ground_truth = batch[self.label_key].permute(0, 2, 1) # channel first
         model_kwargs = self.get_model_kwargs(batch)
 
+        noise_translate_scale = self.model_cfg.diff_translation_noise_scale
+
         # run diffusion
         # noise = torch.randn_like(ground_truth) * self.noise_scale
         loss_dict = self.diffusion.training_losses(
             model=self.network,
             x_start=ground_truth,
             t=t,
+            noise_translate_scale=noise_translate_scale,
             model_kwargs=model_kwargs,
             # noise=noise,
         )
@@ -482,6 +485,13 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             self.eval()
             with torch.no_grad():
                 # winner-take-all predictions
+                train_dataloader = self.trainer.datamodule.train_dataloader()
+                train_dataloader.dataset.set_eval_mode(True)
+
+                batch = next(iter(train_dataloader))  # Fetch new batch with eval_mode=True
+                # TODO: Debug why without this line, it will rasie gpu/cpu different device error
+                batch = {k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
                 pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
 
                 ####################################################
@@ -516,7 +526,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
                 ####################################################
                 self.log_viz_to_wandb(batch, pred_wta_dict, "train")
 
-                
+                train_dataloader.dataset.set_eval_mode(False)
+
 
         return loss
 
@@ -755,3 +766,204 @@ class FeatureCrossDisplacementModule(DenseDisplacementDiffusionModule):
         }
         return viz_args
     
+class FeatureReferenceCrossDisplacementModule(DenseDisplacementDiffusionModule):
+    """
+    Object-centric DDD module. Applies cross attention between action and anchor objects.
+    """
+    def __init__(self, network, cfg) -> None:
+        super().__init__(network, cfg)
+
+    def get_model_kwargs(self, batch, num_samples=None):
+        P_A = batch["P_A"].to(self.device)
+        P_B = batch["P_B"].to(self.device)
+        P_A_one_hot = batch["P_A_one_hot"].to(self.device)
+        P_B_one_hot = batch["P_B_one_hot"].to(self.device)
+
+        if num_samples is not None:
+            # expand point clouds if num_samples is provided; used for WTA predictions
+            P_A = expand_pcd(P_A, num_samples)
+            P_B = expand_pcd(P_B, num_samples)
+            P_A_one_hot = expand_pcd(P_A_one_hot, num_samples)
+            P_B_one_hot = expand_pcd(P_B_one_hot, num_samples)
+
+        P_A = P_A.permute(0, 2, 1)              # channel first
+        P_B = P_B.permute(0, 2, 1)              # channel first
+        P_A_one_hot = P_A_one_hot.permute(0, 2, 1)    # channel first
+        P_B_one_hot = P_B_one_hot.permute(0, 2, 1)    # channel first
+
+        model_kwargs = dict(x0=P_A, y=P_B, P_A_one_hot=P_A_one_hot, P_B_one_hot=P_B_one_hot)
+        return model_kwargs
+    
+    def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
+        """
+        Get world-frame predictions from the given batch and predictions.
+        """
+        T_action2world = Transform3d(
+            matrix=expand_pcd(batch["T_action2world"].to(self.device), num_samples)
+        )
+        T_goal2world = Transform3d(
+            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
+        )
+
+        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
+        pc_action_world = T_action2world.transform_points(pc_action)
+        pred_flow_world = pred_point_world - pc_action_world
+        results_world = [
+            T_goal2world.transform_points(res) for res in pred_dict["results"]
+        ]
+        return pred_flow_world, pred_point_world, results_world
+
+    def get_viz_args(self, batch, viz_idx):
+        """
+        Get visualization arguments for wandb logging.
+        """
+        pc_pos_viz = batch["P_A_star"][viz_idx, :, :3]
+        pc_action_viz = batch["P_A"][viz_idx, :, :3]
+        pc_anchor_viz = batch["P_B"][viz_idx, :, :3]
+        viz_args = {
+            "pc_pos_viz": pc_pos_viz,
+            "pc_action_viz": pc_action_viz,
+            "pc_anchor_viz": pc_anchor_viz,
+        }
+        return viz_args
+
+    @torch.no_grad()
+    def predict(self, batch, num_samples, unflatten=False, progress=True, full_prediction=True):
+        """
+        Compute prediction for a given batch.
+
+        Args:
+            batch: the input batch
+            num_samples: the number of samples to generate
+            progress: whether to show progress bar
+            full_prediction: whether to return full prediction (flow and point, goal and world frame)
+        """
+        # TODO: replace bs with batch_size?
+        bs, sample_size = batch["P_A"].shape[:2]
+        model_kwargs = self.get_model_kwargs(batch, num_samples)
+
+        # generating latents and running diffusion
+        z = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
+        pred, results = self.diffusion.p_sample_loop(
+            self.network,
+            z.shape,
+            z,
+            clip_denoised=False,
+            model_kwargs=model_kwargs,
+            progress=progress,
+            device=self.device,
+        )
+        pred = pred.permute(0, 2, 1)
+
+        if not full_prediction:
+            # only return the prediction type in the goal frame
+            return {self.prediction_type: {"pred": pred}}
+        else:
+            # return full prediction (flow and point, goal and world frame)
+            pc_action = model_kwargs["x0"].permute(0, 2, 1)
+
+            # computing flow and point predictions
+            pred_flow = pred
+            pred_point = pc_action + pred_flow
+            # for flow predictions, convert results to point predictions
+            results = [
+                pc_action + res.permute(0, 2, 1) for res in results
+            ]
+
+
+            pred_dict = {
+                "flow": {
+                    "pred": pred_flow,
+                },
+                "point": {
+                    "pred": pred_point,
+                },
+                "results": results,
+            }
+
+            # compute world frame predictions
+            pred_flow_world, pred_point_world, results_world = self.get_world_preds(
+                batch, num_samples, pc_action, pred_dict
+            )
+            pred_dict["flow"]["pred_world"] = pred_flow_world
+            pred_dict["point"]["pred_world"] = pred_point_world
+            pred_dict["results_world"] = results_world
+            return pred_dict
+
+    def predict_wta(self, batch, num_samples):
+        """
+        Predict WTA (winner-take-all) samples, and compute WTA metrics. Unlike predict, this 
+        function assumes the ground truth is available.
+
+        Args:
+            batch: the input batch
+            num_samples: the number of samples to generate
+        """
+        ground_truth = batch[self.label_key].to(self.device)
+        seg = batch["seg"].to(self.device)
+        goal_pc = batch["pc"].to(self.device)
+
+        # re-shaping and expanding for winner-take-all
+        bs = ground_truth.shape[0]
+        ground_truth = expand_pcd(ground_truth, num_samples)
+        seg = expand_pcd(seg, num_samples)
+        goal_pc = expand_pcd(goal_pc, num_samples)
+
+        # generating diffusion predictions
+        # TODO: this should probably specific full_prediction=False
+        pred_dict = self.predict(
+            batch, num_samples, unflatten=False, progress=True
+        )
+        pred = pred_dict[self.prediction_type]["pred"]
+
+        # computing error metrics
+        rmse = flow_rmse(pred, ground_truth, mask=True, seg=seg).reshape(bs, num_samples)
+        pred = pred.reshape(bs, num_samples, -1, 3)
+
+        # computing winner-take-all metrics
+        winner = torch.argmin(rmse, dim=-1)
+        rmse_wta = rmse[torch.arange(bs), winner]
+        pred_wta = pred[torch.arange(bs), winner]
+
+        if self.dataset_cfg.material == "rigid":
+            scaling_factor = self.dataset_cfg.pcd_scale_factor
+
+            T_goal2world = Transform3d(
+                matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
+            )
+
+            pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
+            goal_point_world = T_goal2world.transform_points(goal_pc)
+            
+            pred_point_world = pred_point_world / scaling_factor
+            goal_point_world = goal_point_world / scaling_factor
+
+            translation_errs, rotation_errs = svd_estimation(pred_point_world, goal_point_world, return_magnitude=True)
+
+            translation_errs = translation_errs.reshape(bs, num_samples)
+            rotation_errs = rotation_errs.reshape(bs, num_samples)
+
+            trans_winner = torch.argmin(translation_errs, dim=-1)
+            rot_winner = torch.argmin(rotation_errs, dim=-1)
+
+            translation_err_wta = translation_errs[torch.arange(bs), trans_winner]
+            rotation_err_wta = rotation_errs[torch.arange(bs), rot_winner]
+            
+            return {
+                "pred": pred,
+                "pred_wta": pred_wta,
+                "rmse": rmse,
+                "rmse_wta": rmse_wta,
+                "trans": translation_errs,
+                "trans_wta": translation_err_wta,
+                "rot": rotation_errs,
+                "rot_wta": rotation_err_wta,
+            }
+
+        else:
+            return {
+                "pred": pred,
+                "pred_wta": pred_wta,
+                "rmse": rmse,
+                "rmse_wta": rmse_wta,
+            }

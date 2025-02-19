@@ -125,11 +125,11 @@ def main(cfg):
 
 
     VISUALIZE_DEMOS = False
-    VISUALIZE_PREDS = True
+    VISUALIZE_PREDS = False
     VISUALIZE_SINGLE = False
     VISUALIZE_PULL = False
     VISUALIZE_DATASET = False
-
+    VISUALIZE_CUSTOM = True
     ######################################################################
     # Run the model on the train/val/test sets.
     # This outputs a list of dictionaries, one for each batch. This
@@ -524,7 +524,6 @@ def main(cfg):
         fig = animation.animate()
         fig.show()
 
-
     if VISUALIZE_SINGLE:
         model.to(device)
         dataloader = torch.utils.data.DataLoader(
@@ -575,6 +574,86 @@ def main(cfg):
                 )
         fig = animation.animate()
         fig.show()
+
+    if VISUALIZE_CUSTOM:
+        model.to(device)
+        dataloader = torch.utils.data.DataLoader(
+            datamodule.val_dataset, batch_size=1, shuffle=False
+        )
+        batch = next(iter(dataloader))
+        pred_dict = model.predict(batch, 1)
+
+        results = pred_dict["results_world"]
+
+        # Ensure the directory exists before saving
+        save_dir = "/home/lyuxing/Desktop/tax3d_upgrade/scripts/vis/noise_viz_cloth/"
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Visualization
+        idx = 0
+
+
+        T_goal2world = Transform3d(
+            matrix=batch["T_goal2world"]
+        )
+        T_action2world = Transform3d(
+            matrix=batch["T_action2world"]
+        )
+
+        goal = T_goal2world.transform_points(batch["pc"])
+        anchor = T_goal2world.transform_points(batch["pc_anchor"])
+        pred_action = pred_dict["point"]["pred_world"]
+
+        goal_pc = goal.flatten(0, 1).cpu().numpy()
+        anchor_pc = anchor.flatten(0, 1).cpu().numpy()
+        pred_action_size = pred_action.shape[1]
+        pred_action_pc = pred_action.flatten(0, 1).cpu().numpy()
+        # color-coded segmentations
+        anchor_seg = np.zeros(anchor_pc.shape[0], dtype=np.int64)
+        # if cfg.model.type == "flow":
+        #     pred_action_size = cfg.dataset.sample_size_action + cfg.dataset.sample_size_anchor
+        # else:
+        #     pred_action_size = cfg.dataset.sample_size_action
+        goal_seg = np.ones(goal_pc.shape[0], dtype=np.int64)
+        pred_action_seg = np.array([np.arange(2, 2 + 1)] * pred_action_size).T.flatten()
+        fig = vpl.segmentation_fig(
+            np.concatenate((anchor_pc, pred_action_pc, goal_pc)),
+            np.concatenate((anchor_seg, pred_action_seg, goal_seg)),
+        )
+        fig.write_image(f"{save_dir}/pred.png")
+
+        for noise_step in tqdm(results):
+            if idx % 10 == 0:  # Visualize every 10th step
+
+                pred_action = noise_step
+                pred_action_size = pred_action.shape[1]
+                pred_action = pred_action.flatten(0, 1).cpu().numpy()
+
+                # Compute Centroids (Mean of each PCD)
+                goal_centroid = goal_pc.mean(axis=0)  # Shape: (3,)
+                anchor_centroid = anchor_pc.mean(axis=0)  # Shape: (3,)
+                pred_centroid = pred_action.mean(axis=0)  # Shape: (3,)
+
+                # Print centroid coordinates
+                print(f"Idx: {idx}")
+                print(f"  - Goal Centroid: {goal_centroid}")
+                print(f"  - Anchor Centroid: {anchor_centroid}")
+                print(f"  - Prediction Centroid: {pred_centroid}")
+
+                # Color-coded segmentations
+                anchor_seg = np.zeros(anchor_pc.shape[0], dtype=np.int64)
+                goal_seg = np.ones(goal_pc.shape[0], dtype=np.int64)
+                pred_action_seg = np.array([np.arange(2, 2 + 1)] * pred_action_size).T.flatten()
+
+                # Visualize
+                fig = vpl.segmentation_fig(
+                    np.concatenate((anchor_pc, pred_action, goal_pc)),
+                    np.concatenate((anchor_seg, pred_action_seg, goal_seg)),
+                )
+                fig.write_image(f"{save_dir}/{idx}_noise.png")
+
+            idx += 1  # Increment counter
+        
 
 if __name__ == "__main__":
     main()

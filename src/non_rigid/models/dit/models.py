@@ -2418,6 +2418,8 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
 
 
         if self.model_cfg.encoder_style == 'indiv':
+            
+            P_A_hat = x + P_A - y_action.unsqueeze(-1) + y_ref.unsqueeze(-1)
 
             # encode x features
             if self.x_embedder is not None:
@@ -2437,10 +2439,18 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
 
             if self.recon_encoder is not None:
                 assert P_A is not None and y_action is not None, "y_action and P_A features must be provided if onehot_encoder is not None"
+                
+                # Center on Anchor
                 P_A_hat_prime = x + P_A - y_action.unsqueeze(-1)
                 add_emb = self.recon_encoder(P_A_hat_prime)
                 x_emb = torch.cat([x_emb, add_emb], dim=1)
-
+                
+                '''
+                # Center on Reconstruction
+                P_A_hat_center_recon = P_A_hat - P_A_hat.mean(axis=0)
+                add_emb = self.recon_encoder(P_A_hat_center_recon)
+                x_emb = torch.cat([x_emb, add_emb], dim=1)
+                '''
             if self.context_encoders is not None:
                 for c_type, context_encoder in self.context_encoders.items():
                     if c_type == "anchor_mean":
@@ -2456,7 +2466,6 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
                 assert y_ref is not None and P_A is not None, "y_ref and P_A features must be provided if using flow features"
 
                 for n_type, flow_encoder in self.flow_encoders.items():
-                    P_A_hat = x + P_A + (y_ref.unsqueeze(-1) - y_action.unsqueeze(-1))   # broadcast y_ref from [B, C] to [B, C, 1]
                     flow = P_A_hat - P_A
 
                     if n_type == "unnorm":
@@ -2484,8 +2493,15 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
             x = x_emb.permute(0, 2, 1)
 
             # encode y features
-            y_emb = self.y_embedder(y)
             
+            # Center on Anchor
+            y_emb = self.y_embedder(y)
+            '''
+            # Center on Reconstruction
+            y_world = y + y_ref.unsqueeze(-1)
+            y_center_recon = y_world - P_A_hat.mean(axis=0)
+            y_emb = self.y_embedder(y_center_recon)
+            '''
             if self.onehot_encoder is not None:
                 assert P_B_one_hot is not None, "P_B_one_hot features must be provided if onehot_encoder is not None"
                 add_emb = self.onehot_encoder(P_B_one_hot)

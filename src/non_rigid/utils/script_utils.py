@@ -30,10 +30,11 @@ from non_rigid.models.tax3d import (
     SceneDisplacementModule,
     CrossDisplacementModule,
     FeatureCrossDisplacementModule,
+    FeatureReferenceCrossDisplacementModule
 )
 
 from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, ProcClothFlowFeatureDataModule
-from non_rigid.datasets.rigid import RigidDataModule, RigidFeatureDataModule
+from non_rigid.datasets.rigid import RigidDataModule, RigidFeatureDataModule, RigidFeatureRefenceDataModule
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
 
@@ -104,6 +105,9 @@ def create_model(cfg):
         network_fn = DiffusionTransformerNetwork
         # module_fn = Tax3dModule
         module_fn = FeatureCrossDisplacementModule
+    elif cfg.model.name == "feature_ref_df_cross":
+        network_fn = DiffusionTransformerNetwork
+        module_fn = FeatureReferenceCrossDisplacementModule
     else:
         raise ValueError(f"Invalid model name: {cfg.model.name}")
 
@@ -129,7 +133,10 @@ def create_datamodule(cfg):
             datamodule_fn = ProcClothFlowDataModule
     elif cfg.dataset.material == "rigid":
         if "feature" in cfg.model.name:
-            datamodule_fn = RigidFeatureDataModule
+            if "ref" in cfg.model.name:
+                datamodule_fn = RigidFeatureDataModule
+            else:
+                datamodule_fn = RigidFeatureDataModule
         else:
             datamodule_fn = RigidDataModule
     else:

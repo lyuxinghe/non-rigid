@@ -714,7 +714,7 @@ class GaussianDiffusion:
         output = th.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
 
-    def training_losses(self, model, x_start, t, model_kwargs=None, noise=None):
+    def training_losses(self, model, x_start, t, noise_translate_scale, model_kwargs=None, noise=None):
         """
         Compute training losses for a single timestep.
         :param model: the model to evaluate loss on.
@@ -730,8 +730,40 @@ class GaussianDiffusion:
             model_kwargs = {}
         if noise is None:
             noise = th.randn_like(x_start)
-        x_t = self.q_sample(x_start, t, noise=noise)
+        
+        # Add translation noise plan A
+        # If translation noise is enabled, add it only to noise directly.
+        if noise_translate_scale:
+            N, C, P = x_start.shape  # e.g. [batch_size, 3, num_points]
 
+            # Sample one random translation per item in the batch, per channel (3D).
+            # Shape: [N, C] so each batch item has its own (dx, dy, dz).
+            translation_noise = th.randn(N, C, device=x_start.device)
+
+            # Scale it by your desired factor
+            translation_noise = translation_noise * noise_translate_scale
+
+            # Expand to match the points dimension so we can add it to each point
+            # Shape after unsqueeze+expand: [N, C, P]
+            translation_noise = translation_noise.unsqueeze(-1).expand(-1, -1, P)
+
+            # -------------------------------------------------
+            # 2. Add that translation noise to x_start
+            # -------------------------------------------------
+            noise = noise + translation_noise
+        
+        x_t = self.q_sample(x_start, t, noise=noise)
+        '''
+        # Add translation noise plan B
+        # If translation noise is enabled, add it only to x_t.
+        if noise_translate_scale:
+            N, C, P = x_start.shape  # e.g. [batch_size, channels (3), num_points]
+            translation_noise = th.randn(N, C, device=x_start.device) * noise_translate_scale
+            # Expand to [N, C, P] so every point in a given sample gets the same translation.
+            translation_noise = translation_noise.unsqueeze(-1).expand(-1, -1, P)
+            # Apply translation noise to the noisy sample x_t only.
+            x_t = x_t + translation_noise
+        '''
         terms = {}
 
         if self.loss_type == LossType.KL or self.loss_type == LossType.RESCALED_KL:

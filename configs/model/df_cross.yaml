@@ -21,3 +21,4 @@ diff_inference_steps: 100 # Number of diffusion steps during inference
 diff_noise_schedule: linear # (linear, cosine) Noise schedule for diffusion
 diff_noise_scale: 1.0 # Scale of noise for diffusion
 diff_type: gaussian
+diff_translation_noise_scale: False # Scale of translation noise for diffusion, or False for disable   
