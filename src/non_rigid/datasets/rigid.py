@@ -47,6 +47,8 @@ class NDFDataset(data.Dataset):
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
         self.world_frame = self.dataset_cfg.world_frame
 
+        self.eval_mode = False if self.split == "train" else True
+
     def __len__(self):
         return self.size
 
@@ -99,38 +101,39 @@ class NDFDataset(data.Dataset):
         if self.split == "train" or (
             self.split == "val" and not self.dataset_cfg.val_use_defaults
         ):
-            # Apply augmentations to the point clouds in their final positions
-            points_action, points_action_indices = maybe_apply_augmentations(
-                points_action,
-                min_num_points=self.dataset_cfg.sample_size_action,
-                ball_occlusion_param={
-                    "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
-                    "ball_radius": self.dataset_cfg.action_ball_radius
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-                plane_occlusion_param={
-                    "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
-                    "plane_standoff": self.dataset_cfg.action_plane_standoff
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-            )
-            action_seg = action_seg[points_action_indices.squeeze(0)]
+            if not self.eval_mode:
+                # Apply augmentations to the point clouds in their final positions
+                points_action, points_action_indices = maybe_apply_augmentations(
+                    points_action,
+                    min_num_points=self.dataset_cfg.sample_size_action,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.action_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.action_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
+                action_seg = action_seg[points_action_indices.squeeze(0)]
 
-            points_anchor, points_anchor_indices = maybe_apply_augmentations(
-                points_anchor,
-                min_num_points=self.dataset_cfg.sample_size_anchor,
-                ball_occlusion_param={
-                    "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
-                    "ball_radius": self.dataset_cfg.anchor_ball_radius
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-                plane_occlusion_param={
-                    "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
-                    "plane_standoff": self.dataset_cfg.anchor_plane_standoff
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-            )
-            anchor_seg = anchor_seg[points_anchor_indices.squeeze(0)]
+                points_anchor, points_anchor_indices = maybe_apply_augmentations(
+                    points_anchor,
+                    min_num_points=self.dataset_cfg.sample_size_anchor,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.anchor_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.anchor_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
+                anchor_seg = anchor_seg[points_anchor_indices.squeeze(0)]
 
         # Set downsample types
         if self.split == "val" and self.dataset_cfg.val_use_defaults:
@@ -250,7 +253,9 @@ class NDFDataset(data.Dataset):
             item["t_action_to_goal"] = t_action_to_goal
         return item
 
-
+    def set_eval_mode(self, eval_mode: bool):
+        """ Toggle eval mode to enable/disable augmentation """
+        self.eval_mode = eval_mode
 
 class NDFFeatureDataset(data.Dataset):
     def __init__(self, root, dataset_cfg, split):
@@ -283,6 +288,8 @@ class NDFFeatureDataset(data.Dataset):
         self.sample_size_action = self.dataset_cfg.sample_size_action
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
         self.world_frame = self.dataset_cfg.world_frame
+
+        self.eval_mode = False if self.split == "train" else True
 
     def __len__(self):
         return self.size
@@ -336,38 +343,39 @@ class NDFFeatureDataset(data.Dataset):
         if self.split == "train" or (
             self.split == "val" and not self.dataset_cfg.val_use_defaults
         ):
-            # Apply augmentations to the point clouds in their final positions
-            points_action, points_action_indices = maybe_apply_augmentations(
-                points_action,
-                min_num_points=self.dataset_cfg.sample_size_action,
-                ball_occlusion_param={
-                    "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
-                    "ball_radius": self.dataset_cfg.action_ball_radius
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-                plane_occlusion_param={
-                    "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
-                    "plane_standoff": self.dataset_cfg.action_plane_standoff
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-            )
-            action_seg = action_seg[points_action_indices.squeeze(0)]
+            if not self.eval_mode:
+                # Apply augmentations to the point clouds in their final positions
+                points_action, points_action_indices = maybe_apply_augmentations(
+                    points_action,
+                    min_num_points=self.dataset_cfg.sample_size_action,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.action_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.action_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
+                action_seg = action_seg[points_action_indices.squeeze(0)]
 
-            points_anchor, points_anchor_indices = maybe_apply_augmentations(
-                points_anchor,
-                min_num_points=self.dataset_cfg.sample_size_anchor,
-                ball_occlusion_param={
-                    "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
-                    "ball_radius": self.dataset_cfg.anchor_ball_radius
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-                plane_occlusion_param={
-                    "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
-                    "plane_standoff": self.dataset_cfg.anchor_plane_standoff
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-            )
-            anchor_seg = anchor_seg[points_anchor_indices.squeeze(0)]
+                points_anchor, points_anchor_indices = maybe_apply_augmentations(
+                    points_anchor,
+                    min_num_points=self.dataset_cfg.sample_size_anchor,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.anchor_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.anchor_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
+                anchor_seg = anchor_seg[points_anchor_indices.squeeze(0)]
 
         # Set downsample types
         if self.split == "val" and self.dataset_cfg.val_use_defaults:
@@ -489,6 +497,10 @@ class NDFFeatureDataset(data.Dataset):
         item["t_action_to_goal"] = t_action_to_goal
         return item
 
+    def set_eval_mode(self, eval_mode: bool):
+        """ Toggle eval mode to enable/disable augmentation """
+        self.eval_mode = eval_mode
+
 
 class RPDiffDataset(data.Dataset):
     def __init__(self, root, dataset_cfg, type):
@@ -498,6 +510,8 @@ class RPDiffDataset(data.Dataset):
         self.dataset_cfg = dataset_cfg
         self.rpdiff_task_name = dataset_cfg.rpdiff_task_name
         self.rpdiff_task_type = dataset_cfg.rpdiff_task_type
+                
+        self.eval_mode = False if self.type == "train" else True
 
         self.dataset_dir = self.root / self.rpdiff_task_name / self.rpdiff_task_type
         self.split_dir = self.dataset_dir / "split_info"
@@ -558,48 +572,49 @@ class RPDiffDataset(data.Dataset):
         if self.type == "train" or (
             self.type == "val" and not self.dataset_cfg.val_use_defaults
         ):
-            # Apply augmentations to the point clouds in their final positions
-            action_pc, action_pc_indices = maybe_apply_augmentations(
-                action_pc,
-                min_num_points=self.dataset_cfg.sample_size_action,
-                ball_occlusion_param={
-                    "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
-                    "ball_radius": self.dataset_cfg.action_ball_radius
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-                plane_occlusion_param={
-                    "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
-                    "plane_standoff": self.dataset_cfg.action_plane_standoff
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-            )
-            action_seg = action_seg[action_pc_indices.squeeze(0)]
-            goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
-            if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
-                print("Encounter action points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
-                print(self.demo_files[index % self.num_demos])
+            if not self.eval_mode:
+                # Apply augmentations to the point clouds in their final positions
+                action_pc, action_pc_indices = maybe_apply_augmentations(
+                    action_pc,
+                    min_num_points=self.dataset_cfg.sample_size_action,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.action_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.action_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
+                action_seg = action_seg[action_pc_indices.squeeze(0)]
+                goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
+                if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
+                    print("Encounter action points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
+                    print(self.demo_files[index % self.num_demos])
 
-            anchor_pc, anchor_pc_indices = maybe_apply_augmentations(
-                anchor_pc,
-                min_num_points=self.dataset_cfg.sample_size_anchor,
-                ball_occlusion_param={
-                    "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
-                    "ball_radius": self.dataset_cfg.anchor_ball_radius
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-                plane_occlusion_param={
-                    "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
-                    "plane_standoff": self.dataset_cfg.anchor_plane_standoff
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-            )
+                anchor_pc, anchor_pc_indices = maybe_apply_augmentations(
+                    anchor_pc,
+                    min_num_points=self.dataset_cfg.sample_size_anchor,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.anchor_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.anchor_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
 
-            if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
-                print("Encounter anchor points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
-                print(self.demo_files[index % self.num_demos])
+                if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
+                    print("Encounter anchor points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
+                    print(self.demo_files[index % self.num_demos])
 
-            anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
-        
+                anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
+
         # Set downsample types
         if self.type == "val" and self.dataset_cfg.val_use_defaults:
             downsample_type = "fps"
@@ -697,6 +712,10 @@ class RPDiffDataset(data.Dataset):
             item["t_action_to_goal"] = t_action_to_goal
         return item
 
+    def set_eval_mode(self, eval_mode: bool):
+        """ Toggle eval mode to enable/disable augmentation """
+        self.eval_mode = eval_mode
+
 class RPDiffFeatureDataset(data.Dataset):
     def __init__(self, root, dataset_cfg, type):
         super().__init__()
@@ -705,6 +724,8 @@ class RPDiffFeatureDataset(data.Dataset):
         self.dataset_cfg = dataset_cfg
         self.rpdiff_task_name = dataset_cfg.rpdiff_task_name
         self.rpdiff_task_type = dataset_cfg.rpdiff_task_type
+
+        self.eval_mode = False if self.type == "train" else True
 
         self.dataset_dir = self.root / self.rpdiff_task_name / self.rpdiff_task_type
         self.split_dir = self.dataset_dir / "split_info"
@@ -765,45 +786,46 @@ class RPDiffFeatureDataset(data.Dataset):
         if self.type == "train" or (
             self.type == "val" and not self.dataset_cfg.val_use_defaults
         ):
-            # Apply augmentations to the point clouds in their final positions
-            action_pc, action_pc_indices = maybe_apply_augmentations(
-                action_pc,
-                min_num_points=self.dataset_cfg.sample_size_action,
-                ball_occlusion_param={
-                    "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
-                    "ball_radius": self.dataset_cfg.action_ball_radius
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-                plane_occlusion_param={
-                    "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
-                    "plane_standoff": self.dataset_cfg.action_plane_standoff
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-            )
-            action_seg = action_seg[action_pc_indices.squeeze(0)]
-            goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
+            if not self.eval_mode:
+                # Apply augmentations to the point clouds in their final positions
+                action_pc, action_pc_indices = maybe_apply_augmentations(
+                    action_pc,
+                    min_num_points=self.dataset_cfg.sample_size_action,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.action_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.action_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
+                action_seg = action_seg[action_pc_indices.squeeze(0)]
+                goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
 
-            
-            anchor_pc, anchor_pc_indices = maybe_apply_augmentations(
-                anchor_pc,
-                min_num_points=self.dataset_cfg.sample_size_anchor,
-                ball_occlusion_param={
-                    "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
-                    "ball_radius": self.dataset_cfg.anchor_ball_radius
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-                plane_occlusion_param={
-                    "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
-                    "plane_standoff": self.dataset_cfg.anchor_plane_standoff
-                    * self.dataset_cfg.pcd_scale_factor,
-                },
-            )
+                
+                anchor_pc, anchor_pc_indices = maybe_apply_augmentations(
+                    anchor_pc,
+                    min_num_points=self.dataset_cfg.sample_size_anchor,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.anchor_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.anchor_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
 
-            if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
-                print("Encounter points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
-                print(self.demo_files[index % self.num_demos])
+                if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
+                    print("Encounter points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
+                    print(self.demo_files[index % self.num_demos])
 
-            anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
+                anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
 
         # Set downsample types
         if self.type == "val" and self.dataset_cfg.val_use_defaults:
@@ -904,16 +926,209 @@ class RPDiffFeatureDataset(data.Dataset):
         item["t_action_to_goal"] = t_action_to_goal
         return item
 
+    def set_eval_mode(self, eval_mode: bool):
+        """ Toggle eval mode to enable/disable augmentation """
+        self.eval_mode = eval_mode
+
+class RPDiffFeatureReferenceDataset(data.Dataset):
+    def __init__(self, root, dataset_cfg, type):
+        super().__init__()
+        self.root = root
+        self.type = type
+        self.dataset_cfg = dataset_cfg
+        self.rpdiff_task_name = dataset_cfg.rpdiff_task_name
+        self.rpdiff_task_type = dataset_cfg.rpdiff_task_type
+
+        self.eval_mode = False if self.type == "train" else True
+
+        self.dataset_dir = self.root / self.rpdiff_task_name / self.rpdiff_task_type
+        self.split_dir = self.dataset_dir / "split_info"
+        self.split_file = f"{self.type}_split.txt" if self.type != "val" else "train_val_split.txt"
+
+        # setting sample sizes
+        self.scene = self.dataset_cfg.scene
+        self.sample_size_action = self.dataset_cfg.sample_size_action
+        self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
+        self.world_frame = self.dataset_cfg.world_frame
+
+        print(f"Loading RPDiff dataset from {self.dataset_dir}")
+
+        with open(os.path.join(self.split_dir, self.split_file), "r") as file:
+            self.demo_files = [f"{self.dataset_dir}/{line.strip()}" for line in file]
+
+        self.num_demos = len(self.demo_files)
+        if self.dataset_cfg.num_demos is not None and self.type == "train":
+            self.demo_files = self.demo_files[: self.dataset_cfg.num_demos]
+            self.num_demos = len(self.demo_files)
+        print(f"Loaded {self.num_demos} {self.type} demos from {self.dataset_dir} with {self.split_file}, total of {self.__len__()} files")
+
+    def __len__(self):
+        if self.type == "train":
+            return self.dataset_cfg.train_dataset_size if self.dataset_cfg.train_dataset_size is not None else len(self.demo_files)
+        elif self.type == "val":
+            return self.dataset_cfg.val_dataset_size if self.dataset_cfg.val_dataset_size is not None else len(self.demo_files)
+        elif self.type == "test":
+            return self.dataset_cfg.test_dataset_size if self.dataset_cfg.test_dataset_size is not None else len(self.demo_files)
+        else:
+            raise ValueError(f"Unknown dataset type: {self.type}")
+
+    def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
+        demo = np.load(self.demo_files[index % self.num_demos], allow_pickle=True)
+
+        # Access start and final PCDs for parent and child
+        parent_start_pcd = demo['multi_obj_start_pcd'].item()['parent']
+        child_start_pcd = demo['multi_obj_start_pcd'].item()['child']
+        parent_final_pcd = demo['multi_obj_final_pcd'].item()['parent']
+        child_final_pcd = demo['multi_obj_final_pcd'].item()['child']
+        relative_trans = demo['relative_trans']
+
+        action_pc = torch.as_tensor(child_start_pcd).float()
+        anchor_pc = torch.as_tensor(parent_start_pcd).float()
+        goal_action_pc = torch.as_tensor(child_final_pcd).float()
+        goal_anchor_pc = torch.as_tensor(parent_final_pcd).float()  # same as anchor_pc
+        relative_trans = torch.as_tensor(relative_trans).float()
+
+        # TODO: apply scale factor to adjust relative_trans aw
+        action_pc *= self.dataset_cfg.pcd_scale_factor
+        anchor_pc *= self.dataset_cfg.pcd_scale_factor
+        goal_action_pc *= self.dataset_cfg.pcd_scale_factor
+
+        action_seg = torch.ones(action_pc.shape[0], dtype=torch.bool)
+        anchor_seg = torch.ones(anchor_pc.shape[0], dtype=torch.bool)
+
+        # Apply augmentations
+        if self.type == "train" or (
+            self.type == "val" and not self.dataset_cfg.val_use_defaults
+        ):
+            if not self.eval_mode:
+                # Apply augmentations to the point clouds in their final positions
+                action_pc, action_pc_indices = maybe_apply_augmentations(
+                    action_pc,
+                    min_num_points=self.dataset_cfg.sample_size_action,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.action_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.action_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
+                action_seg = action_seg[action_pc_indices.squeeze(0)]
+                goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
+
+                
+                anchor_pc, anchor_pc_indices = maybe_apply_augmentations(
+                    anchor_pc,
+                    min_num_points=self.dataset_cfg.sample_size_anchor,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
+                        "ball_radius": self.dataset_cfg.anchor_ball_radius
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
+                        "plane_standoff": self.dataset_cfg.anchor_plane_standoff
+                        * self.dataset_cfg.pcd_scale_factor,
+                    },
+                )
+
+                if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
+                    print("Encounter points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
+                    print(self.demo_files[index % self.num_demos])
+
+                anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
+
+        # Set downsample types
+        if self.type == "val" and self.dataset_cfg.val_use_defaults:
+            downsample_type = "fps"
+        else:
+            downsample_type = self.dataset_cfg.downsample_type
+
+        # downsample action
+        if self.sample_size_action > 0 and action_pc.shape[0] > self.sample_size_action:
+            action_pc, action_pc_indices = downsample_pcd(action_pc.unsqueeze(0), self.sample_size_action, type=downsample_type)
+            action_pc = action_pc.squeeze(0)
+            action_seg = action_seg[action_pc_indices.squeeze(0)]
+            goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
+
+        # downsample anchor
+        if self.sample_size_anchor > 0 and anchor_pc.shape[0] > self.sample_size_anchor:
+            anchor_pc, anchor_pc_indices = downsample_pcd(anchor_pc.unsqueeze(0), self.sample_size_anchor, type=downsample_type)
+            anchor_pc = anchor_pc.squeeze(0)
+            anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
 
 
-'''
-DATASET_FN = {
-    "rigid_point": RigidPointDataset,
-    "rigid_flow": RigidFlowDataset,
-    "ndf_point": NDFPointDataset,
-    "rpdiff_point": RPDiffPointDataset,
-}
-'''
+        # Extract rotation and translation from relative_trans
+        T_init = relative_trans
+        R_action_to_goal = relative_trans[:3, :3]  # Rotation matrix
+        t_action_to_goal = relative_trans[:3, 3]   # Translation vector
+
+        ### Common Terms ###
+        P_A = action_pc
+        P_B = anchor_pc
+
+        # calculate reference centers
+        # in the reference variant, we set reference as the (predicted) goal center, rather than the anchor center
+        # since goal center should be unknown except for the target flow, we set everything in the dataloader in the world frame
+        anchor_mean = P_B.mean(axis=0)
+        action_mean = P_A.mean(axis=0)
+
+        # center anchor and action
+        P_B_centered_B = P_B - anchor_mean
+        goal_centered_B = goal_action_pc - anchor_mean
+        P_A_centered_A = P_A - action_mean
+
+        # generate random SE3 transform
+        T0 = random_se3(
+            N=1,
+            rot_var=self.dataset_cfg.action_rotation_variance,
+            trans_var=self.dataset_cfg.action_translation_variance,
+            rot_sample_method=self.dataset_cfg.action_transform_type,
+        )
+        T1 = random_se3(
+            N=1,
+            rot_var=self.dataset_cfg.anchor_rotation_variance,
+            trans_var=self.dataset_cfg.anchor_translation_variance,
+            rot_sample_method=self.dataset_cfg.anchor_transform_type,
+        )
+        
+        # perform random SE3 transform 
+        P_B_centered_ = T1.transform_points(P_B_centered_B)
+        goal_centered_ = T1.transform_points(goal_centered_B)
+        P_A_centered_ = T1.transform_points(P_A_centered_A)
+
+        # obtain the world frame pcd
+        P_B_ = P_B_centered_ + anchor_mean
+        P_A_star_ = goal_centered_ + anchor_mean
+        P_A_ = P_A_centered_ + action_mean
+
+        # create one-hot encoding
+        P_A_one_hot = torch.tensor([[1, 0]], dtype=torch.float).repeat(P_A_.shape[0], 1)  # Shape: [512, 2]
+        P_B_one_hot = torch.tensor([[0, 1]], dtype=torch.float).repeat(P_B_.shape[0], 1)  # Shape: [512, 2]
+
+        gt_flow = (P_A_star_ - P_A_star_.mean(axis=0)) - (P_A_ - P_A_.mean(axis=0))
+
+        item = {}
+        item["seg"] = action_seg
+        item["seg_anchor"] = anchor_seg
+        item["flow"] = gt_flow
+        item["P_A"] = P_A_
+        item["P_B"] = P_B_
+        item["P_A_star"] = P_A_star_
+        item["P_A_one_hot"] = P_A_one_hot
+        item["P_B_one_hot"] = P_B_one_hot
+        item["T_init"] = T_init
+        item["R_action_to_goal"] = R_action_to_goal
+        item["t_action_to_goal"] = t_action_to_goal
+        return item
+
+    def set_eval_mode(self, eval_mode: bool):
+        """ Toggle eval mode to enable/disable augmentation """
+        self.eval_mode = eval_mode
+
 DATASET_FN = {
     "ndf": NDFDataset,
     "ndf_fit": NDFDataset,
@@ -926,6 +1141,13 @@ F_DATASET_FN = {
     "ndf_fit": NDFFeatureDataset,
     "rpdiff": RPDiffFeatureDataset,
     "rpdiff_fit": RPDiffFeatureDataset,
+}
+
+F_R_DATASET_FN = {
+    #"ndf": NDFFeatureDataset,
+    #"ndf_fit": NDFFeatureDataset,
+    "rpdiff": RPDiffFeatureReferenceDataset,
+    "rpdiff_fit": RPDiffFeatureReferenceDataset,
 }
 
 class RigidDataModule(L.LightningModule):
@@ -957,7 +1179,6 @@ class RigidDataModule(L.LightningModule):
             raise ValueError("Scene inputs require a world frame.")
 
         # if not in train mode, don't use rotation augmentations
-        # TODO: Think about what to do here, since setting all these to 0 will cause action_pc == goal_action_pc !!!
         if self.stage != "fit":
             print("-------Turning off rotation augmentation for validation/inference.-------")
             self.dataset_cfg.action_transform_type = "identity"
@@ -991,25 +1212,7 @@ class RigidDataModule(L.LightningModule):
             shuffle=True if self.stage == "fit" else False,
             drop_last=True,
         )
-    '''
-    def val_dataloader(self) -> data.DataLoader:
-        return data.DataLoader(
-            self.val_dataset,
-            batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            drop_last=False,
-        )
 
-    def test_dataloader(self) -> data.DataLoader:
-        return data.DataLoader(
-            self.test_dataset,
-            batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            drop_last=False,
-        )
-    '''
     def val_dataloader(self):
         val_dataloader = data.DataLoader(
             self.val_dataset,
@@ -1088,25 +1291,87 @@ class RigidFeatureDataModule(L.LightningModule):
             shuffle=True if self.stage == "fit" else False,
             drop_last=True,
         )
-    '''
-    def val_dataloader(self) -> data.DataLoader:
-        return data.DataLoader(
+
+    def val_dataloader(self):
+        val_dataloader = data.DataLoader(
             self.val_dataset,
             batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
             shuffle=False,
-            drop_last=False,
+            num_workers=self.num_workers,
+        )
+        val_ood_dataloader = data.DataLoader(
+            self.val_ood_dataset,
+            batch_size=self.val_batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+        )
+        return val_dataloader, val_ood_dataloader
+
+
+class RigidFeatureRefenceDataModule(L.LightningModule):
+    def __init__(
+        self,
+        #root: Path,
+        batch_size: int,
+        val_batch_size: int,
+        num_workers: int,
+        dataset_cfg: omegaconf.DictConfig = None,
+    ):
+        super().__init__()
+        #self.root = root
+        data_dir = os.path.expanduser(dataset_cfg.data_dir)
+        self.batch_size = batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.dataset_cfg = dataset_cfg
+        self.root = Path(data_dir)
+    
+    def prepare_data(self):
+        pass
+
+    def setup(self, stage: str) -> None:
+        self.stage = stage
+
+        # dataset sanity checks
+        if self.dataset_cfg.scene and not self.dataset_cfg.world_frame:
+            raise ValueError("Scene inputs require a world frame.")
+
+        # if not in train mode, don't use rotation augmentations
+        # TODO: Think about what to do here, since setting all these to 0 will cause action_pc == goal_action_pc !!!
+        if self.stage != "fit":
+            print("-------Turning off rotation augmentation for validation/inference.-------")
+            self.dataset_cfg.action_transform_type = "identity"
+            self.dataset_cfg.anchor_transform_type = "identity"
+            self.dataset_cfg.action_translation_variance = 0
+            self.dataset_cfg.action_rotation_variance = 0
+            self.dataset_cfg.anchor_translation_variance = 0
+            self.dataset_cfg.anchor_rotation_variance = 0
+
+        # if world frame, don't mean-center the point clouds
+        if self.dataset_cfg.world_frame:
+            print("-------Turning off mean-centering for world frame predictions.-------")
+            self.dataset_cfg.center_type = "none"
+            self.dataset_cfg.action_context_center_type = "none"
+
+
+        self.train_dataset = F_R_DATASET_FN[self.dataset_cfg.name](
+            self.root, self.dataset_cfg, "train")
+        
+        self.val_dataset = F_R_DATASET_FN[self.dataset_cfg.name](
+            self.root, self.dataset_cfg, "val")
+
+        self.val_ood_dataset = F_R_DATASET_FN[self.dataset_cfg.name](
+            self.root, self.dataset_cfg, "test")
+
+    def train_dataloader(self) -> data.DataLoader:
+        return data.DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=True if self.stage == "fit" else False,
+            drop_last=True,
         )
 
-    def test_dataloader(self) -> data.DataLoader:
-        return data.DataLoader(
-            self.test_dataset,
-            batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            drop_last=False,
-        )
-    '''
     def val_dataloader(self):
         val_dataloader = data.DataLoader(
             self.val_dataset,
