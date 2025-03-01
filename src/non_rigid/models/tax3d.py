@@ -245,6 +245,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         model_kwargs = self.get_model_kwargs(batch)
 
         noise_translate_scale = self.model_cfg.diff_translation_noise_scale
+        diff_rotation_noise_scale = self.model_cfg.diff_rotation_noise_scale
 
         # run diffusion
         # noise = torch.randn_like(ground_truth) * self.noise_scale
@@ -253,6 +254,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             x_start=ground_truth,
             t=t,
             noise_translate_scale=noise_translate_scale,
+            diff_rotation_noise_scale=diff_rotation_noise_scale,
             model_kwargs=model_kwargs,
             # noise=noise,
         )

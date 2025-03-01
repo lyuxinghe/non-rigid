@@ -2,6 +2,7 @@ import numpy as np
 import os
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 
 
 def load_proccloth(dir, num_demos = None):
@@ -148,14 +149,18 @@ def compute_pcd_mean_distance(action_pcds, anchor_pcds, scaling_factor=1.0):
     return np.array(distances)
 
 
-def compute_and_plot_pcd_mean_distance(action_pcds, anchor_pcds, scaling_factor=1.0, save_dir="./vis/measure_pcd/"):
+def compute_and_plot_pcd_mean_distance(action_pcds, anchor_pcds, scaling_factor=1.0, save_dir="./vis/measure_pcd/", overlay_std=1.0):
     """
-    Compute the mean point distance between action and anchor PCDs and plot the distribution.
+    Compute the mean point distance between action and anchor PCDs and plot the distribution 
+    overlaid with a zero-centered Gaussian curve. Additionally, highlight 1σ (66.67%) and 2σ (96%) 
+    regions only for values ≥ 0.
 
     Args:
         action_pcds (list of np.ndarray): List of action point clouds.
         anchor_pcds (list of np.ndarray): List of anchor point clouds.
         scaling_factor (float): Factor to scale the PCD before computing distances.
+        save_dir (str): Directory to save the plots.
+        overlay_std (float): Standard deviation for the Gaussian overlay.
 
     Returns:
         np.ndarray: Array of mean point distances.
@@ -165,17 +170,45 @@ def compute_and_plot_pcd_mean_distance(action_pcds, anchor_pcds, scaling_factor=
     # Compute distances
     distances = compute_pcd_mean_distance(action_pcds, anchor_pcds, scaling_factor)
 
-    # Plot distribution of distances
+    # Compute statistics
+    mean_distance = np.mean(distances)
+    std_distance = np.std(distances)
+
+    # Define histogram bins
+    bins = 30
     plt.figure(figsize=(8, 5))
-    plt.hist(distances, bins=30, color='blue', alpha=0.7, edgecolor='black')
+    counts, bin_edges, _ = plt.hist(distances, bins=bins, color='blue', alpha=0.7, edgecolor='black', label="Empirical Data")
+
+    # Find the maximum frequency (highest bin count)
+    max_freq = max(counts)
+
+    # Overlay Gaussian curve (zero-centered)
+    x_vals = np.linspace(min(distances), max(distances), 100)
+    gaussian_curve = norm.pdf(x_vals, loc=0, scale=overlay_std)  # Zero-centered Gaussian
+
+    # Scale Gaussian to match histogram peak
+    scale_factor = max_freq / max(gaussian_curve)
+    plt.plot(x_vals, gaussian_curve * scale_factor, color='red', linestyle="dashed", label=f"Gaussian (std={overlay_std})")
+
+    # Highlight only positive 1σ and 2σ regions
+    max_distance = max(distances)
+    if overlay_std > 0:
+        plt.axvspan(0, min(overlay_std, max_distance), color='orange', alpha=0.3, label="1σ (66.67%)")
+        plt.axvspan(0, min(2 * overlay_std, max_distance), color='yellow', alpha=0.2, label="2σ (96%)")
+
+    # Labels and legend
     plt.xlabel("L2 Distance between Action and Anchor Mean Points")
     plt.ylabel("Frequency")
-    plt.title("Distribution of Mean Point Distances")
+    plt.title("Distribution of Mean Point Distances with Gaussian Overlay")
+    plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(save_dir, "mean_distance_hist.jpg"))
+
+    # Save the plot
+    plt.savefig(os.path.join(save_dir, f"mean_distance_hist_with_gaussian_std={overlay_std}.jpg"))
+    plt.close()
 
     # Print summary statistics
-    print(f"Mean Distance: {np.mean(distances):.4f}")
+    print(f"Mean Distance: {mean_distance:.4f}")
     print(f"Median Distance: {np.median(distances):.4f}")
     print(f"Max Distance: {np.max(distances):.4f}")
     print(f"Min Distance: {np.min(distances):.4f}")
@@ -209,7 +242,7 @@ if __name__ == "__main__":
     print(f"NDF Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
     '''
 
-    rpdiff_action, rpdiff_anchor = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single/task_name_mug_on_rack', num_demos=3)
+    rpdiff_action, rpdiff_anchor = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single/task_name_mug_on_rack')
 
     mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_action, scaling_factor=1.0)
     print(f"RPDiff Action Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
@@ -219,4 +252,4 @@ if __name__ == "__main__":
     print(f"RPDiff Anchor Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
     print(f"RPDiff Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
 
-    compute_and_plot_pcd_mean_distance(rpdiff_action, rpdiff_anchor, scaling_factor=1.0)
+    compute_and_plot_pcd_mean_distance(rpdiff_action, rpdiff_anchor, scaling_factor=1.0, overlay_std=1)
