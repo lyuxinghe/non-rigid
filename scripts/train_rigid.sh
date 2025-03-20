@@ -11,7 +11,7 @@
 # ./train_rigid.sh 0 cross_flow_relative rpdiff offline
 
 # Resuming from a crashed run:
-#./train_rigid.sh 0 feature_df_cross rpdiff online checkpoint.run_id=2nekrf5u checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-02-02/12-14-50/checkpoints/last.ckpt'
+#./train_rigid.sh 0 feature_df_cross rpdiff online checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-03-02/17-41-55/checkpoints/last.ckpt'
 
 
 GPU_INDEX=$1
@@ -28,23 +28,39 @@ if [ $MODEL_TYPE == "cross_flow_relative" ]; then
   echo "Training cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
+
+elif [ $MODEL_TYPE == "cross_point_relative" ]; then
+  echo "Training cross relative point model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=df_cross model.type=point"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
 
 elif [ $MODEL_TYPE == "feature_df_cross" ]; then
   echo "Training feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=feature_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
 elif [ $MODEL_TYPE == "pn2_df_cross" ]; then
   echo "Training pointnet++ w/ cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=pn2_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
 elif [ $MODEL_TYPE == "pn2_feature_df_cross" ]; then
   echo "Training pointnet++ w/ feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=pn2_feature_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
+elif [ $MODEL_TYPE == "ddrd_point_joint" ]; then
+  echo "Training DDRD point joint model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=ddrd model.type=point model.model_take=joint"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
+elif [ $MODEL_TYPE == "ddrd_flow_joint" ]; then
+  echo "Training DDRD flow joint model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=ddrd model.type=flow model.model_take=joint"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
 fi
 
 WANDB_MODE=$WANDB_MODE python train.py \

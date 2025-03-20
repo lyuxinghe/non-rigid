@@ -244,12 +244,12 @@ if __name__ == "__main__":
 
     rpdiff_action, rpdiff_anchor = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single/task_name_mug_on_rack')
 
-    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_action, scaling_factor=1.0)
+    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_action, scaling_factor=10.0)
     print(f"RPDiff Action Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
     print(f"RPDiff Action Mean Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
 
-    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_anchor, scaling_factor=1.0)
+    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_anchor, scaling_factor=10.0)
     print(f"RPDiff Anchor Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
     print(f"RPDiff Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
 
-    compute_and_plot_pcd_mean_distance(rpdiff_action, rpdiff_anchor, scaling_factor=1.0, overlay_std=1)
+    #compute_and_plot_pcd_mean_distance(rpdiff_action, rpdiff_anchor, scaling_factor=1.0, overlay_std=1)

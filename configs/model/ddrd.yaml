@@ -1,4 +1,4 @@
-name: df_cross
+name: ddrd
 
 # Model settings
 type: point # (flow, point) Type of model
@@ -8,9 +8,13 @@ learn_sigma: True # Learn sigma for diffusion
 center_noise: False # Center noise for diffusion
 rotary: False # Use rotary embedding for diffusion
 cross_atten: True # Use cross attention for diffusion
-feature: off # (flow, point, off) Type of feature base
+feature: True # Use flow features
 encoder_backbone: mlp # (mlp, pn2)
+predict_xstart: False
+model_take: joint # (joint, separate)
 
+
+# model encoders
 x_encoder: mlp # Encoder current timestep x
 y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
 x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)

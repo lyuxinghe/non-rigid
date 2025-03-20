@@ -98,9 +98,7 @@ class NDFDataset(data.Dataset):
 
 
         # Apply augmentations
-        if self.split == "train" or (
-            self.split == "val" and not self.dataset_cfg.val_use_defaults
-        ):
+        if self.type == "train" or self.dataset_cfg.val_use_defaults:
             if not self.eval_mode:
                 # Apply augmentations to the point clouds in their final positions
                 points_action, points_action_indices = maybe_apply_augmentations(
@@ -340,9 +338,7 @@ class NDFFeatureDataset(data.Dataset):
 
 
         # Apply augmentations
-        if self.split == "train" or (
-            self.split == "val" and not self.dataset_cfg.val_use_defaults
-        ):
+        if self.type == "train" or self.dataset_cfg.val_use_defaults:
             if not self.eval_mode:
                 # Apply augmentations to the point clouds in their final positions
                 points_action, points_action_indices = maybe_apply_augmentations(
@@ -569,9 +565,7 @@ class RPDiffDataset(data.Dataset):
         anchor_seg = torch.ones(anchor_pc.shape[0], dtype=torch.bool)
         
         # Apply augmentations
-        if self.type == "train" or (
-            self.type == "val" and not self.dataset_cfg.val_use_defaults
-        ):
+        if self.type == "train" or self.dataset_cfg.val_use_defaults:
             if not self.eval_mode:
                 # Apply augmentations to the point clouds in their final positions
                 action_pc, action_pc_indices = maybe_apply_augmentations(
@@ -783,9 +777,7 @@ class RPDiffFeatureDataset(data.Dataset):
         anchor_seg = torch.ones(anchor_pc.shape[0], dtype=torch.bool)
 
         # Apply augmentations
-        if self.type == "train" or (
-            self.type == "val" and not self.dataset_cfg.val_use_defaults
-        ):
+        if self.type == "train" or self.dataset_cfg.val_use_defaults:
             if not self.eval_mode:
                 # Apply augmentations to the point clouds in their final positions
                 action_pc, action_pc_indices = maybe_apply_augmentations(
@@ -930,7 +922,7 @@ class RPDiffFeatureDataset(data.Dataset):
         """ Toggle eval mode to enable/disable augmentation """
         self.eval_mode = eval_mode
 
-class RPDiffFeatureReferenceDataset(data.Dataset):
+class RPDiffNoisyGoalDataset(data.Dataset):
     def __init__(self, root, dataset_cfg, type):
         super().__init__()
         self.root = root
@@ -938,7 +930,7 @@ class RPDiffFeatureReferenceDataset(data.Dataset):
         self.dataset_cfg = dataset_cfg
         self.rpdiff_task_name = dataset_cfg.rpdiff_task_name
         self.rpdiff_task_type = dataset_cfg.rpdiff_task_type
-
+                
         self.eval_mode = False if self.type == "train" else True
 
         self.dataset_dir = self.root / self.rpdiff_task_name / self.rpdiff_task_type
@@ -950,6 +942,9 @@ class RPDiffFeatureReferenceDataset(data.Dataset):
         self.sample_size_action = self.dataset_cfg.sample_size_action
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
         self.world_frame = self.dataset_cfg.world_frame
+
+        # setting gmm error scale
+        self.ref_error_scale = self.dataset_cfg.ref_error_scale
 
         print(f"Loading RPDiff dataset from {self.dataset_dir}")
 
@@ -974,7 +969,7 @@ class RPDiffFeatureReferenceDataset(data.Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
         demo = np.load(self.demo_files[index % self.num_demos], allow_pickle=True)
-
+        
         # Access start and final PCDs for parent and child
         parent_start_pcd = demo['multi_obj_start_pcd'].item()['parent']
         child_start_pcd = demo['multi_obj_start_pcd'].item()['child']
@@ -995,11 +990,9 @@ class RPDiffFeatureReferenceDataset(data.Dataset):
 
         action_seg = torch.ones(action_pc.shape[0], dtype=torch.bool)
         anchor_seg = torch.ones(anchor_pc.shape[0], dtype=torch.bool)
-
+        
         # Apply augmentations
-        if self.type == "train" or (
-            self.type == "val" and not self.dataset_cfg.val_use_defaults
-        ):
+        if self.type == "train" or self.dataset_cfg.val_use_defaults:
             if not self.eval_mode:
                 # Apply augmentations to the point clouds in their final positions
                 action_pc, action_pc_indices = maybe_apply_augmentations(
@@ -1018,8 +1011,10 @@ class RPDiffFeatureReferenceDataset(data.Dataset):
                 )
                 action_seg = action_seg[action_pc_indices.squeeze(0)]
                 goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
+                if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
+                    print("Encounter action points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
+                    print(self.demo_files[index % self.num_demos])
 
-                
                 anchor_pc, anchor_pc_indices = maybe_apply_augmentations(
                     anchor_pc,
                     min_num_points=self.dataset_cfg.sample_size_anchor,
@@ -1036,7 +1031,7 @@ class RPDiffFeatureReferenceDataset(data.Dataset):
                 )
 
                 if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
-                    print("Encounter points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
+                    print("Encounter anchor points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
                     print(self.demo_files[index % self.num_demos])
 
                 anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
@@ -1066,22 +1061,15 @@ class RPDiffFeatureReferenceDataset(data.Dataset):
         R_action_to_goal = relative_trans[:3, :3]  # Rotation matrix
         t_action_to_goal = relative_trans[:3, 3]   # Translation vector
 
-        ### Common Terms ###
-        P_A = action_pc
-        P_B = anchor_pc
+        center = goal_action_pc.mean(axis=0)
+        noisy_center = center + self.ref_error_scale * torch.randn_like(center)
+        action_center = action_pc.mean(axis=0)
 
-        # calculate reference centers
-        # in the reference variant, we set reference as the (predicted) goal center, rather than the anchor center
-        # since goal center should be unknown except for the target flow, we set everything in the dataloader in the world frame
-        anchor_mean = P_B.mean(axis=0)
-        action_mean = P_A.mean(axis=0)
+        goal_action_pc = goal_action_pc - noisy_center
+        anchor_pc = anchor_pc - noisy_center
+        action_pc = action_pc - action_center
 
-        # center anchor and action
-        P_B_centered_B = P_B - anchor_mean
-        goal_centered_B = goal_action_pc - anchor_mean
-        P_A_centered_A = P_A - action_mean
-
-        # generate random SE3 transform
+        # transform the point clouds
         T0 = random_se3(
             N=1,
             rot_var=self.dataset_cfg.action_rotation_variance,
@@ -1094,37 +1082,108 @@ class RPDiffFeatureReferenceDataset(data.Dataset):
             trans_var=self.dataset_cfg.anchor_translation_variance,
             rot_sample_method=self.dataset_cfg.anchor_transform_type,
         )
-        
-        # perform random SE3 transform 
-        P_B_centered_ = T1.transform_points(P_B_centered_B)
-        goal_centered_ = T1.transform_points(goal_centered_B)
-        P_A_centered_ = T1.transform_points(P_A_centered_A)
 
-        # obtain the world frame pcd
-        P_B_ = P_B_centered_ + anchor_mean
-        P_A_star_ = goal_centered_ + anchor_mean
-        P_A_ = P_A_centered_ + action_mean
+        goal_action_pc = T1.transform_points(goal_action_pc)
+        anchor_pc = T1.transform_points(anchor_pc)
+        action_pc = T0.transform_points(action_pc)
 
-        # create one-hot encoding
-        P_A_one_hot = torch.tensor([[1, 0]], dtype=torch.float).repeat(P_A_.shape[0], 1)  # Shape: [512, 2]
-        P_B_one_hot = torch.tensor([[0, 1]], dtype=torch.float).repeat(P_B_.shape[0], 1)  # Shape: [512, 2]
+        T_goal2world = T1.inverse().compose(
+            Translate(noisy_center.unsqueeze(0))
+        )
+        T_action2world = T0.inverse().compose(
+            Translate(action_center.unsqueeze(0))
+        )
 
-        gt_flow = (P_A_star_ - P_A_star_.mean(axis=0)) - (P_A_ - P_A_.mean(axis=0))
+        gt_flow = goal_action_pc - action_pc
 
         item = {}
+        item["pc"] = goal_action_pc # Action points in goal position
+        item["pc_action"] = action_pc # Action points in starting position for context
+        item["pc_anchor"] = anchor_pc # Anchor points in goal position
         item["seg"] = action_seg
         item["seg_anchor"] = anchor_seg
         item["flow"] = gt_flow
-        item["P_A"] = P_A_
-        item["P_B"] = P_B_
-        item["P_A_star"] = P_A_star_
-        item["P_A_one_hot"] = P_A_one_hot
-        item["P_B_one_hot"] = P_B_one_hot
+        item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0)
+        item["T_action2world"] = T_action2world.get_matrix().squeeze(0)
         item["T_init"] = T_init
         item["R_action_to_goal"] = R_action_to_goal
         item["t_action_to_goal"] = t_action_to_goal
         return item
 
+        '''
+        # calculate centers
+        anchor_center = anchor_pc.mean(axis=0)
+        action_center = action_pc.mean(axis=0)
+
+        b_goal_action_pc = goal_action_pc - anchor_center
+        b_anchor_pc = anchor_pc - anchor_center
+        a_action_pc = action_pc - action_center
+
+        # transform the point clouds
+        T0 = random_se3(
+            N=1,
+            rot_var=self.dataset_cfg.action_rotation_variance,
+            trans_var=self.dataset_cfg.action_translation_variance,
+            rot_sample_method=self.dataset_cfg.action_transform_type,
+        )
+        T1 = random_se3(
+            N=1,
+            rot_var=self.dataset_cfg.anchor_rotation_variance,
+            trans_var=self.dataset_cfg.anchor_translation_variance,
+            rot_sample_method=self.dataset_cfg.anchor_transform_type,
+        )
+
+        b_goal_action_pc = T1.transform_points(b_goal_action_pc)
+        b_anchor_pc = T1.transform_points(b_anchor_pc)
+        a_action_pc = T0.transform_points(a_action_pc)
+
+        '''
+        T_goal2world = T1.inverse().compose(
+            Translate(anchor_center.unsqueeze(0))
+        )
+        T_action2world = T0.inverse().compose(
+            Translate(action_center.unsqueeze(0))
+        )
+        '''
+        # now the transformation matrices will be applied to world-frame augmented action/anchor pcd, instead of their own frames
+        T_goal2orig = Translate(-anchor_center.unsqueeze(0)).compose(T1.inverse()).compose(Translate(anchor_center.unsqueeze(0)))
+        T_action2orig = Translate(-action_center.unsqueeze(0)).compose(T0.inverse()).compose(Translate(action_center.unsqueeze(0)))
+
+        # calculate world-frame anchor_pc and goal_action_pc for re-centering
+        w_goal_action_pc = b_goal_action_pc + anchor_center
+        w_anchor_pc = b_anchor_pc + anchor_center
+
+        # calculate the goal_center, and generate noisy_goal_center
+        goal_center = w_goal_action_pc.mean(axis=0)
+
+        ref_noise = self.ref_error_scale * torch.randn_like(goal_center)  # Generates noise with same shape & dtype
+        noisy_goal_center = goal_center + ref_noise
+
+        # center anchor and ground-truth goal on noisy_goal_center
+        n_goal_action_pc = w_goal_action_pc - noisy_goal_center
+        n_anchor_pc = w_anchor_pc - noisy_goal_center
+
+        # define ground-truth for point/flow predictions, as well as mean(P_A_prime)
+        pc = n_goal_action_pc                   # goal pointcloud in the noisy reference frame
+        flow = n_goal_action_pc - a_action_pc   # goal flow from action-frame action_pc to noisy goal-frame goal_pc
+        center = goal_center
+
+        item = {}
+        item["pc"] = pc # Action points in goal position
+        item["flow"] = flow
+        item["center"] = center
+        item["pc_action"] = a_action_pc 
+        item["pc_anchor"] = n_anchor_pc 
+        item["init_noisy_goal_center"] = noisy_goal_center
+        item["seg"] = action_seg
+        item["seg_anchor"] = anchor_seg
+        item["T_goal2world"] = T_goal2orig.get_matrix().squeeze(0)
+        item["T_action2world"] = T_action2orig.get_matrix().squeeze(0)
+        item["T_init"] = T_init
+        item["R_action_to_goal"] = R_action_to_goal
+        item["t_action_to_goal"] = t_action_to_goal
+        return item
+        '''
     def set_eval_mode(self, eval_mode: bool):
         """ Toggle eval mode to enable/disable augmentation """
         self.eval_mode = eval_mode
@@ -1143,11 +1202,11 @@ F_DATASET_FN = {
     "rpdiff_fit": RPDiffFeatureDataset,
 }
 
-F_R_DATASET_FN = {
+NG_DATASET_FN = {
     #"ndf": NDFFeatureDataset,
     #"ndf_fit": NDFFeatureDataset,
-    "rpdiff": RPDiffFeatureReferenceDataset,
-    "rpdiff_fit": RPDiffFeatureReferenceDataset,
+    "rpdiff": RPDiffNoisyGoalDataset,
+    "rpdiff_fit": RPDiffNoisyGoalDataset,
 }
 
 class RigidDataModule(L.LightningModule):
@@ -1168,6 +1227,8 @@ class RigidDataModule(L.LightningModule):
         self.dataset_cfg = dataset_cfg
         self.root = Path(data_dir)
     
+        print("Initializing RigidDataModule with dataset name {} and dataset class {}".format(dataset_cfg.name, DATASET_FN[dataset_cfg.name], ))
+
     def prepare_data(self):
         pass
 
@@ -1245,7 +1306,10 @@ class RigidFeatureDataModule(L.LightningModule):
         self.num_workers = num_workers
         self.dataset_cfg = dataset_cfg
         self.root = Path(data_dir)
-    
+
+        print("Initializing RigidFeatureDataModule with dataset name {} and dataset class {}".format(dataset_cfg.name, F_DATASET_FN[dataset_cfg.name], ))
+
+
     def prepare_data(self):
         pass
 
@@ -1308,7 +1372,7 @@ class RigidFeatureDataModule(L.LightningModule):
         return val_dataloader, val_ood_dataloader
 
 
-class RigidFeatureRefenceDataModule(L.LightningModule):
+class RigidDataNoisyGoalModule(L.LightningModule):
     def __init__(
         self,
         #root: Path,
@@ -1325,7 +1389,9 @@ class RigidFeatureRefenceDataModule(L.LightningModule):
         self.num_workers = num_workers
         self.dataset_cfg = dataset_cfg
         self.root = Path(data_dir)
-    
+
+        print("Initializing RigidDataNoisyGoalModule with dataset name {} and dataset class {}".format(dataset_cfg.name, NG_DATASET_FN[dataset_cfg.name], ))
+
     def prepare_data(self):
         pass
 
@@ -1354,13 +1420,13 @@ class RigidFeatureRefenceDataModule(L.LightningModule):
             self.dataset_cfg.action_context_center_type = "none"
 
 
-        self.train_dataset = F_R_DATASET_FN[self.dataset_cfg.name](
+        self.train_dataset = NG_DATASET_FN[self.dataset_cfg.name](
             self.root, self.dataset_cfg, "train")
         
-        self.val_dataset = F_R_DATASET_FN[self.dataset_cfg.name](
+        self.val_dataset = NG_DATASET_FN[self.dataset_cfg.name](
             self.root, self.dataset_cfg, "val")
 
-        self.val_ood_dataset = F_R_DATASET_FN[self.dataset_cfg.name](
+        self.val_ood_dataset = NG_DATASET_FN[self.dataset_cfg.name](
             self.root, self.dataset_cfg, "test")
 
     def train_dataloader(self) -> data.DataLoader:

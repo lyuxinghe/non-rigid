@@ -1,4 +1,3 @@
-from typing import Any, Dict
 
 import lightning as L
 import numpy as np
@@ -20,118 +19,35 @@ from torch_geometric.nn import fps
 from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
 from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
-from non_rigid.models.dit.diffusion import create_diffusion
-from non_rigid.models.dit.models import DiT_PointCloud_Unc as DiT_pcu
+from non_rigid.models.dit.diffusion import create_diffusion_ddrd, create_diffusion
 from non_rigid.models.dit.models import (
-    DiT_PointCloud_Unc_Cross,
-    Rel3D_DiT_PointCloud_Unc_Cross,
-    DiT_PointCloud_Cross,
-    DiT_PointCloud,
-    DiT_PointCloud_Cross_Point_Feature,
-    DiT_PointCloud_Cross_Flow_Feature,
-    PN2_DiT_PointCloud_Cross,
-    PN2_DiT_PointCloud,
-    PN2_DiT_PointCloud_Cross_Flow_Feature,
+    Joint_DiT_Deformation_Reference_Cross_Feature,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
 
 
-def DiT_pcu_S(**kwargs):
-    return DiT_pcu(depth=12, hidden_size=384, num_heads=6, **kwargs)
-
-
-def DiT_pcu_xS(**kwargs):
-    return DiT_pcu(depth=5, hidden_size=128, num_heads=4, **kwargs)
-
-
-def DiT_pcu_cross_xS(**kwargs):
-    return DiT_PointCloud_Unc_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
-
-
-def Rel3D_DiT_pcu_cross_xS(**kwargs):
-    # Embed dim divisible by 3 for 3D positional encoding and divisible by num_heads for multi-head attention
-    return Rel3D_DiT_PointCloud_Unc_Cross(
-        depth=5, hidden_size=132, num_heads=4, **kwargs
-    )
-
-def DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
+def Joint_DiT_Deformation_Reference_Cross_Feature_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("DiffusionTransformerNetwork: Joint_DiT_Deformation_Reference_Cross_Point_Feature_xS")
     hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Joint_DiT_Deformation_Reference_Cross_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
-def DiT_PointCloud_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: DiT_PointCloud_xS")
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def DiT_PointCloud_Cross_Point_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: DiT_PointCloud_Cross_Point_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud_Cross_Point_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def DiT_PointCloud_Cross_Flow_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: DiT_PointCloud_Cross_Flow_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def PN2_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_Cross_xS")
-    hidden_size = 132 if use_rotary else 128
-    return PN2_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def PN2_DiT_PointCloud_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_xS")
-    hidden_size = 132 if use_rotary else 128
-    return PN2_DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def PN2_DiT_PointCloud_Cross_Flow_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_Cross_Flow_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return PN2_DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-# TODO: clean up all unused functions
 DiT_models = {
-    "DiT_pcu_S": DiT_pcu_S,
-    "DiT_pcu_xS": DiT_pcu_xS,
-    "DiT_pcu_cross_xS": DiT_pcu_cross_xS,
-    "Rel3D_DiT_pcu_cross_xS": Rel3D_DiT_pcu_cross_xS,
-    # there is no Rel3D_DiT_pcu_xS
-    "DiT_PointCloud_Cross_xS": DiT_PointCloud_Cross_xS,
-    # TODO: add the SD model here
-    "DiT_PointCloud_xS": DiT_PointCloud_xS,
-    # option 1
-    "DiT_PointCloud_Cross_Point_Feature_xS": DiT_PointCloud_Cross_Point_Feature_xS,
-    # option 2
-    "DiT_PointCloud_Cross_Flow_Feature_xS": DiT_PointCloud_Cross_Flow_Feature_xS,
-    # TAX3D+PN2 (cross-atten)
-    "PN2_DiT_PointCloud_Cross_xS": PN2_DiT_PointCloud_Cross_xS,
-    # TAX3D+PN2 (self-atten)
-    "PN2_DiT_PointCloud_xS": PN2_DiT_PointCloud_xS,
-    # Feature_TAX3D+PN2
-    "PN2_DiT_PointCloud_Cross_Flow_Feature_xS": PN2_DiT_PointCloud_Cross_Flow_Feature_xS,
-
+    "Joint_DiT_Deformation_Reference_Cross_Feature_xS": Joint_DiT_Deformation_Reference_Cross_Feature_xS,
 }
-
 
 def get_model(model_cfg):
     #rotary = "Rel3D_" if model_cfg.rotary else ""
     cross = "Cross_" if model_cfg.cross_atten else ""
-    feature = "Point_Feature_" if model_cfg.feature == "point" else "Flow_Feature_" if model_cfg.feature == "flow" else ""
+    feature = "Feature_" if model_cfg.feature else ""
     encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
-
+    model_take = "Joint_" if model_cfg.model_take == "joint" else "Separate_"
     # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
-    model_name = f"{encoder}DiT_PointCloud_{cross}{feature}{model_cfg.size}"
+    model_name = f"{model_take}{encoder}DiT_Deformation_Reference_{cross}{feature}{model_cfg.size}"
     return DiT_models[model_name]
 
-
-class DiffusionTransformerNetwork(nn.Module):
+class DeformationReferenceDiffusionTransformerNetwork(nn.Module):
     """
     Network containing the specified Diffusion Transformer architecture.
     """
@@ -147,11 +63,9 @@ class DiffusionTransformerNetwork(nn.Module):
     def forward(self, x, t, **kwargs):
         return self.dit(x, t, **kwargs)
     
-
-
-class DenseDisplacementDiffusionModule(L.LightningModule):
+class DenseDeformationReferenceDiffusionModule(L.LightningModule):
     """
-    Generalized Dense Displacement Diffusion (DDD) module that handles model training, inference, 
+    Generalized Dense Deformation Reference Diffusion (DDRD) module that handles model training, inference, 
     evaluation, and visualization. This module is inherited and overriden by scene-level and 
     object-centric modules.
     """
@@ -200,12 +114,22 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         # self.noise_schedule = model_cfg.diff_noise_schedule
         # self.noise_scale = model_cfg.diff_noise_scale
         self.diff_steps = self.model_cfg.diff_train_steps # TODO: rename to diff_steps
+        self.predict_xstart = self.model_cfg.predict_xstart
         self.num_wta_trials = self.run_cfg.num_wta_trials
-        self.diffusion = create_diffusion(
-            timestep_respacing=None,
-            diffusion_steps=self.diff_steps,
-            # noise_schedule=self.noise_schedule,
-        )
+        self.model_take = self.model_cfg.model_take
+
+
+        if self.model_take == "joint":
+            print("Initializing Adjusted Diffusion Network")
+            self.diffusion = create_diffusion_ddrd(
+                timestep_respacing=None,
+                diffusion_steps=self.diff_steps,
+                predict_xstart=self.predict_xstart,
+                # noise_schedule=self.noise_schedule,
+            )
+        else:
+            raise ValueError("Choose model_take from [\"joint\", \"separate\"]")
+
 
     def configure_optimizers(self):
         assert self.mode == "train", "Can only configure optimizers in training mode."
@@ -602,54 +526,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
                 "rmse_wta": pred_wta_dict["rmse_wta"],
             }
     
-
-
-class SceneDisplacementModule(DenseDisplacementDiffusionModule):
-    """
-    Scene-level DDD module. Applies self-attention to the entire scene.
-    """
-    def __init__(self, network, cfg) -> None:
-        super().__init__(network, cfg)
-
-    def get_model_kwargs(self, batch, num_samples=None):
-        pc_action = batch["pc_action"].to(self.device)
-        if num_samples is not None:
-            # expand point clouds if num_samples is provided; used for WTA predictions
-            pc_action = expand_pcd(pc_action, num_samples)
-
-        pc_action = pc_action.permute(0, 2, 1) # channel first
-        model_kwargs = dict(x0=pc_action)
-        return model_kwargs
-    
-    def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
-        """
-        Get world-frame predictions from the given batch and predictions.
-        """
-        T_goal2world = Transform3d(
-            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
-        )
-
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
-        pc_action_world = T_goal2world.transform_points(pc_action)
-        pred_flow_world = pred_point_world - pc_action_world
-        results_world = [
-            T_goal2world.transform_points(res) for res in pred_dict["results"]
-        ]
-        return pred_flow_world, pred_point_world, results_world
-    
-    def get_viz_args(self, batch, viz_idx):
-        """
-        Get visualization arguments for wandb logging.
-        """
-        pc_pos_viz = batch["pc"][viz_idx, :, :3]
-        pc_action_viz = batch["pc_action"][viz_idx, :, :3]
-        viz_args = {
-            "pc_pos_viz": pc_pos_viz,
-            "pc_action_viz": pc_action_viz,
-        }
-        return viz_args
-
-class CrossDisplacementModule(DenseDisplacementDiffusionModule):
+        
+class DDRDModule(DenseDeformationReferenceDiffusionModule):
     """
     Object-centric DDD module. Applies cross attention between action and anchor objects.
     """
@@ -702,73 +580,3 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         }
         return viz_args
     
-class FeatureCrossDisplacementModule(DenseDisplacementDiffusionModule):
-    """
-    Object-centric DDD module. Applies cross attention between action and anchor objects.
-    """
-    def __init__(self, network, cfg) -> None:
-        super().__init__(network, cfg)
-
-    def get_model_kwargs(self, batch, num_samples=None):
-        pc_action = batch["pc_action"].to(self.device)
-        pc_anchor = batch["pc_anchor"].to(self.device)
-        P_A = batch["P_A"].to(self.device)
-        P_B = batch["P_B"].to(self.device)
-        y_ref = batch["y"].to(self.device)
-        y_action = batch["y_action"].to(self.device)
-        P_A_one_hot = batch["P_A_one_hot"].to(self.device)
-        P_B_one_hot = batch["P_B_one_hot"].to(self.device)
-
-        if num_samples is not None:
-            # expand point clouds if num_samples is provided; used for WTA predictions
-            pc_action = expand_pcd(pc_action, num_samples)
-            pc_anchor = expand_pcd(pc_anchor, num_samples)
-            P_A = expand_pcd(P_A, num_samples)
-            P_B = expand_pcd(P_B, num_samples)
-            y_ref = expand_pcd(y_ref, num_samples)
-            y_action = expand_pcd(y_action, num_samples)
-            P_A_one_hot = expand_pcd(P_A_one_hot, num_samples)
-            P_B_one_hot = expand_pcd(P_B_one_hot, num_samples)
-
-        pc_action = pc_action.permute(0, 2, 1)  # channel first
-        pc_anchor = pc_anchor.permute(0, 2, 1)  # channel first
-        P_A = P_A.permute(0, 2, 1)              # channel first
-        P_B = P_B.permute(0, 2, 1)              # channel first
-        P_A_one_hot = P_A_one_hot.permute(0, 2, 1)    # channel first
-        P_B_one_hot = P_B_one_hot.permute(0, 2, 1)    # channel first
-
-        model_kwargs = dict(x0=pc_action, y=pc_anchor, P_A=P_A, P_B=P_B, y_ref=y_ref, y_action=y_action, P_A_one_hot=P_A_one_hot, P_B_one_hot=P_B_one_hot)
-        return model_kwargs
-    
-    def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
-        """
-        Get world-frame predictions from the given batch and predictions.
-        """
-        T_action2world = Transform3d(
-            matrix=expand_pcd(batch["T_action2world"].to(self.device), num_samples)
-        )
-        T_goal2world = Transform3d(
-            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
-        )
-
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
-        pc_action_world = T_action2world.transform_points(pc_action)
-        pred_flow_world = pred_point_world - pc_action_world
-        results_world = [
-            T_goal2world.transform_points(res) for res in pred_dict["results"]
-        ]
-        return pred_flow_world, pred_point_world, results_world
-
-    def get_viz_args(self, batch, viz_idx):
-        """
-        Get visualization arguments for wandb logging.
-        """
-        pc_pos_viz = batch["pc"][viz_idx, :, :3]
-        pc_action_viz = batch["pc_action"][viz_idx, :, :3]
-        pc_anchor_viz = batch["pc_anchor"][viz_idx, :, :3]
-        viz_args = {
-            "pc_pos_viz": pc_pos_viz,
-            "pc_action_viz": pc_action_viz,
-            "pc_anchor_viz": pc_anchor_viz,
-        }
-        return viz_args

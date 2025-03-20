@@ -30,11 +30,14 @@ from non_rigid.models.tax3d import (
     SceneDisplacementModule,
     CrossDisplacementModule,
     FeatureCrossDisplacementModule,
-    FeatureReferenceCrossDisplacementModule
+)
+from non_rigid.models.tax3d_ddrd import (
+    DeformationReferenceDiffusionTransformerNetwork,
+    DDRDModule,
 )
 
 from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, ProcClothFlowFeatureDataModule
-from non_rigid.datasets.rigid import RigidDataModule, RigidFeatureDataModule, RigidFeatureRefenceDataModule
+from non_rigid.datasets.rigid import RigidDataModule, RigidFeatureDataModule, RigidDataNoisyGoalModule
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
 
@@ -105,9 +108,9 @@ def create_model(cfg):
         network_fn = DiffusionTransformerNetwork
         # module_fn = Tax3dModule
         module_fn = FeatureCrossDisplacementModule
-    elif cfg.model.name == "feature_ref_df_cross":
-        network_fn = DiffusionTransformerNetwork
-        module_fn = FeatureReferenceCrossDisplacementModule
+    elif cfg.model.name == "ddrd":
+        network_fn = DeformationReferenceDiffusionTransformerNetwork
+        module_fn = DDRDModule
     else:
         raise ValueError(f"Invalid model name: {cfg.model.name}")
 
@@ -125,22 +128,21 @@ def create_datamodule(cfg):
             f"Model type: '{cfg.model.type}' and dataset type: '{cfg.dataset.type}' are incompatible."
         )
 
-    # check dataset name
-    if cfg.dataset.material == "deform":
-        if "feature" in cfg.model.name:
-            datamodule_fn = ProcClothFlowFeatureDataModule
-        else:
-            datamodule_fn = ProcClothFlowDataModule
-    elif cfg.dataset.material == "rigid":
-        if "feature" in cfg.model.name:
-            if "ref" in cfg.model.name:
-                datamodule_fn = RigidFeatureDataModule
-            else:
-                datamodule_fn = RigidFeatureDataModule
-        else:
-            datamodule_fn = RigidDataModule
-    else:
-        raise ValueError(f"Invalid dataset name: {cfg.dataset.name}")
+    # TODO: Unify these flags !
+    # Currently: 
+    dataset_mapping = {
+        ("deform", True, False): ProcClothFlowFeatureDataModule,
+        ("deform", False, False): ProcClothFlowDataModule,
+        ("rigid", True, False): RigidFeatureDataModule,
+        ("rigid", False, True): RigidDataNoisyGoalModule,
+        ("rigid", False, False): RigidDataModule
+    }
+
+    # Determine keys dynamically
+    dataset_key = (cfg.dataset.material, "feature" in cfg.model.name, cfg.dataset.noisy_goal)
+
+    # Assign the function dynamically
+    datamodule_fn = dataset_mapping.get(dataset_key, lambda: ValueError(f"Invalid dataset name: {cfg.dataset.name}"))
 
     # job-specific datamodule pre-processing
     if cfg.mode == "eval":

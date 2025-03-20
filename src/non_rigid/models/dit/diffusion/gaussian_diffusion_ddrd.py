@@ -141,7 +141,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
     return np.array(betas)
 
 
-class GaussianDiffusion:
+class GaussianDiffusionDDRD:
     """
     Utilities for training and sampling diffusion models.
     Original ported from this codebase:
@@ -278,8 +278,10 @@ class GaussianDiffusion:
         assert t.shape == (B,)
         model_output = model(x, t, **model_kwargs)
         if isinstance(model_output, tuple):
-            model_output, extra = model_output
+            model_output, pred_delta = model_output
+            extra = None
         else:
+            pred_delta = 0
             extra = None
 
         if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
@@ -315,10 +317,12 @@ class GaussianDiffusion:
             return x
 
         if self.model_mean_type == ModelMeanType.START_X:
+            raise NotImplementedError("START_X diffusion objective is not fixed here!")
             pred_xstart = process_xstart(model_output)
         else:
+            recovered_eps = self._recover_epsilon_drift(x_t=x, t=t, eps=model_output, pre_delta=pred_delta)
             pred_xstart = process_xstart(
-                self._predict_xstart_from_eps(x_t=x, t=t, eps=model_output)
+                self._predict_xstart_from_eps(x_t=x, t=t, eps=recovered_eps)
             )
         model_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart, x_t=x, t=t)
 
@@ -342,6 +346,25 @@ class GaussianDiffusion:
         return (
             _extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - pred_xstart
         ) / _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+
+
+    def _recover_epsilon_drift(self, x_t, t, eps, pre_delta):
+        # Extract the cumulative product ᾱ_t for the given timesteps.
+        alpha_bar = _extract_into_tensor(self.alphas_cumprod, t, x_t.shape)
+        
+        # Compute the denominator with a small epsilon to avoid division by zero.
+        eps_val = 1e-8
+        denom = th.sqrt(1 - alpha_bar) + eps_val
+        
+        # Compute the scaling term: (sqrt(alpha_bar) - 1) / sqrt(1 - alpha_bar)
+        scaling = (th.sqrt(alpha_bar) - 1) / denom
+        
+        # If any element of alpha_bar is nearly 1, set its scaling factor to 1.
+        scaling = th.where(th.abs(alpha_bar - 1.0) < 1e-6, th.ones_like(alpha_bar), scaling)
+        
+        # Adjust epsilon by subtracting the drift correction scaled appropriately.
+        recovered_eps = eps - scaling * pre_delta
+        return recovered_eps
 
     def condition_mean(self, cond_fn, p_mean_var, x, t, model_kwargs=None):
         """
@@ -827,6 +850,11 @@ class GaussianDiffusion:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
             model_output = model(x_t, t, **model_kwargs)
+            # --- NEW: Check for tuple outputs and compute the effective prediction ---
+            if isinstance(model_output, tuple):
+                model_output, pred_delta = model_output
+            else:
+                pred_delta = 0
 
             if self.model_var_type in [
                 ModelVarType.LEARNED,
@@ -858,7 +886,11 @@ class GaussianDiffusion:
                 ModelMeanType.EPSILON: noise,
             }[self.model_mean_type]
             assert model_output.shape == target.shape == x_start.shape
-            terms["mse"] = mean_flat((target - model_output) ** 2)
+            assert self.model_mean_type == ModelMeanType.EPSILON
+
+            recovered_eps = self._recover_epsilon_drift(x_t=x_t, t=t, eps=model_output, pre_delta=pred_delta)
+
+            terms["mse"] = mean_flat((target - recovered_eps) ** 2)
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:

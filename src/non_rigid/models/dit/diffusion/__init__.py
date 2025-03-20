@@ -4,7 +4,8 @@
 #     IDDPM: https://github.com/openai/improved-diffusion/blob/main/improved_diffusion/gaussian_diffusion.py
 
 from . import gaussian_diffusion as gd
-from .respace import SpacedDiffusion, space_timesteps
+from . import gaussian_diffusion_ddrd as gd_ddrd
+from .respace import SpacedDiffusion, SpacedDiffusionDDRD, space_timesteps
 
 
 def create_diffusion(
@@ -40,6 +41,44 @@ def create_diffusion(
             )
             if not learn_sigma
             else gd.ModelVarType.LEARNED_RANGE
+        ),
+        loss_type=loss_type
+        # rescale_timesteps=rescale_timesteps,
+    )
+
+def create_diffusion_ddrd(
+    timestep_respacing,
+    noise_schedule="linear", 
+    use_kl=False,
+    sigma_small=False,
+    predict_xstart=False,
+    learn_sigma=True,
+    rescale_learned_sigmas=False,
+    diffusion_steps=1000
+):
+    betas = gd_ddrd.get_named_beta_schedule(noise_schedule, diffusion_steps)
+    if use_kl:
+        loss_type = gd_ddrd.LossType.RESCALED_KL
+    elif rescale_learned_sigmas:
+        loss_type = gd_ddrd.LossType.RESCALED_MSE
+    else:
+        loss_type = gd_ddrd.LossType.MSE
+    if timestep_respacing is None or timestep_respacing == "":
+        timestep_respacing = [diffusion_steps]
+    return SpacedDiffusionDDRD(
+        use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
+        betas=betas,
+        model_mean_type=(
+            gd_ddrd.ModelMeanType.EPSILON if not predict_xstart else gd_ddrd.ModelMeanType.START_X
+        ),
+        model_var_type=(
+            (
+                gd_ddrd.ModelVarType.FIXED_LARGE
+                if not sigma_small
+                else gd_ddrd.ModelVarType.FIXED_SMALL
+            )
+            if not learn_sigma
+            else gd_ddrd.ModelVarType.LEARNED_RANGE
         ),
         loss_type=loss_type
         # rescale_timesteps=rescale_timesteps,
