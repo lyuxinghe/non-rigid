@@ -917,7 +917,6 @@ class GaussianDiffusionDDRDJoint:
             '''
             return NotImplementedError
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
-
             model_output = model(x_t, t, **model_kwargs)
             # --- NEW: Check for tuple outputs and compute the effective prediction ---
             if isinstance(model_output, tuple):

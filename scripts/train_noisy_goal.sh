@@ -28,16 +28,30 @@ if [ $MODEL_TYPE == "cross_point_relative" ]; then
 
   MODEL_PARAMS="model=df_cross model.type=point"
   DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.scene=False dataset.world_frame=False dataset.noisy_goal=True"
+elif [ $MODEL_TYPE == "cross_flow_relative" ]; then
+  echo "Training Cross Relative Flow model on dataset $DATASET_NAME with command: $COMMAND."
 
+  MODEL_PARAMS="model=df_cross model.type=flow"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=True"
 elif [ $MODEL_TYPE == "ddrd_point_joint" ]; then
-  echo "Training DDRD point adjusted model on dataset $DATASET_NAME with command: $COMMAND."
+  echo "Training DDRD point joint model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=ddrd model.type=point model.model_take=joint"
   DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.scene=False dataset.world_frame=False dataset.noisy_goal=True"
 elif [ $MODEL_TYPE == "ddrd_flow_joint" ]; then
-  echo "Training DDRD flow adjusted model on dataset $DATASET_NAME with command: $COMMAND."
+  echo "Training DDRD flow joint model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=ddrd model.type=flow model.model_take=joint"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=True"
+elif [ $MODEL_TYPE == "ddrd_point_separate" ]; then
+  echo "Training DDRD point separate model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=ddrd model.type=point model.model_take=separate"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.scene=False dataset.world_frame=False dataset.noisy_goal=True"
+elif [ $MODEL_TYPE == "ddrd_flow_separate" ]; then
+  echo "Training DDRD flow separate model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=ddrd model.type=flow model.model_take=separate"
   DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=True"
 fi
 

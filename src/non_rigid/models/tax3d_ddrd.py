@@ -68,8 +68,20 @@ class DeformationReferenceDiffusionTransformerNetwork(nn.Module):
             learn_sigma=model_cfg.learn_sigma,
             model_cfg=model_cfg,
         )
+        self.model_take = model_cfg.model_take
     
-    def forward(self, xr_t, xs_t, t, **kwargs):
+    def forward(self, *args, **kwargs):
+        if self.model_take == "joint":
+            return self._forward_joint(*args, **kwargs)
+        elif self.model_take == "separate":
+            return self._forward_separate(*args, **kwargs)
+        else:
+            raise ValueError(f"Unsupported model_take: {self.model_take}")
+
+    def _forward_joint(self, xt, t, **kwargs):
+        return self.dit(xt, t, **kwargs)
+
+    def _forward_separate(self, xr_t, xs_t, t, **kwargs):
         return self.dit(xr_t, xs_t, t, **kwargs)
     
 class DenseDeformationReferenceDiffusionModule(L.LightningModule):
@@ -199,9 +211,16 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
             model_kwargs=model_kwargs,
             # noise=noise,
         )
+        if self.model_take == "separate":
+            loss_r = loss_dict["loss_r"].mean()
+            loss_s = loss_dict["loss_s"].mean()
+        elif self.model_take == "joint":
+            loss_r = None
+            loss_s = None
+        else: 
+            raise ValueError
+        
         loss = loss_dict["loss"].mean()
-        loss_r = loss_dict["loss_r"].mean()
-        loss_s = loss_dict["loss_s"].mean()
 
         return None, loss, loss_r, loss_s
 
@@ -220,30 +239,42 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         bs, sample_size = batch["pc_action"].shape[:2]
         model_kwargs = self.get_model_kwargs(batch, num_samples)
 
-        # generating latents and running diffusion
-        #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
-        z_r = torch.randn(bs * num_samples, 3, 1, device=self.device)
-        z_s = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
+        if self.model_take == "separate":
+            # generating latents and running diffusion
+            #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
+            z_r = torch.randn(bs * num_samples, 3, 1, device=self.device)
+            z_s = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
 
-        # test: in inference, if we trained with translation noise with scale=t, we sample noise from N(0, 1+t)
-        #trans_noise_scale = torch.tensor(0.6, device=self.device)
-        #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device) * torch.sqrt(1 + trans_noise_scale)
+            # test: in inference, if we trained with translation noise with scale=t, we sample noise from N(0, 1+t)
+            #trans_noise_scale = torch.tensor(0.6, device=self.device)
+            #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device) * torch.sqrt(1 + trans_noise_scale)
 
-        final_dict, results = self.diffusion.p_sample_loop(
-            self.network,
-            z_r.shape,
-            z_s.shape,
-            z_r,
-            z_s,
-            clip_denoised=False,
-            model_kwargs=model_kwargs,
-            progress=progress,
-            device=self.device,
-        )
-        pred_r = final_dict["sample_r"]
-        pred_s = final_dict["sample_s"]
-        pred = pred_r + pred_s
-        results = [res["sample_r"] + res["sample_s"] for res in results]
+            final_dict, results = self.diffusion.p_sample_loop(
+                self.network,
+                z_r.shape,
+                z_s.shape,
+                z_r,
+                z_s,
+                clip_denoised=False,
+                model_kwargs=model_kwargs,
+                progress=progress,
+                device=self.device,
+            )
+            pred_r = final_dict["sample_r"]
+            pred_s = final_dict["sample_s"]
+            pred = pred_r + pred_s
+            results = [res["sample_r"] + res["sample_s"] for res in results]
+        elif self.model_take == "joint":
+            z = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
+            pred, results = self.diffusion.p_sample_loop(
+                self.network,
+                z.shape,
+                z,
+                clip_denoised=False,
+                model_kwargs=model_kwargs,
+                progress=progress,
+                device=self.device,
+            )
 
         pred = pred.permute(0, 2, 1)
 
@@ -415,14 +446,23 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         #########################################################
         # logging training metrics
         #########################################################
-        self.log_dict(
-            {"train/loss": loss,
-             "train/loss_r": loss_r,
-             "train/loss_s": loss_s},
-            add_dataloader_idx=False,
-            prog_bar=True,
-        )
-
+        if self.model_take == "separate":
+            self.log_dict(
+                {"train/loss": loss,
+                "train/loss_r": loss_r,
+                "train/loss_s": loss_s},
+                add_dataloader_idx=False,
+                prog_bar=True,
+            )
+        elif self.model_take == "joint":
+            self.log_dict(
+                {"train/loss": loss},
+                add_dataloader_idx=False,
+                prog_bar=True,
+            )  
+        else:
+            raise ValueError
+        
         # determine if additional logging should be done
         do_additional_logging = (
             self.global_step % self.additional_train_logging_period == 0
