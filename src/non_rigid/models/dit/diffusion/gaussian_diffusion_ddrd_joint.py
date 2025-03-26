@@ -141,7 +141,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
     return np.array(betas)
 
 
-class GaussianDiffusionDDRD:
+class GaussianDiffusionDDRDJoint:
     """
     Utilities for training and sampling diffusion models.
     Original ported from this codebase:
@@ -156,12 +156,14 @@ class GaussianDiffusionDDRD:
         betas,
         model_mean_type,
         model_var_type,
-        loss_type
+        loss_type,
+        time_based_weighting,
     ):
 
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
+        self.time_based_weighting = time_based_weighting
 
         # Use float64 for accuracy.
         betas = np.array(betas, dtype=np.float64)
@@ -737,6 +739,50 @@ class GaussianDiffusionDDRD:
         output = th.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
 
+
+    def _time_based_weights(self, t, T, func="sigmoid", k=10.0, m=0.2):
+        """
+        Compute time-based weights using a sigmoid function.
+
+        Parameters:
+            t (float or Tensor): Current timestep (0 <= t <= T)
+            T (float): Total number of timesteps
+            func (string): Type of time-based function
+            k (float): Slope parameter of the sigmoid (default: 10.0)
+            m (float): Midpoint of the sigmoid (default: 0.5)
+
+        Returns:
+            w_r, w_s (tuple): Where w_s = sigmoid coefficient, and w_r = 1 - w_s.
+        """
+        # Ensure t is a float tensor
+        if not th.is_tensor(t):
+            t = th.tensor(t, dtype=th.float64)
+
+        x = t / T  # Normalize to [0, 1]
+
+        if func == "even":
+            coeff = th.tensor(0.5, dtype=th.float64, device=x.device)
+        elif func == "linear":
+            coeff = x
+        elif func == "sigmoid":
+            # Make sure everything is on the same device and is a tensor
+            x = x.float()
+            k = th.tensor(k, dtype=th.float64, device=x.device)
+            m = th.tensor(m, dtype=th.float64, device=x.device)
+
+            Lx = 1.0 / (1.0 + th.exp(-k * (x - m)))
+            L0 = 1.0 / (1.0 + th.exp(-k * (0.0 - m)))
+            L1 = 1.0 / (1.0 + th.exp(-k * (1.0 - m)))
+            coeff = (Lx - L0) / (L1 - L0)
+        else:
+            raise ValueError("Unsupported function type. Use 'sigmoid', 'linear', or 'even'.")
+
+        w_s = coeff
+        w_r = 1.0 - coeff
+        return w_r, w_s
+
+
+
     def training_losses(self, model, x_start, t, translation_noise_scale, rotation_noise_scale, model_kwargs=None, noise=None):
         """
         Compute training losses for a single timestep.
@@ -754,6 +800,8 @@ class GaussianDiffusionDDRD:
         if noise is None:
             noise = th.randn_like(x_start)
         
+        N, C, P = x_start.shape  # [batch_size, 3, num_points]
+
         # Add translation noise plan A
         # If translation noise is enabled, add it only to noise directly.
         if translation_noise_scale:
@@ -763,67 +811,84 @@ class GaussianDiffusionDDRD:
             # Shape: [N, C] so each batch item has its own (dx, dy, dz).
             translation_noise = th.randn(N, C, device=x_start.device)
 
-            # Scale it by your desired factor
+            # Scale it by the translation variance
             translation_noise = translation_noise * translation_noise_scale
 
             # Expand to match the points dimension so we can add it to each point
-            # Shape after unsqueeze+expand: [N, C, P]
+            # Shape: [N, C, P]
             translation_noise = translation_noise.unsqueeze(-1).expand(-1, -1, P)
 
-            # -------------------------------------------------
-            # 2. Add that translation noise to x_start
-            # -------------------------------------------------
             noise = noise + translation_noise
             
             
         if rotation_noise_scale:
-            N, C, P = x_start.shape  # e.g. [batch_size, 3, num_points]
+            N, C, P = x_start.shape  # [batch_size, 3, num_points]
 
-            # 1. Sample random rotation axes and normalize them.
+            # Sample random rotation axes and normalize them
             random_axis = th.randn(N, 3, device=x_start.device)
             random_axis = random_axis / random_axis.norm(dim=1, keepdim=True)
 
-            # 2. Sample random rotation angles (in degrees) and convert to radians.
+            # 2Sample random rotation angles (in degrees) and convert to radians
             random_angle = th.randn(N, device=x_start.device) * rotation_noise_scale
             random_angle_rad = random_angle * (np.pi / 180)
 
-            # 3. Compute sin and cos for each angle.
+            # Compute sin and cos for each angle
             sin_theta = th.sin(random_angle_rad)
             cos_theta = th.cos(random_angle_rad)
             one_minus_cos = 1 - cos_theta
 
-            # 4. Extract axis components.
+            # Extract axis components
             x = random_axis[:, 0]
             y = random_axis[:, 1]
             z = random_axis[:, 2]
             zeros = th.zeros_like(x)
 
-            # 5. Construct the skew-symmetric cross-product matrices for each axis.
-            #    Each K is of shape (3,3), and K will have shape (N, 3, 3)
+            # Construct the skew-symmetric cross-product matrices for each axis
+            # ach K is of shape (3,3), and K will have shape (N, 3, 3)
             K = th.stack([th.stack([zeros, -z, y], dim=1),
                         th.stack([z, zeros, -x], dim=1),
                         th.stack([-y, x, zeros], dim=1)], dim=1)
 
-            # 6. Compute K squared (batched matrix multiplication)
+            # Compute K squared, batched matrix multiplication
             K2 = th.bmm(K, K)
 
-            # 7. Create the identity matrix for each batch element.
-            I = th.eye(3, device=x_start.device).unsqueeze(0).repeat(N, 1, 1)
 
-            # 8. Compute the rotation matrices using the Rodrigues formula:
-            #    R = I + sin(theta)*K + (1-cos(theta))*(K^2)
+            # Compute the rotation matrices using the Rodrigues formula:
+            # R = I + sin(theta)*K + (1-cos(theta))*(K^2)
+            I = th.eye(3, device=x_start.device).unsqueeze(0).repeat(N, 1, 1)
             R = I + sin_theta.view(N, 1, 1) * K + one_minus_cos.view(N, 1, 1) * K2
 
-            # 9. Apply the rotation matrices to the point clouds.
-            #    x_start: [N, 3, P] -> rotated_pc: [N, 3, P]
+            # Apply the rotation matrices to the point clouds/flow
+            # x_0: [N, 3, P] -> rotated_pc: [N, 3, P]
             rotated_pc = th.bmm(R, x_start)
 
-            # 10. The rotation noise is the difference between the rotated and original points.
+            # rotation noise = the difference between the rotated and original points.
             rotation_noise = rotated_pc - x_start
             noise = noise + rotation_noise
             
+        if self.time_based_weighting:
 
-        x_t = self.q_sample(x_start, t, noise=noise)
+            xr = x_start.mean(dim=-1, keepdim=True)  # [B, C, 1]
+            xs = x_start - xr                        # [B, C, N]
+            
+            # Generate STANDARD noise for ENTIRE point cloud
+            noise = th.randn_like(x_start)  # [B, C, N]
+            
+            # Decompose noise into mean/shape components
+            noise_r = noise.mean(dim=-1, keepdim=True)  # [B, C, 1]
+            noise_s = noise - noise_r                   # [B, C, N]
+            
+            # Apply diffusion to WHOLE CLOUD using standard formula
+            x_t = self.q_sample(x_start, t, noise=noise)
+            
+            # Store decomposed noise for loss calculation
+            #target_r = noise_r * np.sqrt(N)  # Compensate for mean scaling
+            #target_s = noise_s * np.sqrt(N/(N-1))  # Compensate for residual scaling
+            target_r = noise_r
+            target_s = noise_s
+        else:
+            x_t = self.q_sample(x_start, t, noise=noise)
+
         '''
         # Add translation noise plan B
         # If translation noise is enabled, add it only to x_t.
@@ -838,6 +903,7 @@ class GaussianDiffusionDDRD:
         terms = {}
 
         if self.loss_type == LossType.KL or self.loss_type == LossType.RESCALED_KL:
+            '''
             terms["loss"] = self._vb_terms_bpd(
                 model=model,
                 x_start=x_start,
@@ -847,8 +913,11 @@ class GaussianDiffusionDDRD:
                 model_kwargs=model_kwargs,
             )["output"]
             if self.loss_type == LossType.RESCALED_KL:
-                terms["loss"] *= self.num_timesteps
+                terms["loss"] *= self.num_timesteps'
+            '''
+            return NotImplementedError
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
+
             model_output = model(x_t, t, **model_kwargs)
             # --- NEW: Check for tuple outputs and compute the effective prediction ---
             if isinstance(model_output, tuple):
@@ -890,11 +959,27 @@ class GaussianDiffusionDDRD:
 
             recovered_eps = self._recover_epsilon_drift(x_t=x_t, t=t, eps=model_output, pre_delta=pred_delta)
 
-            terms["mse"] = mean_flat((target - recovered_eps) ** 2)
-            if "vb" in terms:
-                terms["loss"] = terms["mse"] + terms["vb"]
+            if self.time_based_weighting:
+                eps_pred_r = recovered_eps.mean(dim=-1, keepdim=True)
+                eps_pred_s = recovered_eps - eps_pred_r
+                loss_r = ((target_r - eps_pred_r) ** 2).mean()
+                loss_s = ((target_s - eps_pred_s) ** 2).mean()
+
+                w_r, w_s = self._time_based_weights(t=t, T=self.num_timesteps, func=self.time_based_weighting)
+
+                terms["mse"] = w_r * loss_r + w_s * loss_s
+                if "vb" in terms:
+                    terms["loss"] = terms["mse"] + terms["vb"]
+                else:
+                    terms["loss"] = terms["mse"]
             else:
-                terms["loss"] = terms["mse"]
+
+                terms["mse"] = mean_flat((target - recovered_eps) ** 2)
+
+                if "vb" in terms:
+                    terms["loss"] = terms["mse"] + terms["vb"]
+                else:
+                    terms["loss"] = terms["mse"]
         else:
             raise NotImplementedError(self.loss_type)
 

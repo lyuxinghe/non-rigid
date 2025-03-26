@@ -347,6 +347,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         ground_truth = batch[self.label_key].to(self.device)
         seg = batch["seg"].to(self.device)
         goal_pc = batch["pc"].to(self.device)
+        scaling_factor = self.dataset_cfg.pcd_scale_factor
 
         # re-shaping and expanding for winner-take-all
         bs = ground_truth.shape[0]
@@ -361,6 +362,9 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         )
         pred = pred_dict[self.prediction_type]["pred"]
 
+        pred = pred / scaling_factor
+        ground_truth = ground_truth / scaling_factor
+
         # computing error metrics
         rmse = flow_rmse(pred, ground_truth, mask=True, seg=seg).reshape(bs, num_samples)
         pred = pred.reshape(bs, num_samples, -1, 3)
@@ -371,8 +375,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         pred_wta = pred[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            scaling_factor = self.dataset_cfg.pcd_scale_factor
-
             T_goal2world = Transform3d(
                 matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
             )

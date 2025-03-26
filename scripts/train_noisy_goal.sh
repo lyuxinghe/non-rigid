@@ -7,7 +7,7 @@
 # 4. the rest of the arguments for the train.py script
 
 # Example usage:
-#./train_noisy_goal.sh 0 ddrd_point rpdiff_fit offline
+#./train_noisy_goal.sh 0 ddrd_point rpdiff_fit offline dataset.anchor_translation_variance=0.0
 
 # Resuming from a crashed run:
 #./train_noisy_goal.sh 0 ddrd_point rpdiff_fit online checkpoint.run_id=9ozopbwx checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_fit_ddrd/2025-03-16/01-26-44/checkpoints/last.ckpt'

@@ -19,9 +19,10 @@ from torch_geometric.nn import fps
 from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
 from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
-from non_rigid.models.dit.diffusion import create_diffusion_ddrd, create_diffusion
+from non_rigid.models.dit.diffusion import create_diffusion_ddrd_joint, create_diffusion_ddrd_separate
 from non_rigid.models.dit.models import (
     Joint_DiT_Deformation_Reference_Cross_Feature,
+    Separate_DiT_Deformation_Reference_Cross_Feature,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -29,12 +30,19 @@ from non_rigid.utils.pointcloud_utils import expand_pcd
 
 def Joint_DiT_Deformation_Reference_Cross_Feature_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: Joint_DiT_Deformation_Reference_Cross_Point_Feature_xS")
+    print("DiffusionTransformerNetwork: Joint_DiT_Deformation_Reference_Cross_Feature_xS")
     hidden_size = 132 if use_rotary else 128
     return Joint_DiT_Deformation_Reference_Cross_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
+def Separate_DiT_Deformation_Reference_Cross_Feature_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("DiffusionTransformerNetwork: Separate_DiT_Deformation_Reference_Cross_Feature_xS")
+    hidden_size = 132 if use_rotary else 128
+    return Separate_DiT_Deformation_Reference_Cross_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+
 DiT_models = {
     "Joint_DiT_Deformation_Reference_Cross_Feature_xS": Joint_DiT_Deformation_Reference_Cross_Feature_xS,
+    "Separate_DiT_Deformation_Reference_Cross_Feature_xS": Separate_DiT_Deformation_Reference_Cross_Feature_xS,
 }
 
 def get_model(model_cfg):
@@ -42,7 +50,8 @@ def get_model(model_cfg):
     cross = "Cross_" if model_cfg.cross_atten else ""
     feature = "Feature_" if model_cfg.feature else ""
     encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
-    model_take = "Joint_" if model_cfg.model_take == "joint" else "Separate_"
+
+    model_take = "Joint_" if model_cfg.model_take == "joint" else "Separate_" if model_cfg.model_take == "separate" else ""
     # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
     model_name = f"{model_take}{encoder}DiT_Deformation_Reference_{cross}{feature}{model_cfg.size}"
     return DiT_models[model_name]
@@ -60,8 +69,8 @@ class DeformationReferenceDiffusionTransformerNetwork(nn.Module):
             model_cfg=model_cfg,
         )
     
-    def forward(self, x, t, **kwargs):
-        return self.dit(x, t, **kwargs)
+    def forward(self, xr_t, xs_t, t, **kwargs):
+        return self.dit(xr_t, xs_t, t, **kwargs)
     
 class DenseDeformationReferenceDiffusionModule(L.LightningModule):
     """
@@ -117,15 +126,23 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         self.predict_xstart = self.model_cfg.predict_xstart
         self.num_wta_trials = self.run_cfg.num_wta_trials
         self.model_take = self.model_cfg.model_take
-
+        self.time_based_weighting = self.model_cfg.time_based_weighting
 
         if self.model_take == "joint":
-            print("Initializing Adjusted Diffusion Network")
-            self.diffusion = create_diffusion_ddrd(
+            print("Initializing Joint Diffusion Network")
+            self.diffusion = create_diffusion_ddrd_joint(
                 timestep_respacing=None,
                 diffusion_steps=self.diff_steps,
                 predict_xstart=self.predict_xstart,
-                # noise_schedule=self.noise_schedule,
+                time_based_weighting=self.time_based_weighting,             
+            )
+        elif self.model_take == "separate":
+            print("Initializing Separate Diffusion Network with Time based Weighting of {}".format(self.time_based_weighting))
+            self.diffusion = create_diffusion_ddrd_separate(
+                timestep_respacing=None,
+                diffusion_steps=self.diff_steps,
+                predict_xstart=self.predict_xstart,
+                time_based_weighting=self.time_based_weighting,
             )
         else:
             raise ValueError("Choose model_take from [\"joint\", \"separate\"]")
@@ -183,7 +200,10 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
             # noise=noise,
         )
         loss = loss_dict["loss"].mean()
-        return None, loss
+        loss_r = loss_dict["loss_r"].mean()
+        loss_s = loss_dict["loss_s"].mean()
+
+        return None, loss, loss_r, loss_s
 
     @torch.no_grad()
     def predict(self, batch, num_samples, unflatten=False, progress=True, full_prediction=True):
@@ -201,21 +221,30 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         model_kwargs = self.get_model_kwargs(batch, num_samples)
 
         # generating latents and running diffusion
-        z = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
+        #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
+        z_r = torch.randn(bs * num_samples, 3, 1, device=self.device)
+        z_s = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
 
         # test: in inference, if we trained with translation noise with scale=t, we sample noise from N(0, 1+t)
         #trans_noise_scale = torch.tensor(0.6, device=self.device)
         #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device) * torch.sqrt(1 + trans_noise_scale)
 
-        pred, results = self.diffusion.p_sample_loop(
+        final_dict, results = self.diffusion.p_sample_loop(
             self.network,
-            z.shape,
-            z,
+            z_r.shape,
+            z_s.shape,
+            z_r,
+            z_s,
             clip_denoised=False,
             model_kwargs=model_kwargs,
             progress=progress,
             device=self.device,
         )
+        pred_r = final_dict["sample_r"]
+        pred_s = final_dict["sample_s"]
+        pred = pred_r + pred_s
+        results = [res["sample_r"] + res["sample_s"] for res in results]
+
         pred = pred.permute(0, 2, 1)
 
         if not full_prediction:
@@ -268,9 +297,10 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
             batch: the input batch
             num_samples: the number of samples to generate
         """
-        ground_truth = batch[self.label_key].to(self.device)
-        seg = batch["seg"].to(self.device)
-        goal_pc = batch["pc"].to(self.device)
+        ground_truth = batch[self.label_key].to(self.device).clone()
+        seg = batch["seg"].to(self.device).clone()
+        goal_pc = batch["pc"].to(self.device).clone()
+        scaling_factor = self.dataset_cfg.pcd_scale_factor
 
         # re-shaping and expanding for winner-take-all
         bs = ground_truth.shape[0]
@@ -283,10 +313,13 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         pred_dict = self.predict(
             batch, num_samples, unflatten=False, progress=True
         )
-        pred = pred_dict[self.prediction_type]["pred"]
+        pred = pred_dict[self.prediction_type]["pred"].clone()
+
+        pred_scaled = pred / scaling_factor
+        ground_truth_scaled = ground_truth / scaling_factor
 
         # computing error metrics
-        rmse = flow_rmse(pred, ground_truth, mask=True, seg=seg).reshape(bs, num_samples)
+        rmse = flow_rmse(pred_scaled, ground_truth_scaled, mask=True, seg=seg).reshape(bs, num_samples)
         pred = pred.reshape(bs, num_samples, -1, 3)
 
         # computing winner-take-all metrics
@@ -295,13 +328,11 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         pred_wta = pred[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            scaling_factor = self.dataset_cfg.pcd_scale_factor
-
             T_goal2world = Transform3d(
                 matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
             )
 
-            pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
+            pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"].clone())
             goal_point_world = T_goal2world.transform_points(goal_pc)
             
             pred_point_world = pred_point_world / scaling_factor
@@ -380,12 +411,14 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         t = torch.randint(
             0, self.diff_steps, (self.batch_size,), device=self.device
         ).long()
-        _, loss = self(batch, t)
+        _, loss, loss_r, loss_s = self(batch, t)
         #########################################################
         # logging training metrics
         #########################################################
         self.log_dict(
-            {"train/loss": loss},
+            {"train/loss": loss,
+             "train/loss_r": loss_r,
+             "train/loss_s": loss_s},
             add_dataloader_idx=False,
             prog_bar=True,
         )

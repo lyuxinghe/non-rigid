@@ -48,6 +48,7 @@ def load_rpdiff(dir, num_demos = None):
     npz_files = [f for f in os.listdir(dir) if f.endswith('.npz')]
     loaded_action = []
     loaded_anchor = []
+    loaded_goal_action = []
 
     if num_demos:
         npz_files = npz_files[:num_demos]
@@ -57,10 +58,12 @@ def load_rpdiff(dir, num_demos = None):
         demo = np.load(file_path, allow_pickle=True)
         points_anchor = demo['multi_obj_start_pcd'].item()['parent']
         points_action = demo['multi_obj_start_pcd'].item()['child']
+        points_goal_action = demo['multi_obj_final_pcd'].item()['child']
         loaded_action.append(points_action)
         loaded_anchor.append(points_anchor)
-
-    return loaded_action, loaded_anchor
+        loaded_goal_action.append(points_goal_action)
+    
+    return loaded_action, loaded_anchor, loaded_goal_action
 
 def calculate_mean_bounding_box_excluding_outliers(pcd_list, min_side_length=np.float32(1e-5), scaling_factor=1):
     bbox_sizes = []
@@ -215,6 +218,246 @@ def compute_and_plot_pcd_mean_distance(action_pcds, anchor_pcds, scaling_factor=
 
     return distances
 
+'''
+def compute_scaling_factor(goal_action_pcds, action_pcds, anchor_pcds, mode='anchor_centroid', noisy_std=1.0, test_scale=15):
+    """
+    Args:
+        goal_action_pcds (list of np.ndarray): List of (N, 3) goal point clouds
+        anchor_pcds (list of np.ndarray): List of (M, 3) anchor point clouds
+        mode (str): 'anchor centroid' or 'noisy_goal'
+        noisy_std (float): std of noise if using 'noisy_goal' mode
+
+    Returns:
+        scalar_scaling (float): scalar to scale original data
+        original_stats (dict): original variances and per-axis scaling
+        scaled_stats (dict): variances after applying scalar scaling to original point clouds
+    """
+    assert mode in ['anchor_centroid', 'noisy_goal'], "Invalid mode"
+
+    centers = []
+    shapes = []
+    flows = []
+
+    print("[INFO] Calculating original variances...")
+    for goal_pcd, action_pcd, anchor_pcd in tqdm(zip(goal_action_pcds, action_pcds, anchor_pcds), total=len(goal_action_pcds)):
+        goal_pcd = goal_pcd.astype(np.float32)
+        anchor_pcd = anchor_pcd.astype(np.float32)
+
+        center_goal = goal_pcd.mean(axis=0)
+        center_action = action_pcd.mean(axis=0)
+
+        if mode == 'anchor_centroid':
+            center_anchor = anchor_pcd.mean(axis=0)
+            center = center_goal - center_anchor
+            flow = (goal_pcd - center_anchor) - (action_pcd - center_action)
+        elif mode == 'noisy_goal':
+            center = np.random.randn(*center_goal.shape) * noisy_std
+            flow = (goal_pcd - center) - (action_pcd - center_action)
+
+        centers.append(center)
+        shapes.append(goal_pcd - center_goal)
+        flows.append(flow)
+
+    centers = np.stack(centers, axis=0)
+    shapes = np.concatenate(shapes, axis=0)
+    flows = np.stack(flows, axis=0)
+
+    var_R = np.var(centers, axis=0, ddof=1)
+    var_S = np.var(shapes, axis=0, ddof=1)
+    var_F = np.var(flows, axis=0, ddof=1)
+
+    total_var = var_R + var_S
+    axis_scaling = np.sqrt(1.0 / total_var)
+    scalar_scaling = axis_scaling.mean()
+
+    print(f"[INFO] Original center variance (R): {var_R}")
+    print(f"[INFO] Original shape variance  (S): {var_S}")
+    print(f"[INFO] Original flow variance  (S): {var_F}")
+    print(f"[INFO] Total variance (R + S):        {total_var}")
+    print(f"[INFO] Per-axis scaling factor:       {axis_scaling}")
+    print(f"[INFO] Scalar scaling factor:         {scalar_scaling}")
+
+    original_stats = {
+        'var_R': var_R,
+        'var_S': var_S,
+        'total_var': total_var,
+        'axis_scaling': axis_scaling,
+        'scalar_scaling': scalar_scaling,
+    }
+
+    # === Apply scalar scaling to original data and recompute variances ===
+    centers_scaled = []
+    shapes_scaled = []
+    flows_scaled = []
+
+    print("[INFO] Recomputing variances after applying suggested scalar scaling...")
+    for goal_pcd, action_pcd, anchor_pcd in tqdm(zip(goal_action_pcds, action_pcds, anchor_pcds), total=len(goal_action_pcds)):
+        goal_pcd = goal_pcd.astype(np.float32)
+        anchor_pcd = anchor_pcd.astype(np.float32)
+
+        goal_scaled = goal_pcd * scalar_scaling
+        anchor_scaled = anchor_pcd * scalar_scaling
+        action_scaled = action_pcd * scalar_scaling
+
+        center_goal = goal_scaled.mean(axis=0)
+        center_action = action_scaled.mean(axis=0)
+
+        if mode == 'anchor_centroid':
+            center_anchor = anchor_pcd.mean(axis=0)
+            center = center_goal - center_anchor
+            flow = (goal_pcd - center_anchor) - (action_pcd - center_action)
+        elif mode == 'noisy_goal':
+            center = np.random.randn(*center_goal.shape) * noisy_std
+            flow = (goal_pcd - center) - (action_pcd - center_action)
+
+        centers_scaled.append(center)
+        shapes_scaled.append(goal_pcd - center_goal)
+        flows_scaled.append(flow)
+
+    centers_scaled = np.stack(centers_scaled, axis=0)
+    shapes_scaled = np.concatenate(shapes_scaled, axis=0)
+    flows_scaled = np.stack(flows_scaled, axis=0)
+
+    var_R_scaled = np.var(centers_scaled, axis=0, ddof=1)
+    var_S_scaled = np.var(shapes_scaled, axis=0, ddof=1)
+    var_F_scaled = np.var(flows_scaled, axis=0, ddof=1)
+    total_var_scaled = var_R_scaled + var_S_scaled
+    
+    print(f"[INFO] Scaled center variance (R): {var_R_scaled}")
+    print(f"[INFO] Scaled shape variance  (S): {var_S_scaled}")
+    print(f"[INFO] Scaled flow variance  (S): {var_F_scaled}")
+    print(f"[INFO] Total scaled variance     : {total_var_scaled}")
+
+    print(f"[INFO] Suggested center noise std:  {np.sqrt(var_R_scaled.mean())}")
+    print(f"[INFO] Suggested shape noise std :  {np.sqrt(var_S_scaled.mean())}")
+
+    # === Apply test scalar scaling to original data and recompute variances ===
+    centers_scaled = []
+    shapes_scaled = []
+
+    print("[INFO] Recomputing variances after applying test scalar scaling...")
+    for goal_pcd, anchor_pcd in tqdm(zip(goal_action_pcds, anchor_pcds), total=len(goal_action_pcds)):
+        goal_pcd = goal_pcd.astype(np.float32)
+        anchor_pcd = anchor_pcd.astype(np.float32)
+
+        goal_scaled = goal_pcd * test_scale
+        anchor_scaled = anchor_pcd * test_scale
+        action_scaled = action_pcd * test_scale
+
+        center_goal = goal_scaled.mean(axis=0)
+        center_action = action_scaled.mean(axis=0)
+
+        if mode == 'anchor_centroid':
+            center_anchor = anchor_pcd.mean(axis=0)
+            center = center_goal - center_anchor
+            flow = (goal_pcd - center_anchor) - (action_pcd - center_action)
+        elif mode == 'noisy_goal':
+            center = np.random.randn(*center_goal.shape) * noisy_std
+            flow = (goal_pcd - center) - (action_pcd - center_action)
+
+        centers_scaled.append(center)
+        shapes_scaled.append(goal_pcd - center_goal)
+        flows_scaled.append(flow)
+
+    centers_scaled = np.stack(centers_scaled, axis=0)
+    shapes_scaled = np.concatenate(shapes_scaled, axis=0)
+    flows_scaled = np.stack(flows_scaled, axis=0)
+
+    var_R_scaled = np.var(centers_scaled, axis=0, ddof=1)
+    var_S_scaled = np.var(shapes_scaled, axis=0, ddof=1)
+    var_F_scaled = np.var(flows_scaled, axis=0, ddof=1)
+    total_var_scaled = var_R_scaled + var_S_scaled
+    
+    print(f"[INFO] TEST Scaled center variance (R): {var_R_scaled}")
+    print(f"[INFO] TEST Scaled shape variance  (S): {var_S_scaled}")
+    print(f"[INFO] TEST Scaled flow variance  (S): {var_F_scaled}")
+    print(f"[INFO] TEST Total scaled variance     : {total_var_scaled}")
+'''
+
+def compute_variance_stats(goal_pcds, action_pcds, anchor_pcds, scalar=1.0, mode='anchor_centroid', noisy_std=1.0, label=''):
+    centers, shapes, flows = [], [], []
+
+    for goal_pcd, action_pcd, anchor_pcd in zip(goal_pcds, action_pcds, anchor_pcds):
+        goal_pcd = goal_pcd.astype(np.float32) * scalar
+        action_pcd = action_pcd.astype(np.float32) * scalar
+        anchor_pcd = anchor_pcd.astype(np.float32) * scalar
+
+        center_goal = goal_pcd.mean(axis=0)
+        center_action = action_pcd.mean(axis=0)
+
+        if mode == 'anchor_centroid':
+            center_anchor = anchor_pcd.mean(axis=0)
+            center = center_goal - center_anchor
+            flow = (goal_pcd - center_anchor) - (action_pcd - center_action)
+        elif mode == 'noisy_goal':
+            center = np.random.randn(*center_goal.shape) * noisy_std
+            flow = (goal_pcd - center) - (action_pcd - center_action)
+
+        centers.append(center)
+        shapes.append(goal_pcd - center_goal)
+        flows.append(flow)
+
+    centers = np.stack(centers, axis=0)
+    shapes = np.concatenate(shapes, axis=0)
+    flows = np.concatenate(flows, axis=0)
+
+    var_R = np.var(centers, axis=0, ddof=1)
+    var_S = np.var(shapes, axis=0, ddof=1)
+    var_F = np.var(flows, axis=0, ddof=1)
+    mean_F = np.mean(flows, axis=0)
+    var_F_centered = np.var(flows - mean_F, axis=0, ddof=1)
+
+    print(f"\n[INFO] {label} center variance (R):      {var_R}")
+    print(f"[INFO] {label} shape variance  (S):      {var_S}")
+    print(f"[INFO] {label} flow variance   (F):      {var_F}")
+    print(f"[INFO] {label} mean flow:                {mean_F}")
+    print(f"[INFO] {label} flow - mean(flow) var:    {var_F_centered}")
+    print(f"[INFO] {label} total variance (R + S):   {var_R + var_S}")
+    print(f"[INFO] {label} suggested noise stds     : center = {np.sqrt(var_R.mean()):.4f}, shape = {np.sqrt(var_S.mean()):.4f}")
+
+    return {
+        'var_R': var_R,
+        'var_S': var_S,
+        'var_F': var_F,
+        'mean_F': mean_F,
+        'var_F_centered': var_F_centered,
+        'total_var': var_R + var_S
+    }
+
+
+def compute_scaling_factor(goal_action_pcds, action_pcds, anchor_pcds, mode='anchor_centroid', noisy_std=1.0, test_scale=15):
+    """
+    Computes scalar scaling factor based on variance of centers and shapes, plus flow statistics.
+    """
+    assert mode in ['anchor_centroid', 'noisy_goal'], "Invalid mode"
+
+    print("[INFO] Calculating ORIGINAL variances...")
+    original_stats = compute_variance_stats(
+        goal_action_pcds, action_pcds, anchor_pcds,
+        scalar=1.0, mode=mode, noisy_std=noisy_std, label='Original'
+    )
+
+    axis_scaling = np.sqrt(1.0 / original_stats['total_var'])
+    scalar_scaling = axis_scaling.mean()
+
+    print(f"[INFO] Per-axis scaling factor:       {axis_scaling}")
+    print(f"[INFO] Scalar scaling factor:         {scalar_scaling}")
+
+    print("\n[INFO] Recomputing SCALED variances (suggested scale)...")
+    scaled_stats = compute_variance_stats(
+        goal_action_pcds, action_pcds, anchor_pcds,
+        scalar=scalar_scaling, mode=mode, noisy_std=noisy_std, label='Scaled'
+    )
+
+    print("\n[INFO] Recomputing TEST SCALED variances (test scale)...")
+    test_scaled_stats = compute_variance_stats(
+        goal_action_pcds, action_pcds, anchor_pcds,
+        scalar=test_scale, mode=mode, noisy_std=noisy_std, label='TestScaled'
+    )
+
+    return scalar_scaling, original_stats, scaled_stats, test_scaled_stats
+
+
 # Example usage
 if __name__ == "__main__":
     # Create a list of example point clouds
@@ -242,7 +485,7 @@ if __name__ == "__main__":
     print(f"NDF Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
     '''
 
-    rpdiff_action, rpdiff_anchor = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single/task_name_mug_on_rack')
+    rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single/task_name_mug_on_rack', num_demos=3)
 
     mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_action, scaling_factor=10.0)
     print(f"RPDiff Action Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
@@ -252,4 +495,6 @@ if __name__ == "__main__":
     print(f"RPDiff Anchor Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
     print(f"RPDiff Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
 
-    #compute_and_plot_pcd_mean_distance(rpdiff_action, rpdiff_anchor, scaling_factor=1.0, overlay_std=1)
+    compute_and_plot_pcd_mean_distance(rpdiff_action, rpdiff_anchor, scaling_factor=10.0, overlay_std=1)
+
+    compute_scaling_factor(rpdiff_goal_action, rpdiff_action, rpdiff_anchor, 'anchor_centroid')

@@ -31,8 +31,8 @@ action_context_center_type: center # [center, random, none], centers the action 
 sample_size_action: 512 # Number of points to downsample to
 sample_size_anchor: 512 # Number of points to downsample to for the anchor
 downsample_type: fps # [fps, random], downsampling method
-pcd_scale_factor: 1 # Scale factor for the point clouds
-ref_error_scale: 0.2 # Scale factor for GMM prediction error
+pcd_scale_factor: 15 # Scale factor for the point clouds
+ref_error_scale: 1.0 # Scale factor for GMM prediction error
 
 action_transform_type: quat_uniform # Transformation type to apply to demonstrations
 action_translation_variance: 0.0 # Translation variance of the demo transformation

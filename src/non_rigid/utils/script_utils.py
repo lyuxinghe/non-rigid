@@ -36,6 +36,11 @@ from non_rigid.models.tax3d_ddrd import (
     DDRDModule,
 )
 
+from non_rigid.models.tax3d_v2 import (
+    TAX3Dv2Network,
+    TAX3Dv2Module,
+)
+
 from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, ProcClothFlowFeatureDataModule
 from non_rigid.datasets.rigid import RigidDataModule, RigidFeatureDataModule, RigidDataNoisyGoalModule
 
@@ -111,6 +116,9 @@ def create_model(cfg):
     elif cfg.model.name == "ddrd":
         network_fn = DeformationReferenceDiffusionTransformerNetwork
         module_fn = DDRDModule
+    elif cfg.model.name == "tax3d_v2":
+        network_fn = TAX3Dv2Network
+        module_fn = TAX3Dv2Module
     else:
         raise ValueError(f"Invalid model name: {cfg.model.name}")
 

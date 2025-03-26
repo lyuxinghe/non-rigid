@@ -542,7 +542,10 @@ class DeformablePlacementDataset(data.Dataset):
             item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0)
             item["T_action2world"] = T_action2world.get_matrix().squeeze(0)
         return item
-
+    
+    def set_eval_mode(self, eval_mode: bool):
+        """ Toggle eval mode to enable/disable augmentation """
+        pass
 
 class DeformablePlacementFeatureDataset(data.Dataset):
     def __init__(self, root, dataset_cfg, split):
