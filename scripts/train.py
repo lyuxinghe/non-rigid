@@ -172,6 +172,15 @@ def main(cfg):
                 ),
                 ModelCheckpoint(
                     dirpath=cfg.lightning.checkpoint_dir,
+                    filename="{epoch}-{step}-{val_rmse_0:.3f}",
+                    monitor="val_rmse_0",
+                    mode="min",
+                    save_weights_only=False,
+                    save_last=False,
+                    # auto_insert_metric_name=False,
+                ),
+                ModelCheckpoint(
+                    dirpath=cfg.lightning.checkpoint_dir,
                     filename="{epoch}-{step}-{val_wta_rmse_0:.3f}",
                     monitor="val_rmse_wta_0",
                     mode="min",
@@ -275,6 +284,21 @@ def main(cfg):
 
 
     trainer.fit(model, datamodule=datamodule, ckpt_path=ckpt_file)
+
+    ######################################################################
+    # Log additional model checkpoints to wandb.
+    ######################################################################
+    monitors = ["val_rmse_wta_0", "val_rmse_0"]
+    model_artifact = wandb.Artifact(f"model-{wandb.run.id}", type="model")
+    # iterate through each file in checkpoint dir
+    for file in os.listdir(cfg.lightning.checkpoint_dir):
+        if file.endswith(".ckpt"):
+            # check if metric name is in monitors
+            metric_name = file.split("-")[-1].split("=")[0]
+            if metric_name in monitors:
+                # add checkpoint to artifact
+                model_artifact.add_file(os.path.join(cfg.lightning.checkpoint_dir, file))
+    wandb.run.log_artifact(model_artifact, aliases=["monitor"])
 
 
 if __name__ == "__main__":
