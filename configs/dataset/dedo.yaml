@@ -1,0 +1,35 @@
+name: dedo
+data_dir: "~/data/"
+task: proccloth
+robot: True
+type: flow
+material: deform
+
+train_size: null # (int, null) Length of the train dataset
+val_size: null # (int, null) Length of the validation dataset
+
+sample_size_action: 512
+sample_size_anchor: 512
+downsample_type: fps
+
+scene: True
+world_frame: True
+noisy_goal: False
+
+# Environment specific params.
+cloth_geometry: multi
+cloth_pose: random
+anchor_geometry: single
+anchor_pose: random
+num_anchors: 2
+hole: single
+
+# Dataset pre-processing options
+center_type: anchor_center # [action_center, anchor_center, anchor_random, scene_center, none], centers the point clouds w.r.t. the action, anchor, or no centering
+action_context_center_type: center # [center, random, none], centers the action context point clouds
+pcd_scale_factor: 1.0 # Scale factor for the point clouds
+# action_transform_type: identity # Transformation type to apply to demonstrations
+# anchor_transform_type: random_flat_upright # Transformation type to apply to demonstrations
+scene_transform_type: random_flat_upright # Transformation type to apply to the scene
+translation_variance: 0.0 # Translation variance of the demo transformation
+rotation_variance: 180 # Rotation variance of the demo transformation
