@@ -366,6 +366,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         ground_truth = ground_truth / scaling_factor
 
         # computing error metrics
+        if self.dataset_cfg.material == "deform":
+            seg = seg == 0
         rmse = flow_rmse(pred, ground_truth, mask=True, seg=seg).reshape(bs, num_samples)
         pred = pred.reshape(bs, num_samples, -1, 3)
 
