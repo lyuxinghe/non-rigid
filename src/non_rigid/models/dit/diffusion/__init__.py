@@ -6,9 +6,9 @@
 from . import gaussian_diffusion as gd
 from . import gaussian_diffusion_ddrd_joint as gd_ddrd_joint
 from . import gaussian_diffusion_ddrd_seperate as gd_ddrd_separate
-from . import gaussian_diffusion_v2 as gd_v2
-from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, SpacedDiffusionv2, space_timesteps
-
+# from . import gaussian_diffusion_v2 as gd_v2
+# from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, SpacedDiffusionv2, space_timesteps
+from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, space_timesteps
 
 def create_diffusion(
     timestep_respacing,
