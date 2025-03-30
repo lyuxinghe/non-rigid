@@ -34,15 +34,6 @@ class DedoDataset(data.Dataset):
         # setting sample sizes
         self.sample_size_action = self.dataset_cfg.sample_size_action
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
-
-        # additional dataset params
-        self.scene = self.dataset_cfg.scene
-        self.world_frame = self.dataset_cfg.world_frame
-        
-        # TODO: this is here for consistency; just error out for scene-level dataset
-        # experiments from now on should just be object-level
-        if self.scene:
-            raise NotImplementedError("Scene-level DEDO dataset not yet implemented.")
         
     def __len__(self):
         return self.size
@@ -202,11 +193,6 @@ class DedoDataModule(L.LightningDataModule):
             self.dataset_cfg.scene_transform_type = "identity"
             self.dataset_cfg.rotation_variance = 0.0
             self.dataset_cfg.translation_variance = 0.0
-        # if world frame, don't mean-center the point clouds
-        if self.dataset_cfg.world_frame:
-            print("-------Turning off mean-centering for world frame predictions.-------")
-            self.dataset_cfg.center_type = "none"
-            self.dataset_cfg.action_context_center_type = "none"
 
         # initializing datasets
         self.train_dataset = DedoDataset(self.root, self.dataset_cfg, "train_tax3d")
@@ -244,7 +230,6 @@ class DedoDataModule(L.LightningDataModule):
 def cloth_collate_fn(batch):
     # batch can contain a list of dictionaries
     # we need to convert those to a dictionary of lists
-    # dict_keys = ["deform_transform", "rigid_transform", "deform_params", "rigid_params"]
     dict_keys = ["deform_data", "rigid_data"]
     keys = batch[0].keys()
     out = {k: None for k in keys}
