@@ -2,7 +2,6 @@ name: dedo
 data_dir: "~/data/"
 task: proccloth
 robot: True
-type: flow
 material: deform
 
 train_size: null # (int, null) Length of the train dataset
@@ -12,8 +11,6 @@ sample_size_action: 512
 sample_size_anchor: 512
 downsample_type: fps
 
-scene: True
-world_frame: True
 noisy_goal: False
 
 # Environment specific params.

@@ -27,49 +27,49 @@ if [ $MODEL_TYPE == "cross_flow_relative" ]; then
   echo "Training cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.noisy_goal=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.noisy_goal=False"
 
 elif [ $MODEL_TYPE == "cross_point_relative" ]; then
   echo "Training cross relative point model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=point"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.noisy_goal=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.noisy_goal=False"
 
 elif [ $MODEL_TYPE == "feature_df_cross" ]; then
   echo "Training feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=feature_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.noisy_goal=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.noisy_goal=False"
 elif [ $MODEL_TYPE == "pn2_df_cross" ]; then
   echo "Training pointnet++ w/ cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=pn2_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.noisy_goal=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.noisy_goal=False"
 elif [ $MODEL_TYPE == "pn2_feature_df_cross" ]; then
   echo "Training pointnet++ w/ feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=pn2_feature_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.noisy_goal=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.noisy_goal=False"
 elif [ $MODEL_TYPE == "ddrd_point_joint" ]; then
   echo "Training DDRD point joint model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=ddrd model.type=point model.model_take=joint"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.noisy_goal=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.noisy_goal=False"
 elif [ $MODEL_TYPE == "ddrd_flow_joint" ]; then
   echo "Training DDRD flow joint model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=ddrd model.type=flow model.model_take=joint"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.noisy_goal=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.noisy_goal=False"
 elif [ $MODEL_TYPE == "ddrd_point_separate" ]; then
   echo "Training DDRD point separate model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=ddrd model.type=point model.model_take=separate"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.noisy_goal=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.noisy_goal=False"
 elif [ $MODEL_TYPE == "ddrd_flow_separate" ]; then
   echo "Training DDRD flow separate model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=ddrd model.type=flow model.model_take=separate"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.noisy_goal=False"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.noisy_goal=False"
 fi
 
 WANDB_MODE=$WANDB_MODE python train.py \

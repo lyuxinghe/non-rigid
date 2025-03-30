@@ -132,7 +132,8 @@ def create_model(cfg):
 
 def create_datamodule(cfg):
     # check that dataset and model types are compatible
-    if cfg.model.type != cfg.dataset.type:
+    # TODO: eventually, remove this entire code snippet
+    if "type" in cfg.dataset and cfg.model.type != cfg.dataset.type:
         raise ValueError(
             f"Model type: '{cfg.model.type}' and dataset type: '{cfg.dataset.type}' are incompatible."
         )
@@ -180,11 +181,13 @@ def create_datamodule(cfg):
     datamodule.setup(stage)
 
     # updating job config sample sizes
-    if cfg.dataset.scene:
-        job_cfg.sample_size = cfg.dataset.sample_size_action + cfg.dataset.sample_size_anchor
-    else:
-        job_cfg.sample_size = cfg.dataset.sample_size_action
-        job_cfg.sample_size_anchor = cfg.dataset.sample_size_anchor
+    # if cfg.dataset.scene:
+    #     job_cfg.sample_size = cfg.dataset.sample_size_action + cfg.dataset.sample_size_anchor
+    # else:
+    #     job_cfg.sample_size = cfg.dataset.sample_size_action
+    #     job_cfg.sample_size_anchor = cfg.dataset.sample_size_anchor
+    job_cfg.sample_size = cfg.dataset.sample_size_action
+    job_cfg.sample_size_anchor = cfg.dataset.sample_size_anchor
 
     # training-specific job config setup
     if cfg.mode == "train":
