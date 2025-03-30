@@ -36,11 +36,12 @@ from non_rigid.models.tax3d_ddrd import (
     DDRDModule,
 )
 
-from non_rigid.models.tax3d_v2 import (
-    TAX3Dv2Network,
-    TAX3Dv2Module,
-)
+# from non_rigid.models.tax3d_v2 import (
+#     TAX3Dv2Network,
+#     TAX3Dv2Module,
+# )
 
+from non_rigid.datasets.dedo import DedoDataModule
 from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, ProcClothFlowFeatureDataModule
 from non_rigid.datasets.rigid import RigidDataModule, RigidFeatureDataModule, RigidDataNoisyGoalModule
 
@@ -139,8 +140,12 @@ def create_datamodule(cfg):
     # TODO: Unify these flags !
     # Currently: 
     dataset_mapping = {
-        ("deform", True, False): ProcClothFlowFeatureDataModule,
-        ("deform", False, False): ProcClothFlowDataModule,
+        # ("deform", True, False): ProcClothFlowFeatureDataModule,
+        # ("deform", False, False): ProcClothFlowDataModule,
+        ("deform", True, False): DedoDataModule,
+        ("deform", False, False): DedoDataModule,
+        ("deform", True, True): DedoDataModule,
+        ("deform", False, True): DedoDataModule,
         ("rigid", True, False): RigidFeatureDataModule,
         ("rigid", False, True): RigidDataNoisyGoalModule,
         ("rigid", False, False): RigidDataModule
