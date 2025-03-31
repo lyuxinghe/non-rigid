@@ -9,18 +9,25 @@ in_channels: 3 # Number of input channels
 learn_sigma: True # Learn sigma for diffusion
 cross_atten: True # Use cross attention for diffusion
 feature: off # (flow, point, off) Type of feature base
-encoder_backbone: mlp # (mlp, pn2)
+# encoder_backbone: mlp # (mlp, pn2)
 
-x_encoder: mlp # Encoder current timestep x
-y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
-x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)
+# x_encoder: mlp # Encoder current timestep x
+# y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
+# x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)
+point_encoder: mlp # (mlp, pn2) Point cloud encoder architecture
 
 #####################################################
-# Model Data-processing Parameters
+# Model-specific Dataset Parameters
 #####################################################
 noisy_goal: False # if True, use noisy action goal centroid
 center_type: anchor_center # [action_center, anchor_center, scene_center, none], centers the point clouds
 action_context_center_type: center # [center, random, none], centers the action context point clouds
+
+#####################################################
+# Dataset-specific Model Parameters
+#####################################################
+# These are set by the dataset config.
+pcd_scale: null # Scale range for the point clouds
 
 #####################################################
 # Model Diffusion Parameters

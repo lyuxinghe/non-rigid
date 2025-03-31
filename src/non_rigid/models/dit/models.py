@@ -18,12 +18,15 @@ from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 from typing import Optional
 
 from non_rigid.nets.dgcnn import DGCNN
+from non_rigid.nets.pn2 import PN2Dense, PN2DenseParams
 import non_rigid.models.pointnet2.pn2_pyg as pn2_pyg
 import non_rigid.models.pointnet2.pn2 as pn2
 
 #import rpad.pyg.nets.pointnet2 as pnp_original
+import torch_geometric.data as tgd
 from torch_geometric.data import Data
 
+from functools import partial
 
 torch.set_printoptions(precision=8, sci_mode=True)
 
@@ -105,9 +108,8 @@ class LabelEmbedder(nn.Module):
         return embeddings
 
 #################################################################################
-#                                 Custom Attention Layers                       #
+#                             Custom Attention Layers                           #
 #################################################################################
-
 
 class CrossAttention(nn.Module):
     """
@@ -166,6 +168,64 @@ class CrossAttention(nn.Module):
         x = self.proj_drop(x)
         return x
 
+#################################################################################
+#                               Point Cloud Encoders                            #
+#################################################################################
+
+def mlp_encoder(in_channels, out_channels):
+    """
+    MLP encoder for point clouds.
+    """
+    return nn.Conv1d(
+        in_channels,
+        out_channels,
+        kernel_size=1,
+        stride=1,
+        padding=0,
+        bias=True,
+    )
+
+def pn2_encoder(model_cfg, out_channels, in_channels=0):
+    """
+    PointNet++ encoder for point clouds.
+    """
+    pn2_params = PN2DenseParams()
+    pn2_params.sa1.r = 0.2 * model_cfg.pcd_scale
+    pn2_params.sa2.r = 0.4 * model_cfg.pcd_scale
+
+    class PN2DenseWrapper(nn.Module):
+        def __init__(self, in_channels, out_channels, p):
+            super().__init__()
+            self.pn2dense = PN2Dense(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                p=p,
+            )
+
+        def forward(self, x):
+            batch_size, num_channels = x.shape[0], x.shape[1]
+            batch_indices = torch.arange(
+                batch_size, device=x.device
+            ).repeat_interleave(x.shape[2])
+
+            if num_channels == 3:
+                input_batch = tgd.Batch(
+                    pos=x.permute(0, 2, 1).reshape(-1, 3), batch=batch_indices
+                )
+            elif num_channels == 6:
+                input_batch = tgd.Batch(
+                    pos=x[:, :3, :].permute(0, 2, 1).reshape(-1, 3),
+                    x=x[:, 3:, :].permute(0, 2, 1).reshape(-1, 3),
+                    batch=batch_indices,
+                )
+            else:
+                raise ValueError(f"Invalid number of input channels: {num_channels}")
+            
+            output = self.pn2dense(input_batch)
+            output = output.reshape(batch_size, -1, output.shape[-1]).permute(0, 2, 1)
+            return output
+    
+    return PN2DenseWrapper(in_channels=in_channels, out_channels=out_channels, p=pn2_params)
 
 #################################################################################
 #                                 Core DiT Layers                               #
@@ -590,60 +650,19 @@ class DiT_PointCloud_Cross(nn.Module):
         self.num_heads = num_heads
         self.model_cfg = model_cfg
 
-        x_encoder_hidden_dims = hidden_size
-        if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
-            # We are concatenating x and x0 features so we halve the hidden size
-            x_encoder_hidden_dims = hidden_size // 2
+        # Creating point cloud feature encoders.
+        if self.model_cfg.point_encoder == "mlp":
+            encoder_fn = partial(mlp_encoder, in_channels=self.in_channels)
+        elif self.model_cfg.point_encoder == "pn2":
+            encoder_fn = partial(pn2_encoder, model_cfg=self.model_cfg)
+        else:
+            raise ValueError(f"Invalid point_encoder: {self.model_cfg.point_encoder}")
 
-        # Encoder for current timestep x features       
-        if self.model_cfg.x_encoder == "mlp":
-            # x_embedder is conv1d layer instead of 2d patch embedder
-            self.x_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        else:
-            raise ValueError(f"Invalid x_encoder: {self.model_cfg.x_encoder}")
-        
-        # Encoder for y features
-        if self.model_cfg.y_encoder == "mlp":
-            self.y_embedder = nn.Conv1d(
-                in_channels,
-                hidden_size,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.y_encoder == "dgcnn":
-            self.y_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=hidden_size
-            )
-        else:
-            raise ValueError(f"Invalid y_encoder: {self.model_cfg.y_encoder}")            
-
-        # Encoder for x0 features
-        if self.model_cfg.x0_encoder == "mlp":
-            self.x0_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.x0_encoder == "dgcnn":
-            self.x0_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=x_encoder_hidden_dims
-            )
-        elif self.model_cfg.x0_encoder is None:
-            pass
-        else:
-            raise ValueError(f"Invalid x0_encoder: {self.model_cfg.x0_encoder}")
+        x_encoder_hidden_dims = hidden_size // 2
+        # Encoder for current timestep x, x0, and y features       
+        self.x_embedder = encoder_fn(out_channels=x_encoder_hidden_dims)
+        self.x0_embedder = encoder_fn(out_channels=x_encoder_hidden_dims)
+        self.y_embedder = encoder_fn(out_channels=hidden_size)
         
         # Timestamp embedding
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -670,11 +689,6 @@ class DiT_PointCloud_Cross(nn.Module):
 
         self.apply(_basic_init)
 
-        # Initialize x_embed like nn.Linear (instead of nn.Conv2d):
-        w = self.x_embedder.weight.data
-        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-        nn.init.constant_(self.x_embedder.bias, 0)
-
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
@@ -695,7 +709,7 @@ class DiT_PointCloud_Cross(nn.Module):
             x: torch.Tensor,
             t: torch.Tensor,
             y: torch.Tensor,
-            x0: Optional[torch.Tensor] = None,
+            x0: torch.Tensor,
     ) -> torch.Tensor:
         """
         Forward pass of DiT with scene cross attention.
@@ -708,29 +722,23 @@ class DiT_PointCloud_Cross(nn.Module):
         """
         # encode x, y, x0 features
         x_emb = self.x_embedder(x)
+        x0_emb = self.x0_embedder(x0)
+        x_emb = torch.cat([x_emb, x0_emb], dim=1).permute(0, 2, 1)
 
-        if self.model_cfg.x0_encoder is not None:
-            assert x0 is not None, "x0 features must be provided if x0_encoder is not None"
-            x0_emb = self.x0_embedder(x0)
-            x_emb = torch.cat([x_emb, x0_emb], dim=1)
-
-        if self.model_cfg.y_encoder is not None:
-            y_emb = self.y_embedder(y)
-            y_emb = y_emb.permute(0, 2, 1)
-
-        x = x_emb.permute(0, 2, 1)
+        y_emb = self.y_embedder(y)
+        y_emb = y_emb.permute(0, 2, 1)
 
         # timestep embedding
         t_emb = self.t_embedder(t)
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            x = block(x, y_emb, t_emb)
+            x_emb = block(x_emb, y_emb, t_emb)
 
         # final layer
-        x = self.final_layer(x, t_emb)
-        x = x.permute(0, 2, 1)
-        return x
+        out = self.final_layer(x_emb, t_emb)
+        out = out.permute(0, 2, 1)
+        return out
 
 #################################################################################
 #                                DDRD DiT Models                                #

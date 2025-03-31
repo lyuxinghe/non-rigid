@@ -99,8 +99,9 @@ DiT_models = {
 def get_model(model_cfg):
     cross = "Cross_" if model_cfg.cross_atten else ""
     feature = "Point_Feature_" if model_cfg.feature == "point" else "Flow_Feature_" if model_cfg.feature == "flow" else ""
-    encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
-    model_name = f"{encoder}DiT_PointCloud_{cross}{feature}{model_cfg.size}"
+    # encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
+    # model_name = f"{encoder}DiT_PointCloud_{cross}{feature}{model_cfg.size}"
+    model_name = f"DiT_PointCloud_{cross}{feature}{model_cfg.size}"
     return DiT_models[model_name]
 
 

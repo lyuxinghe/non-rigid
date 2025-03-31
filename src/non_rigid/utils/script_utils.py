@@ -138,9 +138,13 @@ def create_datamodule(cfg):
             f"Model type: '{cfg.model.type}' and dataset type: '{cfg.dataset.type}' are incompatible."
         )
     
+    # setting model-specific dataset params
     cfg.dataset.noisy_goal = cfg.model.noisy_goal
     cfg.dataset.center_type = cfg.model.center_type
     cfg.dataset.action_context_center_type = cfg.model.action_context_center_type
+
+    # setting dataset-specific model params
+    cfg.model.pcd_scale = cfg.dataset.pcd_scale
 
     # TODO: Unify these flags !
     # Currently: 

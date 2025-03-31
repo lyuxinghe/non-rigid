@@ -24,6 +24,11 @@ center_type: null # [action_center, anchor_center, scene_center, none], centers 
 action_context_center_type: null # [center, random, none], centers the action context point clouds
 
 #####################################################
+# Dataset-specific Model Parameters
+#####################################################
+pcd_scale: 12.0 # Scale range for the point clouds
+
+#####################################################
 # Environment-specific Parameters
 #####################################################
 cloth_geometry: multi
