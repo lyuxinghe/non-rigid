@@ -24,7 +24,6 @@ from non_rigid.models.dit.diffusion import create_diffusion
 from non_rigid.models.dit.models import DiT_PointCloud_Unc as DiT_pcu
 from non_rigid.models.dit.models import (
     DiT_PointCloud_Unc_Cross,
-    Rel3D_DiT_PointCloud_Unc_Cross,
     DiT_PointCloud_Cross,
     DiT_PointCloud,
     DiT_PointCloud_Cross_Point_Feature,
@@ -47,13 +46,6 @@ def DiT_pcu_xS(**kwargs):
 
 def DiT_pcu_cross_xS(**kwargs):
     return DiT_PointCloud_Unc_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
-
-
-def Rel3D_DiT_pcu_cross_xS(**kwargs):
-    # Embed dim divisible by 3 for 3D positional encoding and divisible by num_heads for multi-head attention
-    return Rel3D_DiT_PointCloud_Unc_Cross(
-        depth=5, hidden_size=132, num_heads=4, **kwargs
-    )
 
 def DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
@@ -101,8 +93,6 @@ DiT_models = {
     "DiT_pcu_S": DiT_pcu_S,
     "DiT_pcu_xS": DiT_pcu_xS,
     "DiT_pcu_cross_xS": DiT_pcu_cross_xS,
-    "Rel3D_DiT_pcu_cross_xS": Rel3D_DiT_pcu_cross_xS,
-    # there is no Rel3D_DiT_pcu_xS
     "DiT_PointCloud_Cross_xS": DiT_PointCloud_Cross_xS,
     # TODO: add the SD model here
     "DiT_PointCloud_xS": DiT_PointCloud_xS,
@@ -121,7 +111,6 @@ DiT_models = {
 
 
 def get_model(model_cfg):
-    #rotary = "Rel3D_" if model_cfg.rotary else ""
     cross = "Cross_" if model_cfg.cross_atten else ""
     feature = "Point_Feature_" if model_cfg.feature == "point" else "Flow_Feature_" if model_cfg.feature == "flow" else ""
     encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
@@ -138,7 +127,7 @@ class DiffusionTransformerNetwork(nn.Module):
     def __init__(self, model_cfg=None):
         super().__init__()
         self.dit = get_model(model_cfg)(
-            use_rotary=model_cfg.rotary,
+            use_rotary=False,
             in_channels=model_cfg.in_channels,
             learn_sigma=model_cfg.learn_sigma,
             model_cfg=model_cfg,

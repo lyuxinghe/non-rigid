@@ -7,8 +7,6 @@ type: point # (flow, point) Type of model
 size: xS # (xs, s, ...) Architecture of DiT
 in_channels: 3 # Number of input channels
 learn_sigma: True # Learn sigma for diffusion
-center_noise: False # Center noise for diffusion
-rotary: False # Use rotary embedding for diffusion
 cross_atten: True # Use cross attention for diffusion
 feature: off # (flow, point, off) Type of feature base
 encoder_backbone: mlp # (mlp, pn2)

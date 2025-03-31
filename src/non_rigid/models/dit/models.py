@@ -18,7 +18,6 @@ from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 from typing import Optional
 
 from non_rigid.nets.dgcnn import DGCNN
-from non_rigid.models.dit.relative_encoding import RotaryPositionEncoding3D, MultiheadRelativeAttentionWrapper
 import non_rigid.models.pointnet2.pn2_pyg as pn2_pyg
 import non_rigid.models.pointnet2.pn2 as pn2
 
@@ -195,51 +194,6 @@ class DiTBlock(nn.Module):
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x
 
-class DiTRelativeBlock(nn.Module):
-    """
-    A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning 
-    and 3D relative self attention.
-    """
-    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **block_kwargs):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.attn = MultiheadRelativeAttentionWrapper(
-            embed_dim=hidden_size, 
-            num_heads=num_heads,
-            dropout=0.0,
-            bias=True
-        )
-        self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
-        self.mlp = Mlp(
-            in_features=hidden_size,
-            hidden_features=mlp_hidden_dim,
-            act_layer=approx_gelu,
-            drop=0,
-        )
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size, bias=True)
-        )
-
-    def forward(self, x, c, x_pos=None):
-        (
-            shift_msa,
-            scale_msa,
-            gate_msa,
-            shift_mlp,
-            scale_mlp,
-            gate_mlp,
-        ) = self.adaLN_modulation(c).chunk(6, dim=1)
-        x = modulate(self.norm1(x), shift_msa, scale_msa)
-        x = x + gate_msa.unsqueeze(1) * self.attn(
-            query=x, key=x, value=x, rotary_pe=(x_pos, x_pos)
-        )[0] # [0] is the attention output
-
-        x = modulate(self.norm2(x), shift_mlp, scale_mlp)
-        x = x + gate_mlp.unsqueeze(1) * self.mlp(x)
-        return x
-
 class DiTCrossBlock(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning and scene cross attention.
@@ -296,76 +250,6 @@ class DiTCrossBlock(nn.Module):
             modulate(self.norm3(x), shift_x, scale_x)
         )
         return x
-
-
-class DiTRelativeCrossBlock(nn.Module):
-    """
-    A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning 
-    and 3D relative self attention + 3D relative scene cross attention.
-    """
-
-    def __init__(
-        self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, **block_kwargs
-    ):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.self_attn = MultiheadRelativeAttentionWrapper(
-            embed_dim=hidden_size, 
-            num_heads=num_heads,
-            dropout=0.0,
-            bias=True
-        )
-        
-        self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.cross_attn = MultiheadRelativeAttentionWrapper(
-            embed_dim=hidden_size,
-            num_heads=num_heads,
-            dropout=0.0,
-            bias=True
-        )
-        
-        self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
-        self.mlp = Mlp(
-            in_features=hidden_size,
-            hidden_features=mlp_hidden_dim,
-            act_layer=approx_gelu,
-            drop=0,
-        )
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(hidden_size, 9 * hidden_size, bias=True)
-        )
-
-    def forward(self, x, y, c, x_pos=None, y_pos=None):
-        (
-            shift_msa,
-            scale_msa,
-            gate_msa,
-            shift_mca,
-            scale_mca,
-            gate_mca,
-            shift_x,
-            scale_x,
-            gate_x,
-        ) = self.adaLN_modulation(c).chunk(9, dim=1)
-        
-        x = modulate(self.norm1(x), shift_msa, scale_msa)
-        x = x + gate_msa.unsqueeze(1) * self.self_attn(
-            query=x, key=x, value=x, rotary_pe=(x_pos, x_pos)
-        )[0] # [0] is the attention output
-        
-        x = modulate(self.norm2(x), shift_mca, scale_mca)
-        x = x + gate_mca.unsqueeze(1) * self.cross_attn(
-            query=x, key=y, value=y, rotary_pe=(x_pos, y_pos)
-        )[0] # [0] is the attention output
-        
-        x = x + gate_x.unsqueeze(1) * self.mlp(
-            modulate(self.norm3(x), shift_x, scale_x)
-        )
-        
-        return x
-
 
 class FinalLayer(nn.Module):
     """
@@ -555,7 +439,6 @@ class DiT(nn.Module):
         eps = torch.cat([half_eps, half_eps], dim=0)
         return torch.cat([eps, rest], dim=1)
 
-
 class LinearRegressionModel(nn.Module):
     """
     Linear regression baseline, with attention - no diffusion.
@@ -673,12 +556,6 @@ class LinearRegressionModel(nn.Module):
         """
         Forward pass of linear regression model.
         """
-
-        if self.model_cfg.center_noise:
-            raise NotImplementedError("Center noise not implemented for linear regression model.")
-        if self.model_cfg.rotary:
-            raise NotImplementedError("Rotary not implemented for linear regression model.")
-        
         # encode x and y
         x = torch.transpose(self.x_embedder(x), -1, -2)
         y = torch.transpose(self.y_embedder(y), -1, -2)
@@ -691,7 +568,6 @@ class LinearRegressionModel(nn.Module):
         x = torch.transpose(x, -1, -2)
         return x
     
-
 class DiT_PointCloud_Cross(nn.Module):
     """
     Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention.
@@ -713,12 +589,6 @@ class DiT_PointCloud_Cross(nn.Module):
         self.out_channels = 6 if learn_sigma else 3
         self.num_heads = num_heads
         self.model_cfg = model_cfg
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
@@ -779,10 +649,9 @@ class DiT_PointCloud_Cross(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -837,17 +706,6 @@ class DiT_PointCloud_Cross(nn.Module):
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        # noise-centering, if enabled
-        if self.model_cfg.center_noise:
-            relative_center = torch.mean(x, dim=2, keepdim=True)
-            x = x - relative_center
-            y = y - relative_center
-        
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
-
         # encode x, y, x0 features
         x_emb = self.x_embedder(x)
 
@@ -867,17 +725,12 @@ class DiT_PointCloud_Cross(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                x = block(x, y_emb, t_emb, x_pos, y_pos)
-            else:
-                x = block(x, y_emb, t_emb)
+            x = block(x, y_emb, t_emb)
 
         # final layer
         x = self.final_layer(x, t_emb)
         x = x.permute(0, 2, 1)
         return x
-
-
 
 #################################################################################
 #                                DDRD DiT Models                                #
@@ -904,12 +757,6 @@ class Joint_DiT_Deformation_Reference_Cross_Feature(nn.Module):
         self.out_channels = 6 if learn_sigma else 3
         self.num_heads = num_heads
         self.model_cfg = model_cfg
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
@@ -970,10 +817,9 @@ class Joint_DiT_Deformation_Reference_Cross_Feature(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -1041,12 +887,6 @@ class Joint_DiT_Deformation_Reference_Cross_Feature(nn.Module):
             y = y - delta_center
             x0 = x0 - delta_center
 
-
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
-
         # encode x, y, x0 features
         x_emb = self.x_embedder(x)
 
@@ -1066,10 +906,7 @@ class Joint_DiT_Deformation_Reference_Cross_Feature(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                x = block(x, y_emb, t_emb, x_pos, y_pos)
-            else:
-                x = block(x, y_emb, t_emb)
+            x = block(x, y_emb, t_emb)
 
         # final layer
         # (8,512, 128)
@@ -1101,12 +938,6 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
         self.out_channels = 6 if learn_sigma else 3
         self.num_heads = num_heads
         self.model_cfg = model_cfg
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
@@ -1185,16 +1016,15 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks_r = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
         self.blocks_s = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -1281,11 +1111,6 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
             x0 = x0 - delta_center
         '''
 
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
-
         # encode x, y, x0 features
         
         x = xr_t + xs_t
@@ -1316,15 +1141,9 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks_r:
-            if self.model_cfg.rotary:
-                xr = block(xr, y_emb, t_emb, x_pos, y_pos)
-            else:
-                xr = block(xr, y_emb, t_emb)
+            xr = block(xr, y_emb, t_emb)
         for block in self.blocks_s:
-            if self.model_cfg.rotary:
-                xs = block(xs, y_emb, t_emb, x_pos, y_pos)
-            else:
-                xs = block(xs, y_emb, t_emb)
+            xs = block(xs, y_emb, t_emb)
         # (8,512, 128)
 
         # final layer
@@ -1360,12 +1179,6 @@ class TAX3Dv2_DiT(nn.Module):
         self.out_channels = 6 if learn_sigma else 3
         self.num_heads = num_heads
         self.model_cfg = model_cfg
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
@@ -1426,10 +1239,9 @@ class TAX3Dv2_DiT(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -1484,17 +1296,6 @@ class TAX3Dv2_DiT(nn.Module):
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        # noise-centering, if enabled
-        if self.model_cfg.center_noise:
-            relative_center = torch.mean(x, dim=2, keepdim=True)
-            x = x - relative_center
-            y = y - relative_center
-        
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
-
         # encode x, y, x0 features
         x_emb = self.x_embedder(x)
 
@@ -1514,10 +1315,7 @@ class TAX3Dv2_DiT(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                x = block(x, y_emb, t_emb, x_pos, y_pos)
-            else:
-                x = block(x, y_emb, t_emb)
+            x = block(x, y_emb, t_emb)
 
         # final layer
         x = self.final_layer(x, t_emb)
@@ -1738,12 +1536,6 @@ class DiT_PointCloud(nn.Module):
         self.num_heads = num_heads
         self.model_cfg = model_cfg
 
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
-
         # Encoder for current timestep x features
         self.x_embedder = nn.Conv1d(
             in_channels,
@@ -1758,10 +1550,9 @@ class DiT_PointCloud(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeBlock if self.model_cfg.rotary else DiTBlock
         self.blocks = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -1812,16 +1603,6 @@ class DiT_PointCloud(nn.Module):
         t: (N,) tensor of diffusion timesteps
         x0: (N, L, 3) tensor of un-noised x (e.g. scene) features
         """
-        # noise-centering, if enabled
-        if self.model_cfg.center_noise:
-            relative_center = torch.mean(x, dim=2, keepdim=True)
-            x = x - relative_center
-            x0 = x0 - relative_center
-
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-
         # encode x, x0 features
         x = torch.cat((x, x0), dim=1)
         x = torch.transpose(self.x_embedder(x), -1, -2)
@@ -1831,10 +1612,7 @@ class DiT_PointCloud(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                x = block(x, t_emb, x_pos)
-            else:
-                x = block(x, t_emb)
+            x = block(x, t_emb)
 
         # final layer
         x = self.final_layer(x, t_emb)
@@ -1863,12 +1641,6 @@ class PN2_DiT_PointCloud(nn.Module):
         self.out_channels = 6 if learn_sigma else 3
         self.num_heads = num_heads
         self.model_cfg = model_cfg
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_pre_encoder is not None:
@@ -2013,17 +1785,6 @@ class PN2_DiT_PointCloud(nn.Module):
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        # noise-centering, if enabled
-        if self.model_cfg.center_noise:
-            relative_center = torch.mean(x, dim=2, keepdim=True)
-            x = x - relative_center
-            y = y - relative_center
-        
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
-
         # pre-encode x, y, x0 features if required
         if self.x_pre_encoder is not None:
             x = self.x_pre_encoder(x)
@@ -2126,12 +1887,6 @@ class PN2_DiT_PointCloud_Cross(nn.Module):
         self.out_channels = 6 if learn_sigma else 3
         self.num_heads = num_heads
         self.model_cfg = model_cfg
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_pre_encoder is not None:
@@ -2272,10 +2027,9 @@ class PN2_DiT_PointCloud_Cross(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -2331,17 +2085,6 @@ class PN2_DiT_PointCloud_Cross(nn.Module):
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        # noise-centering, if enabled
-        if self.model_cfg.center_noise:
-            relative_center = torch.mean(x, dim=2, keepdim=True)
-            x = x - relative_center
-            y = y - relative_center
-        
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
-
         # pre-encode x, y, x0 features if required
         if self.x_pre_encoder is not None:
             x = self.x_pre_encoder(x)
@@ -2424,10 +2167,7 @@ class PN2_DiT_PointCloud_Cross(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                x = block(x, y_emb, t_emb, x_pos, y_pos)
-            else:
-                x = block(x, y_emb, t_emb)
+            x = block(x, y_emb, t_emb)
 
         # final layer
         x = self.final_layer(x, t_emb)
@@ -2462,12 +2202,6 @@ class DiT_PointCloud_Cross_Point_Feature(nn.Module):
         # define possible feature context types and normalization types
         feature_context_types = ["anchor_mean", "action_mean", "all"]
         feature_normalize_types = ["unnorm", "unit", "clip", "zeromean", "all"]
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         ################################
         # For now, do not use y and x0 #
@@ -2627,10 +2361,9 @@ class DiT_PointCloud_Cross_Point_Feature(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -2700,11 +2433,6 @@ class DiT_PointCloud_Cross_Point_Feature(nn.Module):
         ################################
         # For now, do not use y and x0 #
         ################################
-        
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
 
         # encode x features
         x_emb = self.x_embedder(x)
@@ -2779,10 +2507,7 @@ class DiT_PointCloud_Cross_Point_Feature(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                x = block(x, y_emb, t_emb, x_pos, y_pos)
-            else:
-                x = block(x, y_emb, t_emb)
+            x = block(x, y_emb, t_emb)
 
         # final layer
         x = self.final_layer(x, t_emb)
@@ -2815,12 +2540,6 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
         # define possible feature context types and normalization types
         feature_context_types = ["anchor_mean", "action_mean", "all"]
         feature_normalize_types = ["unnorm", "unit", "clip", "zeromean", "all"]
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         ################################
         # For now, do not use y and x0 #
@@ -3128,10 +2847,9 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -3202,11 +2920,6 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
         ################################
         # For now, do not use y and x0 #
         ################################
-        
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
         
         # initialize x_emb an an empty tensor
         B, _, N = x.shape
@@ -3381,10 +3094,7 @@ class DiT_PointCloud_Cross_Flow_Feature(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                x = block(x, y_emb, t_emb, x_pos, y_pos)
-            else:
-                x = block(x, y_emb, t_emb)
+            x = block(x, y_emb, t_emb)
 
         # final layer
         x = self.final_layer(x, t_emb)
@@ -3424,12 +3134,6 @@ class PN2_DiT_PointCloud_Cross_Flow_Feature(nn.Module):
         
         assert self.model_cfg.feature_context_type in feature_context_types, "feature_context_type must be one of [\"anchor_mean\", \"action_mean\"]"
         assert self.model_cfg.feature_flow_type in feature_flow_types, "feature_flow_types must be one of [\"anchor_mean\", \"action_mean\"]"
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         ################################
         # For now, do not use y and x0 #
@@ -3626,10 +3330,9 @@ class PN2_DiT_PointCloud_Cross_Flow_Feature(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -3694,11 +3397,6 @@ class PN2_DiT_PointCloud_Cross_Flow_Feature(nn.Module):
         ################################
         # For now, do not use y and x0 #
         ################################
-        
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
         
         # initialize x_emb an an empty tensor
         B, D, N = y.shape
@@ -3884,10 +3582,7 @@ class PN2_DiT_PointCloud_Cross_Flow_Feature(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                x = block(x, y_emb, t_emb, x_pos, y_pos)
-            else:
-                x = block(x, y_emb, t_emb)
+            x = block(x, y_emb, t_emb)
 
         # final layer
         x = self.final_layer(x, t_emb)
@@ -4031,11 +3726,6 @@ class DiT_PointCloud_Unc_Cross(nn.Module):
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        if self.model_cfg.center_noise:
-            relative_center = torch.mean(x, dim=2, keepdim=True)
-            x = x - relative_center
-            y = y - relative_center
-        
         x_emb = self.x_embedder(x)
 
         if self.model_cfg.x0_encoder is not None:
@@ -4058,178 +3748,4 @@ class DiT_PointCloud_Unc_Cross(nn.Module):
 
         x = x.permute(0, 2, 1)
 
-        return x
-
-class Rel3D_DiT_PointCloud_Unc_Cross(nn.Module):
-    """
-    Diffusion model with a Transformer backbone - point cloud, unconditional, with scene cross attention, and relative 3D positional encoding and attention.
-    """
-
-    def __init__(
-        self,
-        in_channels=3,
-        hidden_size=1152,
-        depth=28,
-        num_heads=16,
-        mlp_ratio=4.0,
-        learn_sigma=True,
-        model_cfg=None,
-    ):
-        super().__init__()
-        self.learn_sigma = learn_sigma
-        self.in_channels = in_channels
-        # self.out_channels = in_channels * 2 if learn_sigma else in_channels
-        self.out_channels = 6 if learn_sigma else 3
-        self.num_heads = num_heads
-        self.model_cfg = model_cfg
-
-        self.relative_3d_encoding = RotaryPositionEncoding3D(hidden_size)
-
-        x_encoder_hidden_dims = hidden_size
-        if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
-            # We are concatenating x and x0 features so we halve the hidden size
-            x_encoder_hidden_dims = hidden_size // 2
-
-        # Encoder for current timestep x features       
-        if self.model_cfg.x_encoder == "mlp":
-            # x_embedder is conv1d layer instead of 2d patch embedder
-            self.x_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        else:
-            raise ValueError(f"Invalid x_encoder: {self.model_cfg.x_encoder}")
-        
-        # Encoder for y features
-        if self.model_cfg.y_encoder == "mlp":
-            self.y_embedder = nn.Conv1d(
-                in_channels,
-                hidden_size,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.y_encoder == "dgcnn":
-            self.y_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=hidden_size
-            )
-        else:
-            raise ValueError(f"Invalid y_encoder: {self.model_cfg.y_encoder}")            
-
-        # Encoder for x0 features
-        if self.model_cfg.x0_encoder == "mlp":
-            self.x0_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.x0_encoder == "dgcnn":
-            self.x0_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=x_encoder_hidden_dims
-            )
-        elif self.model_cfg.x0_encoder is None:
-            pass
-        else:
-            raise ValueError(f"Invalid x0_encoder: {self.model_cfg.x0_encoder}")
-
-        # Timestamp embedding
-        self.t_embedder = TimestepEmbedder(hidden_size)
-        self.blocks = nn.ModuleList(
-            [
-                DiTRelativeCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
-                for _ in range(depth)
-            ]
-        )
-        
-        # functionally setting patch size to 1 for a point cloud
-        self.final_layer = FinalLayer(hidden_size, 1, self.out_channels)
-        self.initialize_weights()
-
-    def initialize_weights(self):
-        # Initialize transformer layers:
-        def _basic_init(module):
-            if isinstance(module, nn.Linear):
-                torch.nn.init.xavier_uniform_(module.weight)
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
-
-        self.apply(_basic_init)
-
-        # Initialize x_embed like nn.Linear (instead of nn.Conv2d):
-        w = self.x_embedder.weight.data
-        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-        nn.init.constant_(self.x_embedder.bias, 0)
-
-        # Initialize timestep embedding MLP:
-        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
-        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
-
-        # Zero-out adaLN modulation layers in DiT blocks:
-        for block in self.blocks:
-            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
-            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
-
-        # Zero-out output layers:
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.final_layer.linear.weight, 0)
-        nn.init.constant_(self.final_layer.linear.bias, 0)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        t: torch.Tensor,
-        y: torch.Tensor,
-        x0: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """
-        Forward pass of DiT with scene cross attention.
-
-        Args:
-            x (torch.Tensor): (B, D, N) tensor of batched current timestep x (e.g. noised action) features
-            t (torch.Tensor): (B,) tensor of diffusion timesteps
-            y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
-            x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
-        """
-
-        if self.model_cfg.center_noise:
-            relative_center = torch.mean(x, dim=2, keepdim=True)
-            x = x - relative_center
-            y = y - relative_center
-
-        # Get x and y relative 3D positional encoding
-        x_pos = self.relative_3d_encoding(x.permute(0, 2, 1))
-        y_pos = self.relative_3d_encoding(y.permute(0, 2, 1))
-        
-        # Get x and y features        
-        x_emb = self.x_embedder(x)
-
-        if self.model_cfg.x0_encoder is not None:
-            assert x0 is not None, "x0 must be provided if x0_encoder is not None"
-            x0_emb = self.x0_embedder(x0)
-            x_emb = torch.cat((x_emb, x0_emb), dim=1)
-
-        if self.model_cfg.y_encoder is not None:
-            y_emb = self.y_embedder(y)
-            y_emb = y_emb.permute(0, 2, 1)
-
-        x = x_emb.permute(0, 2, 1)
-        
-        c = self.t_embedder(t)
-
-        for i, block in enumerate(self.blocks):
-            x = block(x, y_emb, c, x_pos, y_pos)
-
-        x = self.final_layer(x, c)
-
-        x = x.permute(0, 2, 1)
-            
         return x
