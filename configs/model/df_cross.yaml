@@ -9,11 +9,6 @@ in_channels: 3 # Number of input channels
 learn_sigma: True # Learn sigma for diffusion
 cross_atten: True # Use cross attention for diffusion
 feature: off # (flow, point, off) Type of feature base
-# encoder_backbone: mlp # (mlp, pn2)
-
-# x_encoder: mlp # Encoder current timestep x
-# y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
-# x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)
 point_encoder: mlp # (mlp, pn2) Point cloud encoder architecture
 
 #####################################################

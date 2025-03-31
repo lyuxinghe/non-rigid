@@ -8,7 +8,7 @@
 # 5. the rest of the arguments for the train.py script
 
 # Example usage:
-# ./train_deform.sh 0 cross_flow_relative offline dedo
+# ./train_deform.sh 0 cross_flow offline dedo
 
 # Resuming from a crashed run:
 #./train_rigid.sh 0 ddrd_flow_separate rpdiff_fit online checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-03-02/17-41-55/checkpoints/last.ckpt'
@@ -24,12 +24,12 @@ shift
 COMMAND=$@
 DATASET_PARAMS="dataset=$DATASET_NAME"
 
-if [ $MODEL_TYPE == "cross_flow_relative" ]; then
+if [ $MODEL_TYPE == "cross_flow" ]; then
   echo "Training cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=flow"
 
-elif [ $MODEL_TYPE == "cross_point_relative" ]; then
+elif [ $MODEL_TYPE == "cross_point" ]; then
   echo "Training cross relative point model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=point"

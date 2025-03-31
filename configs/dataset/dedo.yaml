@@ -4,8 +4,6 @@ name: dedo
 # Dataset Parameters
 #####################################################
 data_dir: "~/data/"
-task: proccloth
-robot: True
 material: deform
 
 train_size: null # (int, null) Length of the train dataset
@@ -31,6 +29,8 @@ pcd_scale: 12.0 # Scale range for the point clouds
 #####################################################
 # Environment-specific Parameters
 #####################################################
+task: proccloth
+robot: True
 cloth_geometry: multi
 cloth_pose: random
 anchor_geometry: single
