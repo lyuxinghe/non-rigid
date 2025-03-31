@@ -650,19 +650,28 @@ class DiT_PointCloud_Cross(nn.Module):
         self.num_heads = num_heads
         self.model_cfg = model_cfg
 
-        # Creating point cloud feature encoders.
+        # Initializing point cloud encoder wrapper
         if self.model_cfg.point_encoder == "mlp":
             encoder_fn = partial(mlp_encoder, in_channels=self.in_channels)
         elif self.model_cfg.point_encoder == "pn2":
             encoder_fn = partial(pn2_encoder, model_cfg=self.model_cfg)
         else:
             raise ValueError(f"Invalid point_encoder: {self.model_cfg.point_encoder}")
+            
+        # x_encoder_hidden_dims = hidden_size // 2
+        # Creating base encoders - action (x0), anchor (y), and noised prediction (x)
+        self.x_encoder = encoder_fn(out_channels=hidden_size)
+        self.x0_encoder = encoder_fn(out_channels=hidden_size)
+        self.y_encoder = encoder_fn(out_channels=hidden_size)
 
-        x_encoder_hidden_dims = hidden_size // 2
-        # Encoder for current timestep x, x0, and y features       
-        self.x_embedder = encoder_fn(out_channels=x_encoder_hidden_dims)
-        self.x0_embedder = encoder_fn(out_channels=x_encoder_hidden_dims)
-        self.y_embedder = encoder_fn(out_channels=hidden_size)
+        # Creating extra feature encoders, if necessary
+        if self.model_cfg.feature:
+            self.shape_encoder = encoder_fn(out_channels=hidden_size)
+            self.flow_zeromean_encoder = encoder_fn(out_channels=hidden_size)
+            self.x_corr_encoder = encoder_fn(out_channels=hidden_size)
+            self.action_mixer = mlp_encoder(5 * hidden_size, hidden_size)
+        else:
+            self.action_mixer = mlp_encoder(2 * hidden_size, hidden_size)
         
         # Timestamp embedding
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -718,25 +727,50 @@ class DiT_PointCloud_Cross(nn.Module):
             x (torch.Tensor): (B, D, N) tensor of batched current timestep x (e.g. noised action) features
             t (torch.Tensor): (B,) tensor of diffusion timesteps
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
-            x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
+            x0 (torch.Tensor): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        # encode x, y, x0 features
-        x_emb = self.x_embedder(x)
-        x0_emb = self.x0_embedder(x0)
-        x_emb = torch.cat([x_emb, x0_emb], dim=1).permute(0, 2, 1)
+        if self.model_cfg.type == "flow":
+            x_flow = x
+            x_recon = x + x0
+        else:
+            x_flow = x - x0
+            x_recon = x
+        
+        # Encode base features - action (x0), anchor (y), and noised prediction (x).
+        x_enc = self.x_encoder(x)
+        x0_enc = self.x0_encoder(x0)
+        # x_enc = torch.cat([x_enc, x0_enc], dim=1).permute(0, 2, 1)
+        y_enc = self.y_encoder(y).permute(0, 2, 1)
+        # y_enc = y_enc.permute(0, 2, 1)
 
-        y_emb = self.y_embedder(y)
-        y_emb = y_emb.permute(0, 2, 1)
+        # Encode extra features, if necessary.
+        if self.model_cfg.feature:
+            shape_enc = self.shape_encoder(
+                x_recon - torch.mean(x_recon, dim=2, keepdim=True)
+            )
+            flow_zeromean_enc = self.flow_zeromean_encoder(
+                x_flow - torch.mean(x_flow, dim=2, keepdim=True)
+            )
+            x_corr_enc = self.x_corr_encoder(
+                x_recon if self.model_cfg.type == "flow" else x_flow
+            )
+            action_features = [x_enc, x0_enc, shape_enc, flow_zeromean_enc, x_corr_enc]
+        else:
+            action_features = [x_enc, x0_enc]
 
-        # timestep embedding
+        # Compress action features to hidden size through action mixer.
+        x_enc = torch.cat(action_features, dim=1)#.permute(0, 2, 1)
+        x_enc = self.action_mixer(x_enc).permute(0, 2, 1)
+
+        # Timestep embedding.
         t_emb = self.t_embedder(t)
 
-        # forward pass through DiT blocks
+        # Forward pass through DiT blocks.
         for block in self.blocks:
-            x_emb = block(x_emb, y_emb, t_emb)
+            x_enc = block(x_enc, y_enc, t_emb)
 
-        # final layer
-        out = self.final_layer(x_emb, t_emb)
+        # Final layer.
+        out = self.final_layer(x_enc, t_emb)
         out = out.permute(0, 2, 1)
         return out
 
