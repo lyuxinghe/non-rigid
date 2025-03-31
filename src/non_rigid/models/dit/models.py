@@ -650,7 +650,7 @@ class DiT_PointCloud_Cross(nn.Module):
         self.num_heads = num_heads
         self.model_cfg = model_cfg
 
-        # Initializing point cloud encoder wrapper
+        # Initializing point cloud encoder wrapper.
         if self.model_cfg.point_encoder == "mlp":
             encoder_fn = partial(mlp_encoder, in_channels=self.in_channels)
         elif self.model_cfg.point_encoder == "pn2":
@@ -658,13 +658,12 @@ class DiT_PointCloud_Cross(nn.Module):
         else:
             raise ValueError(f"Invalid point_encoder: {self.model_cfg.point_encoder}")
             
-        # x_encoder_hidden_dims = hidden_size // 2
-        # Creating base encoders - action (x0), anchor (y), and noised prediction (x)
+        # Creating base encoders - action (x0), anchor (y), and noised prediction (x).
         self.x_encoder = encoder_fn(out_channels=hidden_size)
         self.x0_encoder = encoder_fn(out_channels=hidden_size)
         self.y_encoder = encoder_fn(out_channels=hidden_size)
 
-        # Creating extra feature encoders, if necessary
+        # Creating extra feature encoders, if necessary.
         if self.model_cfg.feature:
             self.shape_encoder = encoder_fn(out_channels=hidden_size)
             self.flow_zeromean_encoder = encoder_fn(out_channels=hidden_size)
@@ -673,10 +672,10 @@ class DiT_PointCloud_Cross(nn.Module):
         else:
             self.action_mixer = mlp_encoder(2 * hidden_size, hidden_size)
         
-        # Timestamp embedding
+        # Timestamp embedding.
         self.t_embedder = TimestepEmbedder(hidden_size)
 
-        # DiT blocks
+        # DiT blocks.
         self.blocks = nn.ModuleList(
             [
                 DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
@@ -684,7 +683,7 @@ class DiT_PointCloud_Cross(nn.Module):
             ]
         )
 
-        # functionally setting patch size to 1 for a point cloud
+        # Final layer; functionally setting patch size to 1 for a point cloud.
         self.final_layer = FinalLayer(hidden_size, 1, self.out_channels)
         self.initialize_weights()
 
@@ -739,9 +738,7 @@ class DiT_PointCloud_Cross(nn.Module):
         # Encode base features - action (x0), anchor (y), and noised prediction (x).
         x_enc = self.x_encoder(x)
         x0_enc = self.x0_encoder(x0)
-        # x_enc = torch.cat([x_enc, x0_enc], dim=1).permute(0, 2, 1)
         y_enc = self.y_encoder(y).permute(0, 2, 1)
-        # y_enc = y_enc.permute(0, 2, 1)
 
         # Encode extra features, if necessary.
         if self.model_cfg.feature:
@@ -759,7 +756,7 @@ class DiT_PointCloud_Cross(nn.Module):
             action_features = [x_enc, x0_enc]
 
         # Compress action features to hidden size through action mixer.
-        x_enc = torch.cat(action_features, dim=1)#.permute(0, 2, 1)
+        x_enc = torch.cat(action_features, dim=1)
         x_enc = self.action_mixer(x_enc).permute(0, 2, 1)
 
         # Timestep embedding.
