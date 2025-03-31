@@ -47,46 +47,32 @@ def DiT_pcu_xS(**kwargs):
 def DiT_pcu_cross_xS(**kwargs):
     return DiT_PointCloud_Unc_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+def DiT_PointCloud_Cross_xS(**kwargs):
+    return DiT_PointCloud_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def DiT_PointCloud_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def DiT_PointCloud_xS(**kwargs):
     print("DiffusionTransformerNetwork: DiT_PointCloud_xS")
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return DiT_PointCloud(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def DiT_PointCloud_Cross_Point_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def DiT_PointCloud_Cross_Point_Feature_xS(**kwargs):
     print("DiffusionTransformerNetwork: DiT_PointCloud_Cross_Point_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud_Cross_Point_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return DiT_PointCloud_Cross_Point_Feature(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def DiT_PointCloud_Cross_Flow_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def DiT_PointCloud_Cross_Flow_Feature_xS(**kwargs):
     print("DiffusionTransformerNetwork: DiT_PointCloud_Cross_Flow_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def PN2_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def PN2_DiT_PointCloud_Cross_xS(**kwargs):
     print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_Cross_xS")
-    hidden_size = 132 if use_rotary else 128
-    return PN2_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return PN2_DiT_PointCloud_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def PN2_DiT_PointCloud_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def PN2_DiT_PointCloud_xS(**kwargs):
     print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_xS")
-    hidden_size = 132 if use_rotary else 128
-    return PN2_DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return PN2_DiT_PointCloud(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def PN2_DiT_PointCloud_Cross_Flow_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def PN2_DiT_PointCloud_Cross_Flow_Feature_xS(**kwargs):
     print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_Cross_Flow_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return PN2_DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return PN2_DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
 # TODO: clean up all unused functions
 DiT_models = {
@@ -114,8 +100,6 @@ def get_model(model_cfg):
     cross = "Cross_" if model_cfg.cross_atten else ""
     feature = "Point_Feature_" if model_cfg.feature == "point" else "Flow_Feature_" if model_cfg.feature == "flow" else ""
     encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
-
-    # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
     model_name = f"{encoder}DiT_PointCloud_{cross}{feature}{model_cfg.size}"
     return DiT_models[model_name]
 
@@ -127,7 +111,6 @@ class DiffusionTransformerNetwork(nn.Module):
     def __init__(self, model_cfg=None):
         super().__init__()
         self.dit = get_model(model_cfg)(
-            use_rotary=False,
             in_channels=model_cfg.in_channels,
             learn_sigma=model_cfg.learn_sigma,
             model_cfg=model_cfg,
