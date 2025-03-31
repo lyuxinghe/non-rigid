@@ -10,6 +10,7 @@ learn_sigma: True # Learn sigma for diffusion
 cross_atten: True # Use cross attention for diffusion
 point_encoder: mlp # (mlp, pn2) Point cloud encoder architecture
 feature: False # If True, encode additional features
+joint_encode: False # If True, use joint encoding for point cloud feature
 
 #####################################################
 # Model-specific Dataset Parameters
