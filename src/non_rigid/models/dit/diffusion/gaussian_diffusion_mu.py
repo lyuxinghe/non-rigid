@@ -141,7 +141,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
     return np.array(betas)
 
 
-class GaussianDiffusionDDRDSeparate:
+class GaussianDiffusionMuFrame:
     """
     Utilities for training and sampling diffusion models.
     Original ported from this codebase:
@@ -311,6 +311,10 @@ class GaussianDiffusionDDRDSeparate:
         else:
             raise NotImplementedError("Non-variance learning not implemented for reference branch.")
 
+        ##################### BUG: Below is Wrong! #####################
+        # For getting pred_xstart_r, since now xr_t=denoised(GMM_pred), 
+        # this is not strictly a diffusion objective, and you cannot use
+        # the noise equation to revert the xstart !!!
         if self.model_mean_type == ModelMeanType.START_X:
             pred_xstart_r = process_xstart(ref_noise)
         else:
@@ -401,6 +405,7 @@ class GaussianDiffusionDDRDSeparate:
     def p_sample(
         self,
         model,
+        pred_ref,
         x_r,
         x_s,
         t,
@@ -454,8 +459,8 @@ class GaussianDiffusionDDRDSeparate:
 
         sample_r = out_r["mean"] + nonzero_mask_r * th.exp(0.5 * out_r["log_variance"]) * noise_r
         sample_s = out_s["mean"] + nonzero_mask_s * th.exp(0.5 * out_s["log_variance"]) * noise_s
-
-        return {"sample_r": sample_r, "sample_s": sample_s, "pred_xstart": out_r["pred_xstart"]+out_s["pred_xstart"]}
+        sample_r = sample_r + pred_ref
+        return {"sample_r": sample_r, "sample_s": sample_s, "pred_xstart": out_r["pred_xstart"]+out_s["pred_xstart"]+pred_ref}
 
     def p_sample_loop(
         self,
@@ -495,8 +500,8 @@ class GaussianDiffusionDDRDSeparate:
             model,
             shape_r,
             shape_s,
-            noise_r=None,   # BUG!
-            noise_s=None,   # BUG!
+            noise_r=noise_r,
+            noise_s=noise_s,
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             cond_fn=cond_fn,
@@ -544,7 +549,9 @@ class GaussianDiffusionDDRDSeparate:
             img_s = th.randn(*shape_s, device=device)
 
         indices = list(range(self.num_timesteps))[::-1]
-
+        
+        pred_ref = noise_r.clone()
+        
         if progress:
             # Lazy import so that we don't depend on tqdm.
             from tqdm.auto import tqdm
@@ -556,6 +563,7 @@ class GaussianDiffusionDDRDSeparate:
             with th.no_grad():
                 out = self.p_sample(
                     model,
+                    pred_ref,
                     img_r,
                     img_s,
                     t,
@@ -565,6 +573,7 @@ class GaussianDiffusionDDRDSeparate:
                     model_kwargs=model_kwargs,
                 )
                 yield out
+
                 img_r = out["sample_r"]
                 img_s = out["sample_s"]
 
@@ -798,10 +807,11 @@ class GaussianDiffusionDDRDSeparate:
         output_s = th.where((t == 0), decoder_nll_s, kl_s)
 
         # combine outputs
-        pred_xstart_combined = out_r["pred_xstart"].expand(-1, -1, xs_t.shape[-1]) + out_s["pred_xstart"]
+        #pred_xstart_combined = out_r["pred_xstart"].expand(-1, -1, xs_t.shape[-1]) + out_s["pred_xstart"]
 
-        return {"output_r": output_r, "output_s": output_s, "pred_xstart": pred_xstart_combined}
-    
+        #return {"output_r": output_r, "output_s": output_s, "pred_xstart": pred_xstart_combined}
+        return {"output_r": output_r, "output_s": output_s}
+
     def _time_based_weights(self, t, T, func="sigmoid", k=10.0, m=0.5):
         """
         Compute time-based weights using a sigmoid function.
@@ -864,14 +874,19 @@ class GaussianDiffusionDDRDSeparate:
         # Here, we take the reference as the mean (global translation), and the shape as the residual.
         xr_start = x_start.mean(dim=-1, keepdim=True)  # [B, C, 1]
         xs_start = x_start - xr_start                    # [B, C, N]
+        xr_start_err = th.zeros_like(xr_start)
 
         # Sample independent noise terms for each branch.
-        noise_r = th.randn_like(xr_start)  # noise for R: [B, C, 1]
+        noise_r_err = th.randn_like(xr_start_err)  # noise for R: [B, C, 1]
         noise_s = th.randn_like(xs_start)  # noise for S: [B, C, N]
 
         # Compute the forward noising for each branch.
-        xr_t = self.q_sample(xr_start, t, noise=noise_r)  # [B, C, 1]
+        xr_err_t = self.q_sample(xr_start_err, t, noise=noise_r_err)  # [B, C, 1]
         xs_t = self.q_sample(xs_start, t, noise=noise_s)  # [B, C, N]
+
+        # Center our anchor on the noised goal
+        pred_ref = xr_err_t + xr_start
+        #model_kwargs["y"] = model_kwargs["y"] - pred_ref
 
         terms = {}
         if self.loss_type in [LossType.KL, LossType.RESCALED_KL]:
@@ -880,11 +895,11 @@ class GaussianDiffusionDDRDSeparate:
         elif self.loss_type in [LossType.MSE, LossType.RESCALED_MSE]:
             # For MSE training, assume that the model is designed to process each branch separately.
             # Here we feed the branch-specific noisy inputs to the model.
-            model_output_r, model_output_s = model(xr_t, xs_t, t, **model_kwargs)
+            model_output_r, model_output_s = model(pred_ref, xs_t, t, **model_kwargs)
 
             if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
                 # Process branch R: split into mean prediction and variance.
-                B, C = xr_t.shape[:2]
+                B, C = xr_err_t.shape[:2]
                 assert model_output_r.shape == (B, C * 2, 1), f"model_output_r: {model_output_r.shape}"
                 model_output_r, model_var_values_r = th.split(model_output_r, C, dim=1)
                 frozen_out_r = th.cat([model_output_r.detach(), model_var_values_r], dim=1)
@@ -900,9 +915,9 @@ class GaussianDiffusionDDRDSeparate:
 
                 vb_bpd_dict = self._vb_terms_bpd(
                     model=lambda *args, r=frozen_out: r,
-                    xr_start=xr_start,
+                    xr_start=xr_start_err,
                     xs_start=xs_start,
-                    xr_t=xr_t,
+                    xr_t=xr_err_t,
                     xs_t=xs_t,
                     t=t,
                     clip_denoised=False,
@@ -918,10 +933,10 @@ class GaussianDiffusionDDRDSeparate:
 
 
             # Ensure that the shapes of the model outputs match the noise targets.
-            assert model_output_r.shape == noise_r.shape, f"model_output_r {model_output_r.shape} not equal to noise_r {noise_r.shape}"
+            assert model_output_r.shape == noise_r_err.shape, f"model_output_r {model_output_r.shape} not equal to noise_r {noise_r_err.shape}"
             assert model_output_s.shape == noise_s.shape, f"model_output_s {model_output_s.shape} not equal to noise_s {noise_s.shape}"
 
-            loss_r = ((noise_r - model_output_r) ** 2).mean()
+            loss_r = ((noise_r_err - model_output_r) ** 2).mean()
             loss_s = ((noise_s - model_output_s) ** 2).mean()
 
             # Optionally, apply time-based weighting.

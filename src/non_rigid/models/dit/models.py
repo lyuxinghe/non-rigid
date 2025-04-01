@@ -18,12 +18,13 @@ from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 from typing import Optional
 
 from non_rigid.nets.dgcnn import DGCNN
+from non_rigid.nets.pn2 import PN2Dense, PN2DenseParams
 from non_rigid.models.dit.relative_encoding import RotaryPositionEncoding3D, MultiheadRelativeAttentionWrapper
-import non_rigid.models.pointnet2.pn2_pyg as pn2_pyg
-import non_rigid.models.pointnet2.pn2 as pn2
 
 #import rpad.pyg.nets.pointnet2 as pnp_original
 from torch_geometric.data import Data
+import torch_geometric.data as tgd
+from functools import partial
 
 
 torch.set_printoptions(precision=8, sci_mode=True)
@@ -104,6 +105,60 @@ class LabelEmbedder(nn.Module):
             labels = self.token_drop(labels, force_drop_ids)
         embeddings = self.embedding_table(labels)
         return embeddings
+
+#################################################################################
+#                                   Encoders                                    #
+#################################################################################
+
+def pointwise_mlp(in_channels, out_channels):
+    """
+    Helper function to create pointwise MLP.
+    """
+    return nn.Conv1d(
+        in_channels,
+        out_channels,
+        kernel_size=1,
+        stride=1,
+        padding=0,
+        bias=True,
+    )
+
+def pointnet_encoder(model_cfg, out_channels, in_channels=0):
+    pn_params = PN2DenseParams()
+    if model_cfg.scale_inputs != "none":
+        pn_params.sa1.r, pn_params.sa2.r = 0.2, 0.4
+    else:
+        pn_params.sa1.r, pn_params.sa2.r = 2.4, 4.8
+    
+    class PN2DenseWrapper(nn.Module):
+        def __init__(self, in_channels, out_channels, p):
+            super().__init__()
+            self.pn2dense = PN2Dense(in_channels=in_channels, out_channels=out_channels, p=p)
+        
+        def forward(self, x):
+            batch_size, num_channels = x.shape[0], x.shape[1]
+            batch_indices = torch.arange(
+                batch_size, device=x.device
+            ).repeat_interleave(x.shape[2])
+
+            if num_channels == 3:
+                input_batch = tgd.Batch(
+                    pos=x.permute(0, 2, 1).reshape(-1, 3), batch=batch_indices
+                )
+            elif num_channels == 6:
+                input_batch = tgd.Batch(
+                    pos=x[:, :3, :].permute(0, 2, 1).reshape(-1, 3),
+                    x=x[:, 3:, :].permute(0, 2, 1).reshape(-1, 3),
+                    batch=batch_indices,
+                )
+            else:
+                raise ValueError(f"Invalid number of input channels: {num_channels}")
+            
+            output = self.pn2dense(input_batch)
+            output = output.reshape(batch_size, -1, output.shape[-1]).permute(0, 2, 1)
+            return output
+    
+    return PN2DenseWrapper(in_channels=in_channels, out_channels=out_channels, p=pn_params)
 
 #################################################################################
 #                                 Custom Attention Layers                       #
@@ -837,12 +892,6 @@ class DiT_PointCloud_Cross(nn.Module):
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        # noise-centering, if enabled
-        if self.model_cfg.center_noise:
-            relative_center = torch.mean(x, dim=2, keepdim=True)
-            x = x - relative_center
-            y = y - relative_center
-        
         # rotary position embedding, if enabled
         if self.model_cfg.rotary:
             x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
@@ -1336,10 +1385,11 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
         xr = xr.permute(0, 2, 1)
 
         return xr, xs
+
 #################################################################################
-#                                TAX3Dv2 Models                                 #
+#                               Mu-Frame Model                                  #
 #################################################################################
-class TAX3Dv2_DiT(nn.Module):
+class Mu_DiT_Take1(nn.Module):
     """
     Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention.
     """
@@ -1371,7 +1421,265 @@ class TAX3Dv2_DiT(nn.Module):
         if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
             # We are concatenating x and x0 features so we halve the hidden size
             x_encoder_hidden_dims = hidden_size // 2
+        
+        # Encoder for current timestep x features       
+        if self.model_cfg.x_encoder == "mlp":
+            # x_embedder is conv1d layer instead of 2d patch embedder
+            self.x_embedder = nn.Conv1d(
+                in_channels,
+                x_encoder_hidden_dims//2,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+            )
+        else:
+            raise ValueError(f"Invalid x_encoder: {self.model_cfg.x_encoder}")
+        
+        self.xr_embedder = nn.Conv1d(
+                in_channels,
+                x_encoder_hidden_dims//2,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+        )
 
+        self.xs_embedder = nn.Conv1d(
+                in_channels,
+                x_encoder_hidden_dims//2,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+        )
+
+        # Encoder for y features
+        if self.model_cfg.y_encoder == "mlp":
+            self.y_embedder = nn.Conv1d(
+                in_channels,
+                hidden_size,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+            )
+        elif self.model_cfg.y_encoder == "dgcnn":
+            self.y_embedder = DGCNN(
+                input_dims=in_channels, emb_dims=hidden_size
+            )
+        else:
+            raise ValueError(f"Invalid y_encoder: {self.model_cfg.y_encoder}")            
+
+        # Encoder for x0 features
+        if self.model_cfg.x0_encoder == "mlp":
+            self.x0_embedder = nn.Conv1d(
+                in_channels,
+                x_encoder_hidden_dims,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=True,
+            )
+        elif self.model_cfg.x0_encoder == "dgcnn":
+            self.x0_embedder = DGCNN(
+                input_dims=in_channels, emb_dims=x_encoder_hidden_dims
+            )
+        elif self.model_cfg.x0_encoder is None:
+            pass
+        else:
+            raise ValueError(f"Invalid x0_encoder: {self.model_cfg.x0_encoder}")
+        
+        # Timestamp embedding
+        self.t_embedder = TimestepEmbedder(hidden_size)
+
+        # DiT blocks
+        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
+        self.blocks_r = nn.ModuleList(
+            [
+                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                for _ in range(depth)
+            ]
+        )
+        self.blocks_s = nn.ModuleList(
+            [
+                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                for _ in range(depth)
+            ]
+        )
+        # functionally setting patch size to 1 for a point cloud
+        self.final_layer_r = FinalLayer_r(hidden_size, 1, self.out_channels)
+        self.final_layer_s = FinalLayer_s(hidden_size, 1, self.out_channels)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        # Initialize transformer layers:
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
+        self.apply(_basic_init)
+
+        # Initialize x_embed like nn.Linear (instead of nn.Conv2d):
+        '''
+        w = self.x_embedder.weight.data
+        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+        nn.init.constant_(self.x_embedder.bias, 0)
+        '''
+        wr = self.xr_embedder.weight.data
+        nn.init.xavier_uniform_(wr.view([wr.shape[0], -1]))
+        nn.init.constant_(self.xr_embedder.bias, 0)
+        ws = self.xs_embedder.weight.data
+        nn.init.xavier_uniform_(ws.view([ws.shape[0], -1]))
+        nn.init.constant_(self.xs_embedder.bias, 0)
+
+        # Initialize timestep embedding MLP:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+
+        # Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.blocks_r:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+        for block in self.blocks_s:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+        # Zero-out output layers:
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_r.linear.weight, 0)
+        nn.init.constant_(self.final_layer_r.linear.bias, 0)
+
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_s.linear.weight, 0)
+        nn.init.constant_(self.final_layer_s.linear.bias, 0)
+
+    def forward(
+            self,
+            xr_t: torch.Tensor,
+            xs_t: torch.Tensor,
+            t: torch.Tensor,
+            y: torch.Tensor,
+            x0: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass of DiT with scene cross attention.
+
+        Args:
+            x (torch.Tensor): (B, D, N) tensor of batched current timestep x (e.g. noised action) features
+            t (torch.Tensor): (B,) tensor of diffusion timesteps
+            y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
+            x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
+        """
+        # noise-centering, if enabled
+        '''
+        if self.model_cfg.type == "point":
+            delta_center = torch.mean(x, dim=2, keepdim=True)
+            x = x - delta_center
+            y = y - delta_center
+            x0 = x0 - delta_center
+        elif self.model_cfg.type == "flow":
+            reconstruction = x + x0
+            delta_center = torch.mean(reconstruction, dim=2, keepdim=True)
+            x = x - delta_center
+            y = y - delta_center
+            x0 = x0 - delta_center
+        '''
+
+        # rotary position embedding, if enabled
+        if self.model_cfg.rotary:
+            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
+            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
+
+        y = y - xr_t
+
+        # encode x, y, x0 features        
+        x = xr_t + xs_t
+        recon_emb = self.x_embedder(x)
+        
+        xr_emb = self.xr_embedder(xr_t)
+        xr_emb_exp = xr_emb.expand(-1, -1, recon_emb.size(-1))  # [B, hidden_half, N]
+        xr_emb = torch.cat([xr_emb_exp, recon_emb], dim=1)
+
+        xs_emb = self.xs_embedder(xs_t)
+        xs_emb = torch.cat([xs_emb, recon_emb], dim=1)
+
+        if self.model_cfg.x0_encoder is not None:
+            assert x0 is not None, "x0 features must be provided if x0_encoder is not None"
+            x0_emb = self.x0_embedder(x0)
+            xr_emb = torch.cat([xr_emb, x0_emb], dim=1)
+            xs_emb = torch.cat([xs_emb, x0_emb], dim=1)
+
+        if self.model_cfg.y_encoder is not None:
+            y_emb = self.y_embedder(y)
+            y_emb = y_emb.permute(0, 2, 1)
+
+        xr = xr_emb.permute(0, 2, 1)
+        xs = xs_emb.permute(0, 2, 1)
+
+        # timestep embedding
+        t_emb = self.t_embedder(t)
+
+        # forward pass through DiT blocks
+        for block in self.blocks_r:
+            if self.model_cfg.rotary:
+                xr = block(xr, y_emb, t_emb, x_pos, y_pos)
+            else:
+                xr = block(xr, y_emb, t_emb)
+        for block in self.blocks_s:
+            if self.model_cfg.rotary:
+                xs = block(xs, y_emb, t_emb, x_pos, y_pos)
+            else:
+                xs = block(xs, y_emb, t_emb)
+        # (8,512, 128)
+
+        # final layer
+        xs = self.final_layer_s(xs, t_emb) # (8,512, 6)
+
+        xr = self.final_layer_r(xr, t_emb) # (8,1, 6)
+
+        xs = xs.permute(0, 2, 1)
+        xr = xr.permute(0, 2, 1)
+
+        return xr, xs
+
+class Mu_DiT_Take2(nn.Module):
+    """
+    Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention.
+    """
+    def __init__(
+            self,
+            in_channels=3,
+            hidden_size=1152,
+            depth=28,
+            num_heads=16,
+            mlp_ratio=4.0,
+            learn_sigma=True,
+            model_cfg=None,
+    ):
+        super().__init__()
+        self.learn_sigma = learn_sigma
+        self.in_channels = in_channels
+        # self.out_channels = in_channels * 2 if learn_sigma else in_channels
+        self.out_channels = 6 if learn_sigma else 3
+        self.num_heads = num_heads
+        self.model_cfg = model_cfg
+
+        # Rotary embeddings for relative positional encoding
+        if self.model_cfg.rotary:
+            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
+        else:
+            self.rotary_pos_enc = None
+
+        x_encoder_hidden_dims = hidden_size
+        if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
+            # We are concatenating x and x0 features so we halve the hidden size
+            x_encoder_hidden_dims = hidden_size // 2
+        
         # Encoder for current timestep x features       
         if self.model_cfg.x_encoder == "mlp":
             # x_embedder is conv1d layer instead of 2d patch embedder
@@ -1386,6 +1694,7 @@ class TAX3Dv2_DiT(nn.Module):
         else:
             raise ValueError(f"Invalid x_encoder: {self.model_cfg.x_encoder}")
         
+ 
         # Encoder for y features
         if self.model_cfg.y_encoder == "mlp":
             self.y_embedder = nn.Conv1d(
@@ -1435,7 +1744,11 @@ class TAX3Dv2_DiT(nn.Module):
         )
 
         # functionally setting patch size to 1 for a point cloud
-        self.final_layer = FinalLayer(hidden_size, 1, self.out_channels)
+        self.final_layer_r = FinalLayer(hidden_size, 1, self.out_channels)
+        self.final_layer_s = FinalLayer(hidden_size, 1, self.out_channels)
+        
+        self.ref_frame_token = nn.Parameter(torch.randn(1, 1, hidden_size))
+
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -1449,6 +1762,11 @@ class TAX3Dv2_DiT(nn.Module):
         self.apply(_basic_init)
 
         # Initialize x_embed like nn.Linear (instead of nn.Conv2d):
+        '''
+        w = self.x_embedder.weight.data
+        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+        nn.init.constant_(self.x_embedder.bias, 0)
+        '''
         w = self.x_embedder.weight.data
         nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
         nn.init.constant_(self.x_embedder.bias, 0)
@@ -1463,14 +1781,20 @@ class TAX3Dv2_DiT(nn.Module):
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
 
         # Zero-out output layers:
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.final_layer.linear.weight, 0)
-        nn.init.constant_(self.final_layer.linear.bias, 0)
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_r.linear.weight, 0)
+        nn.init.constant_(self.final_layer_r.linear.bias, 0)
+
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_s.linear.weight, 0)
+        nn.init.constant_(self.final_layer_s.linear.bias, 0)
 
     def forward(
             self,
-            x: torch.Tensor,
+            xr_t: torch.Tensor,
+            xs_t: torch.Tensor,
             t: torch.Tensor,
             y: torch.Tensor,
             x0: Optional[torch.Tensor] = None,
@@ -1485,29 +1809,43 @@ class TAX3Dv2_DiT(nn.Module):
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
         # noise-centering, if enabled
-        if self.model_cfg.center_noise:
-            relative_center = torch.mean(x, dim=2, keepdim=True)
-            x = x - relative_center
-            y = y - relative_center
-        
+        '''
+        if self.model_cfg.type == "point":
+            delta_center = torch.mean(x, dim=2, keepdim=True)
+            x = x - delta_center
+            y = y - delta_center
+            x0 = x0 - delta_center
+        elif self.model_cfg.type == "flow":
+            reconstruction = x + x0
+            delta_center = torch.mean(reconstruction, dim=2, keepdim=True)
+            x = x - delta_center
+            y = y - delta_center
+            x0 = x0 - delta_center
+        '''
+
         # rotary position embedding, if enabled
         if self.model_cfg.rotary:
             x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
             y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
 
-        # encode x, y, x0 features
-        x_emb = self.x_embedder(x)
+        y = y - xr_t
+
+        # encode x, y, x0 features        
+        xs_emb = self.x_embedder(xs_t)
 
         if self.model_cfg.x0_encoder is not None:
             assert x0 is not None, "x0 features must be provided if x0_encoder is not None"
             x0_emb = self.x0_embedder(x0)
-            x_emb = torch.cat([x_emb, x0_emb], dim=1)
+            xs_emb = torch.cat([xs_emb, x0_emb], dim=1)
 
         if self.model_cfg.y_encoder is not None:
             y_emb = self.y_embedder(y)
             y_emb = y_emb.permute(0, 2, 1)
 
-        x = x_emb.permute(0, 2, 1)
+        xs = xs_emb.permute(0, 2, 1)
+
+        token = self.ref_frame_token.expand(xs.size(0), 1, self.ref_frame_token.size(-1))
+        xs = torch.cat([xs, token], dim=1)
 
         # timestep embedding
         t_emb = self.t_embedder(t)
@@ -1515,14 +1853,175 @@ class TAX3Dv2_DiT(nn.Module):
         # forward pass through DiT blocks
         for block in self.blocks:
             if self.model_cfg.rotary:
-                x = block(x, y_emb, t_emb, x_pos, y_pos)
+                xs = block(xs, y_emb, t_emb, x_pos, y_pos)
             else:
-                x = block(x, y_emb, t_emb)
+                xs = block(xs, y_emb, t_emb)
+        # (8,512, 128)
+        
+        xr_token = xs[:, -1:, :]
+        xs_token = xs[:, :-1, :]
 
         # final layer
-        x = self.final_layer(x, t_emb)
-        x = x.permute(0, 2, 1)
-        return x
+        xs = self.final_layer_s(xs_token, t_emb) # (8,512, 6)
+
+        xr = self.final_layer_r(xr_token, t_emb) # (8,1, 6)
+
+        xs = xs.permute(0, 2, 1)
+        xr = xr.permute(0, 2, 1)
+
+        return xr, xs
+
+#################################################################################
+#                                TAX3Dv2 Models                                 #
+#################################################################################
+class TAX3Dv2_DiT(nn.Module):
+    """
+    Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention.
+    """
+    def __init__(
+            self,
+            in_channels=3,
+            hidden_size=1152,
+            depth=28,
+            num_heads=16,
+            mlp_ratio=4.0,
+            learn_sigma=True,
+            model_cfg=None,
+    ):
+        super().__init__()
+        self.learn_sigma = learn_sigma
+        self.in_channels = in_channels
+        self.out_channels = 6 if learn_sigma else 3
+        self.num_heads = num_heads
+        self.model_cfg = model_cfg
+
+        # get encoder fn
+        if self.model_cfg.x_encoder != self.model_cfg.x0_encoder:
+            raise ValueError("Joint encoder not supported for different x and x0 encoders.")
+        if self.model_cfg.x_encoder != self.model_cfg.y_encoder:
+            raise ValueError("Joint encoder not supported for different x and y encoders.")
+        
+        if self.model_cfg.x_encoder == "mlp":
+            encoder_fn = partial(pointwise_mlp, in_channels=in_channels)
+        elif self.model_cfg.x_encoder == "pn":
+            encoder_fn = partial(pointnet_encoder, model_cfg=self.model_cfg)
+        else:
+            raise ValueError(f"Invalid x_encoder: {self.model_cfg.x_encoder}")
+
+        self.query_encoder = encoder_fn(out_channels=hidden_size)
+        self.context_encoder = encoder_fn(out_channels=hidden_size)
+        # handle extra features, and query mixer
+        if self.model_cfg.extra_features:
+            self.shape_encoder = encoder_fn(in_channels=3, out_channels=hidden_size)
+            self.query_mixer = pointwise_mlp(3 * hidden_size, hidden_size)
+        else:
+            self.query_mixer = pointwise_mlp(2 * hidden_size, hidden_size)
+
+        # Timestamp embedding
+        self.t_embedder = TimestepEmbedder(hidden_size)
+        
+        # DiT blocks
+        self.blocks = nn.ModuleList(
+            [
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                for _ in range(depth)
+            ]
+        )
+
+        # functionally setting patch size to 1 for a point cloud
+        self.final_layer_s = FinalLayer_s(hidden_size, 1, self.out_channels)
+        self.final_layer_r = FinalLayer_r(hidden_size, 1, self.out_channels)
+        self.initialize_weights()
+    
+    def initialize_weights(self):
+        # Initialize transformer layers:
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
+        self.apply(_basic_init)
+
+        # Initialize timestep embedding MLP:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+
+        # Initialize rel pose embedding MLP:
+        if self.pose_embedder is not None:
+            nn.init.normal_(self.pose_embedder.mlp[0].weight, std=0.02)
+            nn.init.normal_(self.pose_embedder.mlp[2].weight, std=0.02)
+
+        # Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.blocks:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+        # Zero-out output layers:
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_r.linear.weight, 0)
+        nn.init.constant_(self.final_layer_r.linear.bias, 0)
+
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_s.linear.weight, 0)
+        nn.init.constant_(self.final_layer_s.linear.bias, 0)
+    
+    def forward(
+            self,
+            xr_t: torch.Tensor,
+            xs_t: torch.Tensor,
+            t: torch.Tensor,
+            y: torch.Tensor,
+            x0: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        
+        x = xr_t + xs_t
+        
+        if self.model_cfg.type == "flow":
+            raise NotImplementedError("Flow Prediction has not been enabled for TAX3Dv2!")
+            '''
+            x_flow = x
+            x_recon = x + x0
+            '''
+        elif self.model_cfg.type == "point":
+            x_recon = x
+            x_flow = x - x0
+
+        query_input = x0
+        context_input = torch.cat([x_recon, y], dim=-1)
+        q = query_input.shape[-1]
+
+        query_feature = self.query_encoder(query_input)
+        context_feature = self.context_encoder(context_input)
+        query_context_feature, context_context_feature = context_feature[:, :, :q], context_feature[:, :, q:]
+        
+        if self.model_cfg.extra_features:
+            #x_recon_mean = x_recon - torch.mean(x_recon, dim=2, keepdim=True)
+            shape_input = torch.cat([xs_t, x_flow], dim=-2)
+            shape_feature = self.shape_encoder(shape_input)
+
+            query_emb = torch.cat([query_feature, query_context_feature, shape_feature], dim=-2)
+        else:
+            query_emb = torch.cat([query_feature, query_context_feature], dim=-2)
+        context_emb = context_context_feature.permute(0, 2, 1)
+
+        # pass through mixers
+        query_emb = self.query_mixer(query_emb).permute(0, 2, 1)
+
+        # timestep embedding
+        c = self.t_embedder(t)
+        
+        # forward pass through DiT blocks
+        for block in self.blocks:
+            emb = block(query_emb, context_emb, c)
+        
+        # final layer
+        out_r = self.final_layer_r(emb, c).permute(0, 2, 1)
+        out_s = self.final_layer_s(emb, c).permute(0, 2, 1)
+
+        return out_r, out_s
     
 #################################################################################
 #                   Sine/Cosine Positional Embedding Functions                  #

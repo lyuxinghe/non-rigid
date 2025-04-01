@@ -11,114 +11,45 @@ from lightning.pytorch import Callback
 from pytorch_lightning.loggers import WandbLogger
 from omegaconf import OmegaConf
 
-from non_rigid.models.df_base import (
-    DiffusionFlowBase,
-    FlowPredictionInferenceModule,
-    FlowPredictionTrainingModule,
-    PointPredictionInferenceModule,
-    PointPredictionTrainingModule,
-)
-from non_rigid.models.regression import (
-    LinearRegression,
-    LinearRegressionInferenceModule,
-    LinearRegressionTrainingModule,
-    RegressionNetwork,
-    RegressionModule,
-)
+
 from non_rigid.models.tax3d import (
     DiffusionTransformerNetwork,
-    SceneDisplacementModule,
     CrossDisplacementModule,
-    FeatureCrossDisplacementModule,
 )
 from non_rigid.models.tax3d_ddrd import (
     DeformationReferenceDiffusionTransformerNetwork,
     DDRDModule,
 )
-
+from non_rigid.models.tax3d_mu import (
+    MuFrameDiffusionTransformerNetwork,
+    MuFrameCrossDisplacementModule,
+)
 from non_rigid.models.tax3d_v2 import (
     TAX3Dv2Network,
     TAX3Dv2Module,
 )
 
-from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule, ProcClothFlowFeatureDataModule
-from non_rigid.datasets.rigid import RigidDataModule, RigidFeatureDataModule, RigidDataNoisyGoalModule
+from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule
+from non_rigid.datasets.rigid import RigidDataModule
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
 
     
-def create_model_legacy(cfg):
-    if cfg.model.name in ["df_base", "df_cross"]:
-        network_fn = DiffusionFlowBase
-        if cfg.mode == "train":
-            # tax3d training modules
-            if cfg.model.type == "flow":
-                module_fn = partial(FlowPredictionTrainingModule, training_cfg=cfg.training)
-            elif cfg.model.type == "point":
-                module_fn = partial(PointPredictionTrainingModule, task_type=cfg.task_type, training_cfg=cfg.training)
-            else:
-                raise ValueError(f"Invalid model type: {cfg.model.type}")
-        elif cfg.mode == "eval":
-            # tax3d inference modules
-            if cfg.model.type == "flow":
-                module_fn = partial(FlowPredictionInferenceModule, inference_cfg=cfg.inference)
-            elif cfg.model.type == "point":
-                module_fn = partial(PointPredictionInferenceModule, task_type=cfg.task_type, inference_cfg=cfg.inference)
-            else:
-                raise ValueError(f"Invalid model type: {cfg.model.type}")
-        else:
-            raise ValueError(f"Invalid mode: {cfg.mode}")
-    elif cfg.model.name == "linear_regression":
-        assert cfg.model.type == "point", "Only point regression is supported."
-        network_fn = LinearRegression
-        if cfg.mode == "train":
-            # linear training module
-            module_fn = partial(LinearRegressionTrainingModule, training_cfg=cfg.training)
-        elif cfg.mode == "eval":
-            # linear inference module
-            module_fn = partial(LinearRegressionInferenceModule, inference_cfg=cfg.inference)
-        else:
-            raise ValueError(f"Invalid mode: {cfg.mode}")
-    else:
-        raise ValueError(f"Invalid model name: {cfg.model.name}")
-    # create network
-    network = network_fn(model_cfg=cfg.model)
-    model = module_fn(network=network, model_cfg=cfg.model)
-
-    # TODO: this should also check for a checkpoint id, and setup the network
-    return network, model
-
 
 def create_model(cfg):
-    if cfg.model.name == "df_base":
-        network_fn = DiffusionTransformerNetwork
-        # module_fn = SceneDisplacementTrainingModule
-        module_fn = SceneDisplacementModule
-    elif cfg.model.name == "df_cross":
+    if cfg.model.name == "df_cross":
         network_fn = DiffusionTransformerNetwork
         # module_fn = Tax3dModule
         module_fn = CrossDisplacementModule
-    elif cfg.model.name == "regression":
-        network_fn = RegressionNetwork
-        module_fn = RegressionModule
-    elif cfg.model.name == "feature_df_cross":
-        network_fn = DiffusionTransformerNetwork
-        # module_fn = Tax3dModule
-        module_fn = FeatureCrossDisplacementModule
-    elif cfg.model.name == "pn2_df_cross":
-        network_fn = DiffusionTransformerNetwork
-        # module_fn = Tax3dModule
-        module_fn = CrossDisplacementModule
-    elif cfg.model.name == "pn2_feature_df_cross":
-        network_fn = DiffusionTransformerNetwork
-        # module_fn = Tax3dModule
-        module_fn = FeatureCrossDisplacementModule
     elif cfg.model.name == "ddrd":
         network_fn = DeformationReferenceDiffusionTransformerNetwork
         module_fn = DDRDModule
     elif cfg.model.name == "tax3d_v2":
         network_fn = TAX3Dv2Network
         module_fn = TAX3Dv2Module
+    elif cfg.model.name == "mu":
+        network_fn = MuFrameDiffusionTransformerNetwork
+        module_fn = MuFrameCrossDisplacementModule
     else:
         raise ValueError(f"Invalid model name: {cfg.model.name}")
 
@@ -130,6 +61,50 @@ def create_model(cfg):
 
 
 def create_datamodule(cfg):
+    # check that dataset and model types are compatible
+    if cfg.model.type != cfg.dataset.type:
+        raise ValueError(
+            f"Model type: '{cfg.model.type}' and dataset type: '{cfg.dataset.type}' are incompatible."
+        )
+
+    if cfg.dataset.material == "deform":
+        datamodule_fn = ProcClothFlowDataModule
+    elif cfg.dataset.material == "rigid":
+        datamodule_fn = RigidDataModule
+
+    # job-specific datamodule pre-processing
+    if cfg.mode == "eval":
+        job_cfg = cfg.inference
+        # check for full action
+        if job_cfg.action_full:
+            cfg.dataset.sample_size_action = -1
+        stage = "predict"
+    elif cfg.mode == "train":
+        job_cfg = cfg.training
+        stage = "fit"
+    else:
+        raise ValueError(f"Invalid mode: {cfg.mode}")
+
+    # setting up datamodule
+    datamodule = datamodule_fn(
+        batch_size=job_cfg.batch_size,
+        val_batch_size=job_cfg.val_batch_size,
+        num_workers=cfg.resources.num_workers,
+        dataset_cfg=cfg.dataset,
+    )
+    datamodule.setup(stage)
+
+    # updating job config sample sizes
+    job_cfg.sample_size = cfg.dataset.sample_size_action + cfg.dataset.sample_size_anchor
+    job_cfg.sample_size_anchor = cfg.dataset.sample_size_anchor
+
+    # training-specific job config setup
+    if cfg.mode == "train":
+        job_cfg.num_training_steps = len(datamodule.train_dataloader()) * job_cfg.epochs
+
+    return cfg, datamodule
+
+def create_datamodule_legacy(cfg):
     # check that dataset and model types are compatible
     if cfg.model.type != cfg.dataset.type:
         raise ValueError(

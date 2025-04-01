@@ -1,4 +1,4 @@
-name: df_cross
+name: mu
 
 # Model settings
 type: point # (flow, point) Type of model
@@ -7,6 +7,7 @@ in_channels: 3 # Number of input channels
 learn_sigma: True # Learn sigma for diffusion
 rotary: False # Use rotary embedding for diffusion
 encoder_backbone: mlp # (mlp, pn2)
+model_take: 1
 
 x_encoder: mlp # Encoder current timestep x
 y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)

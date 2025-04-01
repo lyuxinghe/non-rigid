@@ -6,8 +6,9 @@
 from . import gaussian_diffusion as gd
 from . import gaussian_diffusion_ddrd_joint as gd_ddrd_joint
 from . import gaussian_diffusion_ddrd_seperate as gd_ddrd_separate
+from . import gaussian_diffusion_mu as gd_mu
 from . import gaussian_diffusion_v2 as gd_v2
-from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, SpacedDiffusionv2, space_timesteps
+from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, SpacedDiffusionMuFrame, SpacedDiffusionv2, space_timesteps
 
 
 def create_diffusion(
@@ -122,6 +123,46 @@ def create_diffusion_ddrd_separate(
             )
             if not learn_sigma
             else gd_ddrd_separate.ModelVarType.LEARNED_RANGE
+        ),
+        loss_type=loss_type,
+        time_based_weighting=time_based_weighting,
+        # rescale_timesteps=rescale_timesteps,
+    )
+
+def create_diffusion_mu(
+    timestep_respacing,
+    noise_schedule="linear", 
+    use_kl=False,
+    sigma_small=False,
+    predict_xstart=False,
+    learn_sigma=True,
+    rescale_learned_sigmas=False,
+    diffusion_steps=1000,
+    time_based_weighting=False,
+):
+    betas = gd_mu.get_named_beta_schedule(noise_schedule, diffusion_steps)
+    if use_kl:
+        loss_type = gd_mu.LossType.RESCALED_KL
+    elif rescale_learned_sigmas:
+        loss_type = gd_mu.LossType.RESCALED_MSE
+    else:
+        loss_type = gd_mu.LossType.MSE
+    if timestep_respacing is None or timestep_respacing == "":
+        timestep_respacing = [diffusion_steps]
+    return SpacedDiffusionMuFrame(
+        use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
+        betas=betas,
+        model_mean_type=(
+            gd_mu.ModelMeanType.EPSILON if not predict_xstart else gd_mu.ModelMeanType.START_X
+        ),
+        model_var_type=(
+            (
+                gd_mu.ModelVarType.FIXED_LARGE
+                if not sigma_small
+                else gd_mu.ModelVarType.FIXED_SMALL
+            )
+            if not learn_sigma
+            else gd_mu.ModelVarType.LEARNED_RANGE
         ),
         loss_type=loss_type,
         time_based_weighting=time_based_weighting,
