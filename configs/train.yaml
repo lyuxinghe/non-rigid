@@ -21,7 +21,7 @@ seed: 42
 task_type: None # Set during training loop based on dataset.
 
 resources:
-  num_workers: 16
+  num_workers: 32
   gpus:
     - 0
 

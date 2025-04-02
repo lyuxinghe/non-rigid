@@ -357,6 +357,111 @@ class GaussianDiffusionMuFrame:
 
         return out_r, out_s
 
+    def p_mean_variance_reverse(self, model, pred_ref, xr_t, xs_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
+        """
+        Apply the model to get p(x_{t-1} | x_t) and a prediction of x₀ separately for the
+        reference and shape branches.
+        
+        Inputs:
+        - xr_t: the noisy reference input, shape [B, C, 1]
+        - xs_t: the noisy shape input, shape [B, C, N]
+        - t: timesteps, shape [B]
+        - model: callable that takes (xr_t, xs_t, t, **model_kwargs) and returns a tuple:
+                    (model_output_r, model_output_s)
+        - model_kwargs: extra keyword arguments for the model.
+        
+        Each model_output is expected to have 2*C channels (if learning variance), where the first C
+        channels predict the noise (or x₀ if ModelMeanType.START_X is used) and the next C channels are raw
+        variance predictions.
+        
+        Returns:
+        A tuple (out_r, out_s), where:
+            out_r: dict with keys {"mean", "variance", "log_variance", "pred_xstart", "extra"}
+                corresponding to the reference branch (shape [B, C, 1]).
+            out_s: dict with the same keys for the shape branch (shape [B, C, N]).
+        """
+        if model_kwargs is None:
+            model_kwargs = {}
+
+        # Get the model outputs for each branch.
+        # Expected shapes:
+        #   model_output_r: [B, 2C, 1]  for reference branch
+        #   model_output_s: [B, 2C, N]  for shape branch
+        zr_t = pred_ref + xr_t
+        model_output_r, model_output_s = model(zr_t, xs_t, t, **model_kwargs)
+        extra = None
+
+        def process_xstart(x):
+            if denoised_fn is not None:
+                x = denoised_fn(x)
+            if clip_denoised:
+                return x.clamp(-1, 1)
+            return x
+
+        # Process the reference branch.
+        B, C = xr_t.shape[:2]
+        if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
+            assert model_output_r.shape[1] == 2 * C, f"Expected 2C channels for reference, got {model_output_r.shape[1]}"
+            ref_noise, ref_var_raw = th.split(model_output_r, C, dim=1)
+            # Use the spatial shape of xr_t ([B, C, 1]).
+            min_log_r = _extract_into_tensor(self.posterior_log_variance_clipped, t, xr_t.shape) + math.log(self.var_r)
+            max_log_r = _extract_into_tensor(np.log(self.betas), t, xr_t.shape) + math.log(self.var_r)
+            frac_r = (ref_var_raw + 1) / 2  # Map from [-1, 1] to [0, 1].
+            model_log_variance_r = frac_r * max_log_r + (1 - frac_r) * min_log_r
+            model_variance_r = th.exp(model_log_variance_r)
+        else:
+            raise NotImplementedError("Non-variance learning not implemented for reference branch.")
+
+        ##################### BUG: Below is Wrong! #####################
+        # For getting pred_xstart_r, since now xr_t=denoised(GMM_pred), 
+        # this is not strictly a diffusion objective, and you cannot use
+        # the noise equation to revert the xstart !!!
+        if self.model_mean_type == ModelMeanType.START_X:
+            raise NotImplementedError
+            #pred_xstart_r = process_xstart(ref_noise)
+        else:
+            #pred_xstart_r = process_xstart(self._predict_xstart_from_eps(x_t=xr_t, t=t, eps=ref_noise))
+            # NOTE: we dont calculate z_0 here; instead, we calculate delta_0:
+            pred_deltastart = process_xstart(self._predict_xstart_from_eps(x_t=xr_t, t=t, eps=ref_noise))
+
+        # Compute the branch's posterior mean using its own noisy input.
+        # NOTE: so here, the output is for the delta, not z!
+        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_deltastart, x_t=xr_t, t=t)
+        out_r = {
+            "mean": out_r_mean,
+            "variance": model_variance_r,
+            "log_variance": th.log(model_variance_r + 1e-8),
+            "pred_xstart": pred_deltastart,
+            "extra": extra,
+        }
+
+        # Process the shape branch.
+        B, C, N = xs_t.shape
+        if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
+            assert model_output_s.shape[1] == 2 * C, f"Expected 2C channels for shape, got {model_output_s.shape[1]}"
+            shape_noise, shape_var_raw = th.split(model_output_s, C, dim=1)
+            min_log_s = _extract_into_tensor(self.posterior_log_variance_clipped, t, xs_t.shape) + math.log(self.var_s)
+            max_log_s = _extract_into_tensor(np.log(self.betas), t, xs_t.shape) + math.log(self.var_s)
+            frac_s = (shape_var_raw + 1) / 2
+            model_log_variance_s = frac_s * max_log_s + (1 - frac_s) * min_log_s
+            model_variance_s = th.exp(model_log_variance_s)
+        else:
+            raise NotImplementedError("Non-variance learning not implemented for shape branch.")
+
+        if self.model_mean_type == ModelMeanType.START_X:
+            pred_xstart_s = process_xstart(shape_noise)
+        else:
+            pred_xstart_s = process_xstart(self._predict_xstart_from_eps(x_t=xs_t, t=t, eps=shape_noise))
+        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t)
+        out_s = {
+            "mean": out_s_mean,
+            "variance": model_variance_s,
+            "log_variance": th.log(model_variance_s + 1e-8),
+            "pred_xstart": pred_xstart_s,
+            "extra": extra,
+        }
+
+        return out_r, out_s
 
 
 
@@ -435,8 +540,9 @@ class GaussianDiffusionMuFrame:
         import torch as th
 
         # Obtain separate outputs for the reference and shape branches.
-        out_r, out_s = self.p_mean_variance(
+        out_r, out_s = self.p_mean_variance_reverse(
             model,
+            pred_ref,
             x_r,
             x_s,
             t,
@@ -459,8 +565,8 @@ class GaussianDiffusionMuFrame:
 
         sample_r = out_r["mean"] + nonzero_mask_r * th.exp(0.5 * out_r["log_variance"]) * noise_r
         sample_s = out_s["mean"] + nonzero_mask_s * th.exp(0.5 * out_s["log_variance"]) * noise_s
-        sample_r = sample_r + pred_ref
-        return {"sample_r": sample_r, "sample_s": sample_s, "pred_xstart": out_r["pred_xstart"]+out_s["pred_xstart"]+pred_ref}
+
+        return {"sample_r": sample_r, "sample_s": sample_s}
 
     def p_sample_loop(
         self,
@@ -551,7 +657,11 @@ class GaussianDiffusionMuFrame:
         indices = list(range(self.num_timesteps))[::-1]
         
         pred_ref = noise_r.clone()
-        
+
+        # 1. delta_t = 0
+        # 2. delta_t ~ N(0,1)
+        img_r = th.zeros_like(pred_ref)
+
         if progress:
             # Lazy import so that we don't depend on tqdm.
             from tqdm.auto import tqdm

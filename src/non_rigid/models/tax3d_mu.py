@@ -259,7 +259,7 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
         )
         pred_err = final_dict["sample_r"]
         pred_s = final_dict["sample_s"]
-        pred = pred_s + pred_err        # BUG: or perhaps pred_s + pred_err?
+        pred = pred_s + pred_err        
         results = [res["sample_r"] + res["sample_s"] for res in results]
         pred = pred.permute(0, 2, 1)
 
@@ -353,8 +353,8 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
             )
             pred_ref = expand_pcd(pred_ref, num_samples)
             
-            pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
-            goal_point_world = T_goalUnAug.transform_points(goal_pc)
+            pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
+            goal_point_world = T_goalUnAug.transform_points(goal_pc + pred_ref)
             
             pred_point_world = pred_point_world / scaling_factor
             goal_point_world = goal_point_world / scaling_factor
@@ -380,7 +380,7 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
                 "rot": rotation_errs,
                 "rot_wta": rotation_err_wta,
             }
-
+        
         else:
             return {
                 "pred": pred,
@@ -607,11 +607,11 @@ class MuFrameCrossDisplacementModule(MuFrameDenseDisplacementDiffusionModule):
         pred_ref = expand_pcd(batch["pred_ref"].to(self.device), num_samples)
         action_ref = expand_pcd(batch["action_ref"].to(self.device), num_samples)
 
-        pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
+        pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
         pc_action_world = T_actionUnAug.transform_points(pc_action + action_ref)
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
-            T_goalUnAug.transform_points(res) for res in pred_dict["results"]
+            T_goalUnAug.transform_points(res + pred_ref) for res in pred_dict["results"]
         ]
         return pred_flow_world, pred_point_world, results_world
 

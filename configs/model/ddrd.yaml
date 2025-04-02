@@ -28,3 +28,13 @@ diff_type: gaussian
 diff_translation_noise_scale: False # Scale of translation noise (in meter) for diffusion, or False for disable  
 diff_rotation_noise_scale: False # scale of rotation noise (in degreee) for diffusion, or False for disable
 time_based_weighting: even # (False, 'even', 'linear', 'sigmoid')
+
+# prediction setting
+# centroid_frame: choose from ["anchor", "noisy_goal", "gmm"]
+# anchor    : we are using anchor mean as the centroid of prediction (aka the original TAX3D setting)
+# noisy_goal: we are using noisy_goal mean, or mean(goal_pc_action) + noise, as the centroid of prediction, 
+#             to train our model to be robust with GMM prediction error
+pred_ref_frame: anchor 
+ref_error_scale: 1.0 # Scale factor for GMM prediction error
+
+# TODO: GMM flags
