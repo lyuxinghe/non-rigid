@@ -36,7 +36,7 @@ def Mu_DiT_Take2_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
     print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take2_xS")
     hidden_size = 132 if use_rotary else 128
-    return Mu_DiT_Take2(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Mu_DiT_Take2(depth=5, hidden_size=hidden_size, num_heads=8, **kwargs)
 
 # TODO: clean up all unused functions
 DiT_models = {
@@ -257,9 +257,9 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
             progress=progress,
             device=self.device,
         )
-        pred_err = final_dict["sample_r"]
+        pred_r = final_dict["sample_r"]
         pred_s = final_dict["sample_s"]
-        pred = pred_s + pred_err        
+        pred = pred_s + pred_r        
         results = [res["sample_r"] + res["sample_s"] for res in results]
         pred = pred.permute(0, 2, 1)
 
@@ -353,8 +353,8 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
             )
             pred_ref = expand_pcd(pred_ref, num_samples)
             
-            pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
-            goal_point_world = T_goalUnAug.transform_points(goal_pc + pred_ref)
+            pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
+            goal_point_world = T_goalUnAug.transform_points(goal_pc)
             
             pred_point_world = pred_point_world / scaling_factor
             goal_point_world = goal_point_world / scaling_factor
@@ -607,11 +607,11 @@ class MuFrameCrossDisplacementModule(MuFrameDenseDisplacementDiffusionModule):
         pred_ref = expand_pcd(batch["pred_ref"].to(self.device), num_samples)
         action_ref = expand_pcd(batch["action_ref"].to(self.device), num_samples)
 
-        pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
+        pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
         pc_action_world = T_actionUnAug.transform_points(pc_action + action_ref)
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
-            T_goalUnAug.transform_points(res + pred_ref) for res in pred_dict["results"]
+            T_goalUnAug.transform_points(res) for res in pred_dict["results"]
         ]
         return pred_flow_world, pred_point_world, results_world
 

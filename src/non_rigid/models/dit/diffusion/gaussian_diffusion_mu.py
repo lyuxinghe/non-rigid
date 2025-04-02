@@ -601,7 +601,8 @@ class GaussianDiffusionMuFrame:
         :return: a non-differentiable batch of samples.
         """
         final = None
-        results = [{"sample_r": noise_r, "sample_s": noise_s}]
+        results = [{"sample_r": noise_r, "sample_s": noise_s}]  # NOTE: for t=T, samplr_r is actually in global frame
+        pred_ref = noise_r.clone()
         for out in self.p_sample_loop_progressive(
             model,
             shape_r,
@@ -616,8 +617,9 @@ class GaussianDiffusionMuFrame:
             progress=progress,
         ):
             final = out
-            results.append({"sample_r": final["sample_r"], "sample_s": final["sample_s"]})
-        final_dict = {"sample_r": final["sample_r"], "sample_s": final["sample_s"]}
+            # NOTE: from t=T-1, sample_r will be the action_mean_err
+            results.append({"sample_r": final["sample_r"] + pred_ref, "sample_s": final["sample_s"]})
+        final_dict = {"sample_r": final["sample_r"] + pred_ref, "sample_s": final["sample_s"]}
         return final_dict, results
 
     def p_sample_loop_progressive(
