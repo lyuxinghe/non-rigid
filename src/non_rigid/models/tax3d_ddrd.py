@@ -46,7 +46,6 @@ DiT_models = {
 }
 
 def get_model(model_cfg):
-    #rotary = "Rel3D_" if model_cfg.rotary else ""
     cross = "Cross_" if model_cfg.cross_atten else ""
     feature = "Feature_" if model_cfg.feature else ""
     encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""

@@ -24,11 +24,12 @@ from non_rigid.models.tax3d_mu import (
     MuFrameDiffusionTransformerNetwork,
     MuFrameCrossDisplacementModule,
 )
-from non_rigid.models.tax3d_v2 import (
-    TAX3Dv2Network,
-    TAX3Dv2Module,
-)
+# from non_rigid.models.tax3d_v2 import (
+#     TAX3Dv2Network,
+#     TAX3Dv2Module,
+# )
 
+from non_rigid.datasets.dedo import DedoDataModule
 from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule
 from non_rigid.datasets.rigid import RigidDataModule
 
@@ -106,16 +107,29 @@ def create_datamodule(cfg):
 
 def create_datamodule_legacy(cfg):
     # check that dataset and model types are compatible
-    if cfg.model.type != cfg.dataset.type:
+    # TODO: eventually, remove this entire code snippet
+    if "type" in cfg.dataset and cfg.model.type != cfg.dataset.type:
         raise ValueError(
             f"Model type: '{cfg.model.type}' and dataset type: '{cfg.dataset.type}' are incompatible."
         )
+    
+    # setting model-specific dataset params
+    cfg.dataset.noisy_goal = cfg.model.noisy_goal
+    cfg.dataset.center_type = cfg.model.center_type
+    cfg.dataset.action_context_center_type = cfg.model.action_context_center_type
+
+    # setting dataset-specific model params
+    cfg.model.pcd_scale = cfg.dataset.pcd_scale
 
     # TODO: Unify these flags !
     # Currently: 
     dataset_mapping = {
-        ("deform", True, False): ProcClothFlowFeatureDataModule,
-        ("deform", False, False): ProcClothFlowDataModule,
+        # ("deform", True, False): ProcClothFlowFeatureDataModule,
+        # ("deform", False, False): ProcClothFlowDataModule,
+        ("deform", True, False): DedoDataModule,
+        ("deform", False, False): DedoDataModule,
+        ("deform", True, True): DedoDataModule,
+        ("deform", False, True): DedoDataModule,
         ("rigid", True, False): RigidFeatureDataModule,
         ("rigid", False, True): RigidDataNoisyGoalModule,
         ("rigid", False, False): RigidDataModule
@@ -150,11 +164,13 @@ def create_datamodule_legacy(cfg):
     datamodule.setup(stage)
 
     # updating job config sample sizes
-    if cfg.dataset.scene:
-        job_cfg.sample_size = cfg.dataset.sample_size_action + cfg.dataset.sample_size_anchor
-    else:
-        job_cfg.sample_size = cfg.dataset.sample_size_action
-        job_cfg.sample_size_anchor = cfg.dataset.sample_size_anchor
+    # if cfg.dataset.scene:
+    #     job_cfg.sample_size = cfg.dataset.sample_size_action + cfg.dataset.sample_size_anchor
+    # else:
+    #     job_cfg.sample_size = cfg.dataset.sample_size_action
+    #     job_cfg.sample_size_anchor = cfg.dataset.sample_size_anchor
+    job_cfg.sample_size = cfg.dataset.sample_size_action
+    job_cfg.sample_size_anchor = cfg.dataset.sample_size_anchor
 
     # training-specific job config setup
     if cfg.mode == "train":

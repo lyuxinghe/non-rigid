@@ -21,111 +21,29 @@ from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
 from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
 from non_rigid.models.dit.diffusion import create_diffusion
-from non_rigid.models.dit.models import DiT_PointCloud_Unc as DiT_pcu
 from non_rigid.models.dit.models import (
-    DiT_PointCloud_Unc_Cross,
-    Rel3D_DiT_PointCloud_Unc_Cross,
     DiT_PointCloud_Cross,
-    DiT_PointCloud,
-    DiT_PointCloud_Cross_Point_Feature,
-    DiT_PointCloud_Cross_Flow_Feature,
-    PN2_DiT_PointCloud_Cross,
-    PN2_DiT_PointCloud,
-    PN2_DiT_PointCloud_Cross_Flow_Feature,
+    DiT_PointCloud_Cross_Joint,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
 
+def DiT_PointCloud_Cross_xS(**kwargs):
+    return DiT_PointCloud_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def DiT_pcu_S(**kwargs):
-    return DiT_pcu(depth=12, hidden_size=384, num_heads=6, **kwargs)
+def DiT_PointCloud_Cross_Joint_xS(**kwargs):
+    return DiT_PointCloud_Cross_Joint(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-
-def DiT_pcu_xS(**kwargs):
-    return DiT_pcu(depth=5, hidden_size=128, num_heads=4, **kwargs)
-
-
-def DiT_pcu_cross_xS(**kwargs):
-    return DiT_PointCloud_Unc_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
-
-
-def Rel3D_DiT_pcu_cross_xS(**kwargs):
-    # Embed dim divisible by 3 for 3D positional encoding and divisible by num_heads for multi-head attention
-    return Rel3D_DiT_PointCloud_Unc_Cross(
-        depth=5, hidden_size=132, num_heads=4, **kwargs
-    )
-
-def DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def DiT_PointCloud_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: DiT_PointCloud_xS")
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def DiT_PointCloud_Cross_Point_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: DiT_PointCloud_Cross_Point_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud_Cross_Point_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def DiT_PointCloud_Cross_Flow_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: DiT_PointCloud_Cross_Flow_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def PN2_DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_Cross_xS")
-    hidden_size = 132 if use_rotary else 128
-    return PN2_DiT_PointCloud_Cross(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def PN2_DiT_PointCloud_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_xS")
-    hidden_size = 132 if use_rotary else 128
-    return PN2_DiT_PointCloud(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-def PN2_DiT_PointCloud_Cross_Flow_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    print("DiffusionTransformerNetwork: PN2_DiT_PointCloud_Cross_Flow_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return PN2_DiT_PointCloud_Cross_Flow_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
-
-# TODO: clean up all unused functions
 DiT_models = {
-    "DiT_pcu_S": DiT_pcu_S,
-    "DiT_pcu_xS": DiT_pcu_xS,
-    "DiT_pcu_cross_xS": DiT_pcu_cross_xS,
-    "Rel3D_DiT_pcu_cross_xS": Rel3D_DiT_pcu_cross_xS,
-    # there is no Rel3D_DiT_pcu_xS
     "DiT_PointCloud_Cross_xS": DiT_PointCloud_Cross_xS,
-    # TODO: add the SD model here
-    "DiT_PointCloud_xS": DiT_PointCloud_xS,
-    # option 1
-    "DiT_PointCloud_Cross_Point_Feature_xS": DiT_PointCloud_Cross_Point_Feature_xS,
-    # option 2
-    "DiT_PointCloud_Cross_Flow_Feature_xS": DiT_PointCloud_Cross_Flow_Feature_xS,
-    # TAX3D+PN2 (cross-atten)
-    "PN2_DiT_PointCloud_Cross_xS": PN2_DiT_PointCloud_Cross_xS,
-    # TAX3D+PN2 (self-atten)
-    "PN2_DiT_PointCloud_xS": PN2_DiT_PointCloud_xS,
-    # Feature_TAX3D+PN2
-    "PN2_DiT_PointCloud_Cross_Flow_Feature_xS": PN2_DiT_PointCloud_Cross_Flow_Feature_xS,
-
+    "DiT_PointCloud_Cross_Joint_xS": DiT_PointCloud_Cross_Joint_xS,
 }
 
 
 def get_model(model_cfg):
-    #rotary = "Rel3D_" if model_cfg.rotary else ""
-    encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
-
-    # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
-    model_name = f"{encoder}DiT_PointCloud_Cross_{model_cfg.size}"
+    cross = "Cross_" if model_cfg.cross_atten else ""
+    joint = "Joint_" if model_cfg.joint_encode else ""
+    model_name = f"DiT_PointCloud_{cross}{joint}{model_cfg.size}"
     return DiT_models[model_name]
 
 
@@ -136,7 +54,6 @@ class DiffusionTransformerNetwork(nn.Module):
     def __init__(self, model_cfg=None):
         super().__init__()
         self.dit = get_model(model_cfg)(
-            use_rotary=model_cfg.rotary,
             in_channels=model_cfg.in_channels,
             learn_sigma=model_cfg.learn_sigma,
             model_cfg=model_cfg,
@@ -445,6 +362,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         ground_truth_scaled = ground_truth / scaling_factor
 
         # computing error metrics
+        if self.dataset_cfg.material == "deform":
+            seg = seg == 0
         rmse = flow_rmse(pred_scaled, ground_truth_scaled, mask=True, seg=seg).reshape(bs, num_samples)
         pred = pred.reshape(bs, num_samples, -1, 3)
 

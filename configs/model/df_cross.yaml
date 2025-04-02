@@ -1,18 +1,33 @@
 name: df_cross
 
-# Model settings
+#####################################################
+# Model Architecture Parameters
+#####################################################
 type: point # (flow, point) Type of model
 size: xS # (xs, s, ...) Architecture of DiT
 in_channels: 3 # Number of input channels
 learn_sigma: True # Learn sigma for diffusion
-rotary: False # Use rotary embedding for diffusion
-encoder_backbone: mlp # (mlp, pn2)
+cross_atten: True # Use cross attention for diffusion
+point_encoder: mlp # (mlp, pn2) Point cloud encoder architecture
+feature: False # If True, encode additional features
+joint_encode: False # If True, use joint encoding for point cloud feature
 
-x_encoder: mlp # Encoder current timestep x
-y_encoder: mlp # (mlp, dgcnn) Encoder for y object (e.g. anchor pcd)
-x0_encoder: mlp # (mlp, dgcnn) Encoder for x0 object (e.g. action pcd)
+#####################################################
+# Model-specific Dataset Parameters
+#####################################################
+noisy_goal: False # if True, use noisy action goal centroid
+center_type: anchor_center # [action_center, anchor_center, scene_center, none], centers the point clouds
+action_context_center_type: center # [center, random, none], centers the action context point clouds
 
-# diffusion settings
+#####################################################
+# Dataset-specific Model Parameters
+#####################################################
+# These are set by the dataset config.
+pcd_scale: null # Scale range for the point clouds
+
+#####################################################
+# Model Diffusion Parameters
+#####################################################
 diff_train_steps: 100 # Number of diffusion steps during training
 diff_inference_steps: 100 # Number of diffusion steps during inference
 diff_noise_schedule: linear # (linear, cosine) Noise schedule for diffusion
