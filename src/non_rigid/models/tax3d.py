@@ -166,7 +166,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         raise NotImplementedError("This should be implemented in the derived class.")
     
-    def update_batch_frames(self, batch, stage):
+    def update_batch_frames(self, batch, update_labels=False):
         """
         Convert data batch from world frame to prediction frame.
         """
@@ -341,40 +341,43 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             num_samples: the number of samples to generate
         """
         
-        ground_truth = batch[self.label_key].to(self.device)
+        # ground_truth = batch[self.label_key].to(self.device)
         seg = batch["seg"].to(self.device)
-        goal_pc = batch["pc"].to(self.device)
+        ground_truth_point_world = batch["pc_world"].to(self.device)
+        # goal_pc = batch["pc"].to(self.device)
         scaling_factor = self.dataset_cfg.pcd_scale_factor
 
         # re-shaping and expanding for winner-take-all
-        bs = ground_truth.shape[0]
-        ground_truth = expand_pcd(ground_truth, num_samples)
+        bs = ground_truth_point_world.shape[0]
+        # ground_truth = expand_pcd(ground_truth, num_samples)
         seg = expand_pcd(seg, num_samples)
-        goal_pc = expand_pcd(goal_pc, num_samples)
+        # goal_pc = expand_pcd(goal_pc, num_samples)
+        ground_truth_point_world = expand_pcd(ground_truth_point_world, num_samples)
 
         # generating diffusion predictions
-        # TODO: this should probably specific full_prediction=False
         pred_dict = self.predict(
-            batch, num_samples, unflatten=False, progress=True
+            batch, num_samples, unflatten=False, progress=True, full_prediction=True,
         )
-        pred = pred_dict[self.prediction_type]["pred"]
+        # pred = pred_dict[self.prediction_type]["pred"]
+        pred_point_world = pred_dict["point"]["pred_world"]
 
         # scale the pcd back to original size for error calculation
-        pred_scaled = pred / scaling_factor
-        ground_truth_scaled = ground_truth / scaling_factor
+        # pred_scaled = pred / scaling_factor
+        # ground_truth_scaled = ground_truth / scaling_factor
 
         # computing error metrics
         if self.dataset_cfg.material == "deform":
             seg = seg == 0
-        rmse = flow_rmse(pred_scaled, ground_truth_scaled, mask=True, seg=seg).reshape(bs, num_samples)
-        pred = pred.reshape(bs, num_samples, -1, 3)
+        rmse = flow_rmse(pred_point_world, ground_truth_point_world, mask=True, seg=seg).reshape(bs, num_samples)
+        pred_point_world = pred_point_world.reshape(bs, num_samples, -1, 3)
 
         # computing winner-take-all metrics
         winner = torch.argmin(rmse, dim=-1)
         rmse_wta = rmse[torch.arange(bs), winner]
-        pred_wta = pred[torch.arange(bs), winner]
+        pred_point_world_wta = pred_point_world[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
+            raise NotImplementedError("Rigid metrics not fixed yet.")
             T_goalUnAug = Transform3d(
                 matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
             )
@@ -410,13 +413,11 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
 
         else:
             return {
-                "pred": pred,
-                "pred_wta": pred_wta,
+                "pred_point_world": pred_point_world,
+                "pred_point_world_wta": pred_point_world_wta,
                 "rmse": rmse,
                 "rmse_wta": rmse_wta,
             }
-
-
 
     def log_viz_to_wandb(self, batch, pred_wta_dict, tag):
         """
@@ -429,17 +430,9 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         # pick a random sample in the batch to visualize
         viz_idx = np.random.randint(0, batch["pc"].shape[0])
-        pred_viz = pred_wta_dict["pred"][viz_idx, 0, :, :3]
-        pred_wta_viz = pred_wta_dict["pred_wta"][viz_idx, :, :3]
+        pred_action_viz = pred_wta_dict["pred_point_world"][viz_idx, 0, :, :3]
+        pred_action_wta_viz = pred_wta_dict["pred_point_world_wta"][viz_idx, :, :3]
         viz_args = self.get_viz_args(batch, viz_idx)
-
-        # getting predicted action point cloud
-        if self.prediction_type == "flow":
-            pred_action_viz = viz_args["pc_action_viz"] + pred_viz
-            pred_action_wta_viz = viz_args["pc_action_viz"] + pred_wta_viz
-        elif self.prediction_type == "point":
-            pred_action_viz = pred_viz
-            pred_action_wta_viz = pred_wta_viz
 
         # logging predicted vs ground truth point cloud
         viz_args["pred_action_viz"] = pred_action_viz
@@ -461,7 +454,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         ).long()
         
         # batch = self.update_prediction_frame_batch(batch, stage="train")
-        batch = self.update_batch_frames(batch)
+        batch = self.update_batch_frames(batch, update_labels=True)
         _, loss = self(batch, t)
         #########################################################
         # logging training metrics
@@ -503,7 +496,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
 
                 batch = next(iter(train_dataloader))  # Fetch new batch with eval_mode=True
                 # batch = self.update_prediction_frame_batch(batch, stage="inference")
-                batch = self.update_batch_frames(batch)
+                batch = self.update_batch_frames(batch, update_labels=True)
 
                 # TODO: Debug why without this line, it will rasie gpu/cpu different device error
                 batch = {k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
@@ -555,7 +548,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         with torch.no_grad():
             # winner-take-all predictions
             # batch = self.update_prediction_frame_batch(batch, stage="inference")
-            batch = self.update_batch_frames(batch)
+            batch = self.update_batch_frames(batch, update_labels=True)
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
         
         ####################################################
@@ -677,6 +670,13 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
 
         # Updating labels, if necessary.
         if update_labels:
+            # Compute ground truth point cloud in world frame.
+            T_goal2world = Transform3d(
+                matrix=batch["T_goal2world"]#.to(self.device)
+            )
+            batch["pc_world"] = T_goal2world.transform_points(batch["pc"])
+
+            # Put point and flow labels in prediction frame.
             batch["pc"] = batch["pc"] - pred_frame
             batch["flow"] = batch["flow"] - pred_frame + action_context_frame
         
@@ -686,11 +686,29 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         
     def get_viz_args(self, batch, viz_idx):
         """
-        Get visualization arguments for wandb logging.
+        Get visualization arguments for wandb logging. Point clouds are visualized in the world 
+        frame for consistency.
         """
-        pc_pos_viz = batch["pc"][viz_idx, :, :3]
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
+
+        pc_pos_viz = batch["pc_world"][viz_idx, :, :3]
         pc_action_viz = batch["pc_action"][viz_idx, :, :3]
         pc_anchor_viz = batch["pc_anchor"][viz_idx, :, :3]
+
+        # Put action and anchor point clouds in the world frame.
+        pred_frame = batch["pred_frame"][viz_idx, :, :3]
+        action_context_frame = batch["action_context_frame"][viz_idx, :, :3]
+
+        T_action2world = Transform3d(
+            matrix=batch["T_action2world"][viz_idx].to(self.device)
+        )
+        T_goal2world = Transform3d(
+            matrix=batch["T_goal2world"][viz_idx].to(self.device)
+        )
+
+        pc_action_viz = T_action2world.transform_points(pc_action_viz + action_context_frame)
+        pc_anchor_viz = T_goal2world.transform_points(pc_anchor_viz + pred_frame)
+
         viz_args = {
             "pc_pos_viz": pc_pos_viz,
             "pc_action_viz": pc_action_viz,
