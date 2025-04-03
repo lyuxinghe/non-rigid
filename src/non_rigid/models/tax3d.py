@@ -182,8 +182,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         Forward pass to compute diffusion training loss.
         """
-        # assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
-        # pred_ref = batch["pred_ref"]
         assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
         
         ground_truth = batch[self.label_key].permute(0, 2, 1) # channel first
@@ -214,9 +212,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             progress: whether to show progress bar
             full_prediction: whether to return full prediction (flow and point, goal and world frame)
         """
-        # TODO: replace bs with batch_size?
-        # assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
-        # pred_ref = batch["pred_ref"]
         assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
         
         bs, sample_size = batch["pc_action"].shape[:2]
