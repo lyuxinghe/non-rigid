@@ -6,6 +6,7 @@ import omegaconf
 import plotly.express as px
 import rpad.pyg.nets.dgcnn as dgcnn
 import rpad.visualize_3d.plots as vpl
+import plotly.graph_objects as go
 import torch
 import torch.nn.functional as F
 import torch_geometric.data as tgd
@@ -78,7 +79,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         self.wandb_cfg = cfg.wandb
         self.prediction_type = self.model_cfg.type # flow or point
         self.mode = cfg.mode # train or eval
-        self.pred_ref_frame = self.model_cfg.pred_ref_frame
+        self.pred_frame = self.model_cfg.pred_frame
+        self.noisy_goal_scale = self.model_cfg.noisy_goal_scale
 
         # prediction type-specific processing
         # TODO: eventually, this should be removed by updating dataset to use "point" instead of "pc"
@@ -89,13 +91,12 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid prediction type: {self.prediction_type}")
         
-        if self.pred_ref_frame == "noisy_goal":
-            assert self.model_cfg.ref_error_scale != 0.0
-            self.ref_error_scale = self.model_cfg.ref_error_scale
-        elif self.pred_ref_frame == "anchor":
-            self.ref_error_scale = 0.0
+        if self.pred_frame == "noisy_goal":
+            assert self.model_cfg.noisy_goal_scale > 0.0
+        elif self.pred_frame == "anchor_center":
+            assert self.model_cfg.noisy_goal_scale == 0.0
         else:
-            raise ValueError(f"Invalid prediction type: {self.pred_ref_frame}")
+            raise ValueError(f"Invalid prediction type: {self.pred_frame}")
 
         # mode-specific processing
         if self.mode == "train":
@@ -138,8 +139,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         print(f"### Translation Noise Scale: {self.diff_translation_noise_scale}")
         print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
         print("Initializing TAX3D Dense Displacement Diffusion Module")
-        print(f"### Prediction Reference Frame: {self.pred_ref_frame}")
-        print(f"### Referemce Noise Scale: {self.ref_error_scale}")
+        print(f"### Prediction Frame: {self.pred_frame}")
+        print(f"### Prediction Frame Noise Scale: {self.noisy_goal_scale}")
 
     def configure_optimizers(self):
         assert self.mode == "train", "Can only configure optimizers in training mode."
@@ -165,7 +166,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         raise NotImplementedError("This should be implemented in the derived class.")
     
-    def update_prediction_frame_batch(self, batch, stage):
+    def update_batch_frames(self, batch, stage):
         """
         Convert data batch from world frame to prediction frame.
         """
@@ -181,8 +182,9 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         Forward pass to compute diffusion training loss.
         """
-        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
-        pred_ref = batch["pred_ref"]
+        # assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
+        # pred_ref = batch["pred_ref"]
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
         
         ground_truth = batch[self.label_key].permute(0, 2, 1) # channel first
         model_kwargs = self.get_model_kwargs(batch)
@@ -213,8 +215,9 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             full_prediction: whether to return full prediction (flow and point, goal and world frame)
         """
         # TODO: replace bs with batch_size?
-        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
-        pred_ref = batch["pred_ref"]
+        # assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
+        # pred_ref = batch["pred_ref"]
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
         
         bs, sample_size = batch["pc_action"].shape[:2]
         model_kwargs = self.get_model_kwargs(batch, num_samples)
@@ -320,7 +323,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
 
             # compute world frame predictions
             pred_flow_world, pred_point_world, results_world = self.get_world_preds(
-                batch, num_samples, pc_action, pred_dict)
+                batch, num_samples, pc_action, pred_dict
+            )
             
             pred_dict["flow"]["pred_world"] = pred_flow_world
             pred_dict["point"]["pred_world"] = pred_point_world
@@ -336,8 +340,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             batch: the input batch
             num_samples: the number of samples to generate
         """
-        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
-        pred_ref = batch["pred_ref"]
         
         ground_truth = batch[self.label_key].to(self.device)
         seg = batch["seg"].to(self.device)
@@ -458,8 +460,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             0, self.diff_steps, (self.batch_size,), device=self.device
         ).long()
         
-        batch = self.update_prediction_frame_batch(batch, stage="train")
-                
+        # batch = self.update_prediction_frame_batch(batch, stage="train")
+        batch = self.update_batch_frames(batch)
         _, loss = self(batch, t)
         #########################################################
         # logging training metrics
@@ -500,7 +502,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
                 train_dataloader.dataset.set_eval_mode(True)
 
                 batch = next(iter(train_dataloader))  # Fetch new batch with eval_mode=True
-                batch = self.update_prediction_frame_batch(batch, stage="inference")
+                # batch = self.update_prediction_frame_batch(batch, stage="inference")
+                batch = self.update_batch_frames(batch)
 
                 # TODO: Debug why without this line, it will rasie gpu/cpu different device error
                 batch = {k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
@@ -551,7 +554,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         self.eval()
         with torch.no_grad():
             # winner-take-all predictions
-            batch = self.update_prediction_frame_batch(batch, stage="inference")
+            # batch = self.update_prediction_frame_batch(batch, stage="inference")
+            batch = self.update_batch_frames(batch)
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
         
         ####################################################
@@ -592,7 +596,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         if self.dataset_cfg.material == "rigid":
             # winner-take-all predictions
-            batch = self.update_prediction_frame_batch(batch, stage="inference")
+            # batch = self.update_prediction_frame_batch(batch, stage="inference")
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
             return {
                 "rmse": pred_wta_dict["rmse"],
@@ -610,53 +614,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
                 "rmse_wta": pred_wta_dict["rmse_wta"],
             }
     
-
-'''
-class SceneDisplacementModule(DenseDisplacementDiffusionModule):
-    """
-    Scene-level DDD module. Applies self-attention to the entire scene.
-    """
-    def __init__(self, network, cfg) -> None:
-        super().__init__(network, cfg)
-
-    def get_model_kwargs(self, batch, num_samples=None):
-        pc_action = batch["pc_action"].to(self.device)
-        if num_samples is not None:
-            # expand point clouds if num_samples is provided; used for WTA predictions
-            pc_action = expand_pcd(pc_action, num_samples)
-
-        pc_action = pc_action.permute(0, 2, 1) # channel first
-        model_kwargs = dict(x0=pc_action)
-        return model_kwargs
-    
-    def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
-        """
-        Get world-frame predictions from the given batch and predictions.
-        """
-        T_goal2world = Transform3d(
-            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
-        )
-
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
-        pc_action_world = T_goal2world.transform_points(pc_action)
-        pred_flow_world = pred_point_world - pc_action_world
-        results_world = [
-            T_goal2world.transform_points(res) for res in pred_dict["results"]
-        ]
-        return pred_flow_world, pred_point_world, results_world
-    
-    def get_viz_args(self, batch, viz_idx):
-        """
-        Get visualization arguments for wandb logging.
-        """
-        pc_pos_viz = batch["pc"][viz_idx, :, :3]
-        pc_action_viz = batch["pc_action"][viz_idx, :, :3]
-        viz_args = {
-            "pc_pos_viz": pc_pos_viz,
-            "pc_action_viz": pc_action_viz,
-        }
-        return viz_args
-'''
 class CrossDisplacementModule(DenseDisplacementDiffusionModule):
     """
     Object-centric DDD module. Applies cross attention between action and anchor objects.
@@ -682,54 +639,49 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         """
         Get world-frame predictions from the given batch and predictions.
         """
-        T_actionUnAug = Transform3d(
-            matrix=expand_pcd(batch["T_actionUnAug"].to(self.device), num_samples)
+        T_action2world = Transform3d(
+            matrix=expand_pcd(batch["T_action2world"].to(self.device), num_samples)
         )
-        T_goalUnAug = Transform3d(
-            matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
+        T_goal2world = Transform3d(
+            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
         )
 
-        pred_ref = expand_pcd(batch["pred_ref"].to(self.device), num_samples)
-        action_ref = expand_pcd(batch["action_ref"].to(self.device), num_samples)
+        pred_frame = expand_pcd(batch["pred_frame"].to(self.device), num_samples)
+        action_context_frame = expand_pcd(batch["action_context_frame"].to(self.device), num_samples)
 
-        pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
-        pc_action_world = T_actionUnAug.transform_points(pc_action + action_ref)
+        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"] + pred_frame)
+        pc_action_world = T_action2world.transform_points(pc_action + action_context_frame)
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
-            T_goalUnAug.transform_points(res + pred_ref) for res in pred_dict["results"]
+            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results"]
         ]
         return pred_flow_world, pred_point_world, results_world
 
-    def update_prediction_frame_batch(self, batch, stage):
-        # TODO: for now, since gmm is not available, we will use noisy goal to simulate it
-        if self.pred_ref_frame == "anchor":
-            pred_ref = batch["pc_anchor"].mean(axis=1, keepdim=True)
-        elif self.pred_ref_frame == "noisy_goal":
-            if stage == "train":
-                # we are adding noise to the goal to train model to robust to gmm error
-                pred_ref = batch["pc"].mean(axis=1, keepdim=True)
-                pred_ref = pred_ref + self.ref_error_scale * torch.randn_like(pred_ref)
-            elif stage == "inference":
-                # for now, we are using noisy goal to simulate gmm
-                pred_ref = batch["pc"].mean(axis=1, keepdim=True)
-                pred_ref = pred_ref + self.ref_error_scale * torch.randn_like(pred_ref)
-            else:
-                raise ValueError(f"Invalid stage: {stage}")
+    def update_batch_frames(self, batch, update_labels=False):
+        # Processing prediction frame.
+        if self.model_cfg.pred_frame == "anchor_center":
+            pred_frame = batch["pc_anchor"].mean(axis=1, keepdim=True)
+        elif self.model_cfg.pred_frame == "noisy_goal":
+            pred_frame = batch["noisy_goal"].unsqueeze(1)
         else:
-            raise ValueError(f"Invalid prediction reference frame: {self.pred_ref_frame}")
+            raise ValueError(f"Invalid prediction frame: {self.model_cfg.pred_frame}")
 
-        action_mean = batch["pc_action"].mean(axis=1, keepdim=True)
-        anchor_mean = pred_ref
-                
-        batch["pc_action"] = batch["pc_action"] - action_mean
-        batch["pc_anchor"] = batch["pc_anchor"] - anchor_mean
+        # Processing action context frame.
+        if self.model_cfg.action_context_frame == "action_center":
+            action_context_frame = batch["pc_action"].mean(axis=1, keepdim=True)
+        else:
+            raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
         
-        batch["pc"] = batch["pc"] - anchor_mean
-        batch["flow"] = batch["flow"] - anchor_mean + action_mean
-        
-        batch["pred_ref"] = pred_ref
-        batch["action_ref"] = action_mean
+        batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
+        batch["pc_action"] = batch["pc_action"] - action_context_frame
 
+        # Updating labels, if necessary.
+        if update_labels:
+            batch["pc"] = batch["pc"] - pred_frame
+            batch["flow"] = batch["flow"] - pred_frame + action_context_frame
+        
+        batch["pred_frame"] = pred_frame
+        batch["action_context_frame"] = action_context_frame
         return batch
         
     def get_viz_args(self, batch, viz_idx):
@@ -745,76 +697,3 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
             "pc_anchor_viz": pc_anchor_viz,
         }
         return viz_args
-
-'''
-class FeatureCrossDisplacementModule(DenseDisplacementDiffusionModule):
-    """
-    Object-centric DDD module. Applies cross attention between action and anchor objects.
-    """
-    def __init__(self, network, cfg) -> None:
-        super().__init__(network, cfg)
-
-    def get_model_kwargs(self, batch, num_samples=None):
-        pc_action = batch["pc_action"].to(self.device)
-        pc_anchor = batch["pc_anchor"].to(self.device)
-        P_A = batch["P_A"].to(self.device)
-        P_B = batch["P_B"].to(self.device)
-        y_ref = batch["y"].to(self.device)
-        y_action = batch["y_action"].to(self.device)
-        P_A_one_hot = batch["P_A_one_hot"].to(self.device)
-        P_B_one_hot = batch["P_B_one_hot"].to(self.device)
-
-        if num_samples is not None:
-            # expand point clouds if num_samples is provided; used for WTA predictions
-            pc_action = expand_pcd(pc_action, num_samples)
-            pc_anchor = expand_pcd(pc_anchor, num_samples)
-            P_A = expand_pcd(P_A, num_samples)
-            P_B = expand_pcd(P_B, num_samples)
-            y_ref = expand_pcd(y_ref, num_samples)
-            y_action = expand_pcd(y_action, num_samples)
-            P_A_one_hot = expand_pcd(P_A_one_hot, num_samples)
-            P_B_one_hot = expand_pcd(P_B_one_hot, num_samples)
-
-        pc_action = pc_action.permute(0, 2, 1)  # channel first
-        pc_anchor = pc_anchor.permute(0, 2, 1)  # channel first
-        P_A = P_A.permute(0, 2, 1)              # channel first
-        P_B = P_B.permute(0, 2, 1)              # channel first
-        P_A_one_hot = P_A_one_hot.permute(0, 2, 1)    # channel first
-        P_B_one_hot = P_B_one_hot.permute(0, 2, 1)    # channel first
-
-        model_kwargs = dict(x0=pc_action, y=pc_anchor, P_A=P_A, P_B=P_B, y_ref=y_ref, y_action=y_action, P_A_one_hot=P_A_one_hot, P_B_one_hot=P_B_one_hot)
-        return model_kwargs
-    
-    def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
-        """
-        Get world-frame predictions from the given batch and predictions.
-        """
-        T_action2world = Transform3d(
-            matrix=expand_pcd(batch["T_action2world"].to(self.device), num_samples)
-        )
-        T_goal2world = Transform3d(
-            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
-        )
-
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
-        pc_action_world = T_action2world.transform_points(pc_action)
-        pred_flow_world = pred_point_world - pc_action_world
-        results_world = [
-            T_goal2world.transform_points(res) for res in pred_dict["results"]
-        ]
-        return pred_flow_world, pred_point_world, results_world
-
-    def get_viz_args(self, batch, viz_idx):
-        """
-        Get visualization arguments for wandb logging.
-        """
-        pc_pos_viz = batch["pc"][viz_idx, :, :3]
-        pc_action_viz = batch["pc_action"][viz_idx, :, :3]
-        pc_anchor_viz = batch["pc_anchor"][viz_idx, :, :3]
-        viz_args = {
-            "pc_pos_viz": pc_pos_viz,
-            "pc_action_viz": pc_action_viz,
-            "pc_anchor_viz": pc_anchor_viz,
-        }
-        return viz_args
-'''

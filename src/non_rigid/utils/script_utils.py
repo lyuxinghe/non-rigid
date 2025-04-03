@@ -62,14 +62,19 @@ def create_model(cfg):
 
 
 def create_datamodule(cfg):
-    # check that dataset and model types are compatible
-    if cfg.model.type != cfg.dataset.type:
-        raise ValueError(
-            f"Model type: '{cfg.model.type}' and dataset type: '{cfg.dataset.type}' are incompatible."
-        )
+    # setting model-specific dataset params
+    # cfg.dataset.noisy_goal = cfg.model.noisy_goal
+    # cfg.dataset.center_type = cfg.model.center_type
+    # cfg.dataset.action_context_center_type = cfg.model.action_context_center_type
+    cfg.dataset.pred_frame = cfg.model.pred_frame
+    cfg.dataset.noisy_goal_scale = cfg.model.noisy_goal_scale
+    cfg.dataset.action_context_frame = cfg.model.action_context_frame
+
+    # setting dataset-specific model params
+    cfg.model.pcd_scale = cfg.dataset.pcd_scale
 
     if cfg.dataset.material == "deform":
-        datamodule_fn = ProcClothFlowDataModule
+        datamodule_fn = DedoDataModule
     elif cfg.dataset.material == "rigid":
         datamodule_fn = RigidDataModule
 

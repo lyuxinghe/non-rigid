@@ -14,16 +14,20 @@ sample_size_anchor: 512
 downsample_type: fps
 
 #####################################################
-# Model Data-processing Parameters
+# Model Dataset/Data-processing Parameters
 #####################################################
-# These are set by the model config.
-noisy_goal: null # if True, use noisy action goal centroid
-center_type: null # [action_center, anchor_center, scene_center, none], centers the point clouds
-action_context_center_type: null # [center, random, none], centers the action context point clouds
+# These are shared and overridden by the model config.
+# noisy_goal: null # if True, use noisy action goal centroid
+# center_type: null # [action_center, anchor_center, scene_center, none], centers the point clouds
+# action_context_center_type: null # [center, random, none], centers the action context point clouds
+pred_frame: null # frame for goal prediction
+noisy_goal_scale: null # noise scale for simulated GMM error
+action_context_frame: null # frame for action context
 
 #####################################################
 # Dataset-specific Model Parameters
 #####################################################
+# These override the model config.
 pcd_scale: 12.0 # Scale range for the point clouds
 
 #####################################################

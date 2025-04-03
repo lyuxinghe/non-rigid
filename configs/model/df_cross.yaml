@@ -13,16 +13,21 @@ feature: False # If True, encode additional features
 joint_encode: False # If True, use joint encoding for point cloud feature
 
 #####################################################
-# Model-specific Dataset Parameters
+# Model-specific Dataset/Data-processing Parameters
 #####################################################
-noisy_goal: False # if True, use noisy action goal centroid
-center_type: anchor_center # [action_center, anchor_center, scene_center, none], centers the point clouds
-action_context_center_type: center # [center, random, none], centers the action context point clouds
+# These override the dataset config.
+# noisy_goal: False # if True, use noisy action goal centroid
+# center_type: anchor_center # [action_center, anchor_center, scene_center, none], centers the point clouds
+# action_context_center_type: center # [center, random, none], centers the action context point clouds
+pred_frame: anchor_center # [anchor_center, noisy_goal] frame for goal prediction
+noisy_goal_scale: 0.0 # scale for simulated noisy goal error
+action_context_frame: action_center # [action_center] frame for action context
+
 
 #####################################################
 # Dataset-specific Model Parameters
 #####################################################
-# These are set by the dataset config.
+# These are shared and overriden by the dataset config.
 pcd_scale: null # Scale range for the point clouds
 
 #####################################################
@@ -41,7 +46,7 @@ diff_rotation_noise_scale: False # scale of rotation noise (in degreee) for diff
 # anchor    : we are using anchor mean as the centroid of prediction (aka the original TAX3D setting)
 # noisy_goal: we are using noisy_goal mean, or mean(goal_pc_action) + noise, as the centroid of prediction, 
 #             to train our model to be robust with GMM prediction error
-pred_ref_frame: anchor 
-ref_error_scale: 1.0 # Scale factor for GMM prediction error
+# pred_ref_frame: anchor 
+# ref_error_scale: 1.0 # Scale factor for GMM prediction error
 
 # TODO: GMM flags
