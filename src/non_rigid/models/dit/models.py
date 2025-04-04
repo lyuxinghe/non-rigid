@@ -19,7 +19,6 @@ from typing import Optional
 
 from non_rigid.nets.dgcnn import DGCNN
 from non_rigid.nets.pn2 import PN2Dense, PN2DenseParams
-from non_rigid.models.dit.relative_encoding import RotaryPositionEncoding3D, MultiheadRelativeAttentionWrapper
 
 #import rpad.pyg.nets.pointnet2 as pnp_original
 import torch_geometric.data as tgd
@@ -914,7 +913,7 @@ class DiT_PointCloud_Cross_Joint(nn.Module):
 #                                DDRD DiT Models                                #
 #################################################################################
 
-class Joint_DiT_Deformation_Reference_Cross_Feature(nn.Module):
+class Joint_DiT_Deformation_Reference_Cross(nn.Module):
     """
     Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention.
     """
@@ -1052,11 +1051,6 @@ class Joint_DiT_Deformation_Reference_Cross_Feature(nn.Module):
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
-
         # encode x, y, x0 features
         x_emb = self.x_embedder(x)
 
@@ -1087,8 +1081,8 @@ class Joint_DiT_Deformation_Reference_Cross_Feature(nn.Module):
 
         return x, delta_center
 
-'''
-class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
+
+class Separate_DiT_Deformation_Reference_Cross(nn.Module):
     """
     Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention.
     """
@@ -1262,26 +1256,6 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        # noise-centering, if enabled
-        
-        #if self.model_cfg.type == "point":
-        #    delta_center = torch.mean(x, dim=2, keepdim=True)
-        #    x = x - delta_center
-        #    y = y - delta_center
-        #    x0 = x0 - delta_center
-        #elif self.model_cfg.type == "flow":
-        #    reconstruction = x + x0
-        #    delta_center = torch.mean(reconstruction, dim=2, keepdim=True)
-        #    x = x - delta_center
-        #    y = y - delta_center
-        #    x0 = x0 - delta_center
-        
-
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
-
         # encode x, y, x0 features
         
         x = xr_t + xs_t
@@ -1312,15 +1286,9 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks_r:
-            if self.model_cfg.rotary:
-                xr = block(xr, y_emb, t_emb, x_pos, y_pos)
-            else:
-                xr = block(xr, y_emb, t_emb)
+            xr = block(xr, y_emb, t_emb)
         for block in self.blocks_s:
-            if self.model_cfg.rotary:
-                xs = block(xs, y_emb, t_emb, x_pos, y_pos)
-            else:
-                xs = block(xs, y_emb, t_emb)
+            xs = block(xs, y_emb, t_emb)
         # (8,512, 128)
 
         # final layer
@@ -1332,9 +1300,9 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
         xr = xr.permute(0, 2, 1)
 
         return xr, xs
+
+
 '''
-
-
 class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
     """
     Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention.
@@ -1356,12 +1324,6 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
         self.out_channels = 6 if learn_sigma else 3
         self.num_heads = num_heads
         self.model_cfg = model_cfg
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
@@ -1431,10 +1393,9 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -1558,7 +1519,8 @@ class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
         xr = xr.permute(0, 2, 1)
 
         return xr, xs
-
+'''
+        
 #################################################################################
 #                               Mu-Frame Model                                  #
 #################################################################################
@@ -1583,12 +1545,6 @@ class Mu_DiT_Take1(nn.Module):
         self.out_channels = 6 if learn_sigma else 3
         self.num_heads = num_heads
         self.model_cfg = model_cfg
-
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
 
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
@@ -1667,16 +1623,15 @@ class Mu_DiT_Take1(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks_r = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
         self.blocks_s = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -1762,11 +1717,6 @@ class Mu_DiT_Take1(nn.Module):
             y = y - delta_center
             x0 = x0 - delta_center
         '''
-
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
 
         y = y - xr_t
 
@@ -1982,12 +1932,6 @@ class Mu_DiT_Take2(nn.Module):
             y = y - delta_center
             x0 = x0 - delta_center
         '''
-
-        # rotary position embedding, if enabled
-        if self.model_cfg.rotary:
-            x_pos = self.rotary_pos_enc(x.permute(0, 2, 1))
-            y_pos = self.rotary_pos_enc(y.permute(0, 2, 1))
-
         y = y - xr_t
 
         # encode x, y, x0 features        
@@ -2012,10 +1956,7 @@ class Mu_DiT_Take2(nn.Module):
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            if self.model_cfg.rotary:
-                xs = block(xs, y_emb, t_emb, x_pos, y_pos)
-            else:
-                xs = block(xs, y_emb, t_emb)
+            xs = block(xs, y_emb, t_emb)
         # (8,512, 128)
         
         xr_token = xs[:, -1:, :]

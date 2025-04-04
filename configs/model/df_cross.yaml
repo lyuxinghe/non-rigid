@@ -20,7 +20,6 @@ pred_frame: anchor_center # [anchor_center, noisy_goal] frame for goal predictio
 noisy_goal_scale: 0.0 # scale for simulated noisy goal error
 action_context_frame: action_center # [action_center] frame for action context
 
-
 #####################################################
 # Dataset-specific Model Parameters
 #####################################################

@@ -1,15 +1,12 @@
+from typing import Any, Dict
 
 import lightning as L
 import numpy as np
 import omegaconf
-import plotly.express as px
-import rpad.pyg.nets.dgcnn as dgcnn
 import rpad.visualize_3d.plots as vpl
+import plotly.graph_objects as go
 import torch
 import torch.nn.functional as F
-import torch_geometric.data as tgd
-import torch_geometric.transforms as tgt
-import torchvision as tv
 import wandb
 from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
@@ -21,38 +18,35 @@ from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
 from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
 from non_rigid.models.dit.diffusion import create_diffusion_ddrd_joint, create_diffusion_ddrd_separate
 from non_rigid.models.dit.models import (
-    Joint_DiT_Deformation_Reference_Cross_Feature,
-    Separate_DiT_Deformation_Reference_Cross_Feature,
+    Joint_DiT_Deformation_Reference_Cross,
+    Separate_DiT_Deformation_Reference_Cross,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
 
 
-def Joint_DiT_Deformation_Reference_Cross_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def Joint_DiT_Deformation_Reference_Cross_xS(**kwargs):
     print("DiffusionTransformerNetwork: Joint_DiT_Deformation_Reference_Cross_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return Joint_DiT_Deformation_Reference_Cross_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Joint_DiT_Deformation_Reference_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def Separate_DiT_Deformation_Reference_Cross_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def Separate_DiT_Deformation_Reference_Cross_xS(**kwargs):
     print("DiffusionTransformerNetwork: Separate_DiT_Deformation_Reference_Cross_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return Separate_DiT_Deformation_Reference_Cross_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Separate_DiT_Deformation_Reference_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
 DiT_models = {
-    "Joint_DiT_Deformation_Reference_Cross_Feature_xS": Joint_DiT_Deformation_Reference_Cross_Feature_xS,
-    "Separate_DiT_Deformation_Reference_Cross_Feature_xS": Separate_DiT_Deformation_Reference_Cross_Feature_xS,
+    "Joint_DiT_Deformation_Reference_Cross_xS": Joint_DiT_Deformation_Reference_Cross_xS,
+    "Separate_DiT_Deformation_Reference_Cross_xS": Separate_DiT_Deformation_Reference_Cross_xS,
 }
 
 def get_model(model_cfg):
     cross = "Cross_" if model_cfg.cross_atten else ""
-    feature = "Feature_" if model_cfg.feature else ""
-    encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
+    joint = "Joint_" if model_cfg.joint_encode else ""
+    # feature = "Feature_" if model_cfg.feature else ""
+    # encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
 
     model_take = "Joint_" if model_cfg.model_take == "joint" else "Separate_" if model_cfg.model_take == "separate" else ""
     # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
-    model_name = f"{model_take}{encoder}DiT_Deformation_Reference_{cross}{feature}{model_cfg.size}"
+    model_name = f"{model_take}DiT_Deformation_Reference_{cross}{model_cfg.size}"
     return DiT_models[model_name]
 
 class DeformationReferenceDiffusionTransformerNetwork(nn.Module):
@@ -62,7 +56,6 @@ class DeformationReferenceDiffusionTransformerNetwork(nn.Module):
     def __init__(self, model_cfg=None):
         super().__init__()
         self.dit = get_model(model_cfg)(
-            use_rotary=model_cfg.rotary,
             in_channels=model_cfg.in_channels,
             learn_sigma=model_cfg.learn_sigma,
             model_cfg=model_cfg,
@@ -97,7 +90,8 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         self.wandb_cfg = cfg.wandb
         self.prediction_type = self.model_cfg.type # flow or point
         self.mode = cfg.mode # train or eval
-        self.pred_ref_frame = self.model_cfg.pred_ref_frame
+        self.pred_frame = self.model_cfg.pred_frame
+        self.noisy_goal_scale = self.model_cfg.noisy_goal_scale
 
         # prediction type-specific processing
         # TODO: eventually, this should be removed by updating dataset to use "point" instead of "pc"
@@ -107,14 +101,13 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
             self.label_key = "pc"
         else:
             raise ValueError(f"Invalid prediction type: {self.prediction_type}")
-
-        if self.pred_ref_frame == "noisy_goal":
-            assert self.model_cfg.ref_error_scale != 0.0
-            self.ref_error_scale = self.model_cfg.ref_error_scale
-        elif self.pred_ref_frame == "anchor":
-            self.ref_error_scale = 0.0
+        
+        if self.pred_frame == "noisy_goal":
+            assert self.model_cfg.noisy_goal_scale > 0.0
+        elif self.pred_frame == "anchor_center":
+            assert self.model_cfg.noisy_goal_scale == 0.0
         else:
-            raise ValueError(f"Invalid prediction type: {self.pred_ref_frame}")
+            raise ValueError(f"Invalid prediction type: {self.pred_frame}")
 
         # mode-specific processing
         if self.mode == "train":

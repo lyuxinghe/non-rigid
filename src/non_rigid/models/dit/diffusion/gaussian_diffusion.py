@@ -414,7 +414,7 @@ class GaussianDiffusion:
         if cond_fn is not None:
             out["mean"] = self.condition_mean(cond_fn, out, x, t, model_kwargs=model_kwargs)
         sample = out["mean"] + nonzero_mask * th.exp(0.5 * out["log_variance"]) * noise
-        return {"sample": sample, "pred_xstart": out["pred_xstart"]}
+        return {"sample": sample, "pred_xstart": out["pred_xstart"], "extra": out["extra"]}
 
     def p_sample_loop(
         self,
@@ -448,6 +448,7 @@ class GaussianDiffusion:
         """
         final = None
         results = [noise]
+        extras = []
         for sample in self.p_sample_loop_progressive(
             model,
             shape,
@@ -461,7 +462,8 @@ class GaussianDiffusion:
         ):
             final = sample
             results.append(final["sample"])
-        return final["sample"], results
+            extras.append(final["extra"])
+        return final["sample"], results, extras
 
     def p_sample_loop_progressive(
         self,
@@ -827,6 +829,9 @@ class GaussianDiffusion:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
             model_output = model(x_t, t, **model_kwargs)
+
+            if isinstance(model_output, tuple):
+                model_out, _ = model_output
 
             if self.model_var_type in [
                 ModelVarType.LEARNED,

@@ -3,15 +3,10 @@ from typing import Any, Dict
 import lightning as L
 import numpy as np
 import omegaconf
-import plotly.express as px
-import rpad.pyg.nets.dgcnn as dgcnn
 import rpad.visualize_3d.plots as vpl
 import plotly.graph_objects as go
 import torch
 import torch.nn.functional as F
-import torch_geometric.data as tgd
-import torch_geometric.transforms as tgt
-import torchvision as tv
 import wandb
 from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
@@ -273,7 +268,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         #trans_noise_scale = torch.tensor(0.6, device=self.device)
         #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device) * torch.sqrt(1 + trans_noise_scale)
 
-        pred, results = self.diffusion.p_sample_loop(
+        pred, results, _ = self.diffusion.p_sample_loop(
             self.network,
             z.shape,
             z,

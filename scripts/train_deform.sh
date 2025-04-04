@@ -34,40 +34,10 @@ elif [ $MODEL_TYPE == "cross_point" ]; then
 
   MODEL_PARAMS="model=df_cross model.type=point"
 
-elif [ $MODEL_TYPE == "feature_df_cross" ]; then
-  echo "Training feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=feature_df_cross model.type=flow"
-
-elif [ $MODEL_TYPE == "pn2_df_cross" ]; then
-  echo "Training pointnet++ w/ cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=pn2_df_cross model.type=flow"
-
-elif [ $MODEL_TYPE == "pn2_feature_df_cross" ]; then
-  echo "Training pointnet++ w/ feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=pn2_feature_df_cross model.type=flow"
-
-elif [ $MODEL_TYPE == "ddrd_point_joint" ]; then
-  echo "Training DDRD point joint model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=ddrd model.type=point model.model_take=joint"
-
-elif [ $MODEL_TYPE == "ddrd_flow_joint" ]; then
-  echo "Training DDRD flow joint model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=ddrd model.type=flow model.model_take=joint"
-
-elif [ $MODEL_TYPE == "ddrd_point_separate" ]; then
-  echo "Training DDRD point separate model on dataset $DATASET_NAME with command: $COMMAND."
+elif [ $MODEL_TYPE == "ddrd" ]; then
+  echo "Training shape-frame model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=ddrd model.type=point model.model_take=separate"
-
-elif [ $MODEL_TYPE == "ddrd_flow_separate" ]; then
-  echo "Training DDRD flow separate model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=ddrd model.type=flow model.model_take=separate"
 
 fi
 
