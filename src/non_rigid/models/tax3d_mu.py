@@ -21,7 +21,7 @@ from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
 from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
 from non_rigid.models.dit.diffusion import create_diffusion_mu
-from non_rigid.models.dit.models import Mu_DiT_Take1, Mu_DiT_Take2
+from non_rigid.models.dit.models import Mu_DiT_Take1, Mu_DiT_Take2, Mu_DiT_Take3, Mu_DiT_Take4
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
 
@@ -36,18 +36,41 @@ def Mu_DiT_Take2_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
     print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take2_xS")
     hidden_size = 132 if use_rotary else 128
-    return Mu_DiT_Take2(depth=5, hidden_size=hidden_size, num_heads=8, **kwargs)
+    return Mu_DiT_Take2(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+
+def Mu_DiT_Take3_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take3_xS")
+    hidden_size = 132 if use_rotary else 128
+    return Mu_DiT_Take3(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+
+def Mu_DiT_Take4_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take4_xS")
+    hidden_size = 132 if use_rotary else 128
+    return Mu_DiT_Take4(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
 # TODO: clean up all unused functions
 DiT_models = {
     "Mu_DiT_Take1_xS": Mu_DiT_Take1_xS,
     "Mu_DiT_Take2_xS": Mu_DiT_Take2_xS,
+    "Mu_DiT_Take3_xS": Mu_DiT_Take3_xS,
+    "Mu_DiT_Take4_xS": Mu_DiT_Take4_xS,
 }
 
 
 def get_model(model_cfg):
     #rotary = "Rel3D_" if model_cfg.rotary else ""
-    model_take = "Take1" if model_cfg.model_take == 1 else "Take2"
+    if model_cfg.model_take == 1:
+        model_take = "Take1"
+    elif model_cfg.model_take == 2:
+        model_take = "Take2"
+    elif model_cfg.model_take == 3:
+        model_take = "Take3"
+    elif model_cfg.model_take == 4:
+        model_take = "Take4"
+    else:
+        raise ValueError(f"Invalid model take: {model_cfg.model_take}")
     # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
     model_name = f"Mu_DiT_{model_take}_{model_cfg.size}"
     return DiT_models[model_name]

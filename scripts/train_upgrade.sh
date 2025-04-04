@@ -49,6 +49,16 @@ elif [ $MODEL_TYPE == "mu_point_take2" ]; then
 
   MODEL_PARAMS="model=mu model.type=point model.model_take=2"
   DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
+elif [ $MODEL_TYPE == "mu_point_take3" ]; then
+  echo "Training Mu-Frame point model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=mu model.type=point model.model_take=3"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
+elif [ $MODEL_TYPE == "mu_point_take4" ]; then
+  echo "Training Mu-Frame point model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=mu model.type=point model.model_take=4"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
 elif [ $MODEL_TYPE == "ddrd_point_separate" ]; then
   echo "Training DDRD point separate model on dataset $DATASET_NAME with command: $COMMAND."
 
