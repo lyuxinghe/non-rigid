@@ -1,15 +1,12 @@
+from typing import Any, Dict
 
 import lightning as L
 import numpy as np
 import omegaconf
-import plotly.express as px
-import rpad.pyg.nets.dgcnn as dgcnn
 import rpad.visualize_3d.plots as vpl
+import plotly.graph_objects as go
 import torch
 import torch.nn.functional as F
-import torch_geometric.data as tgd
-import torch_geometric.transforms as tgt
-import torchvision as tv
 import wandb
 from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
@@ -21,39 +18,35 @@ from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
 from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
 from non_rigid.models.dit.diffusion import create_diffusion_ddrd_joint, create_diffusion_ddrd_separate
 from non_rigid.models.dit.models import (
-    Joint_DiT_Deformation_Reference_Cross_Feature,
-    Separate_DiT_Deformation_Reference_Cross_Feature,
+    Joint_DiT_Deformation_Reference_Cross,
+    Separate_DiT_Deformation_Reference_Cross,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
 
 
-def Joint_DiT_Deformation_Reference_Cross_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def Joint_DiT_Deformation_Reference_Cross_xS(**kwargs):
     print("DiffusionTransformerNetwork: Joint_DiT_Deformation_Reference_Cross_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return Joint_DiT_Deformation_Reference_Cross_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Joint_DiT_Deformation_Reference_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def Separate_DiT_Deformation_Reference_Cross_Feature_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def Separate_DiT_Deformation_Reference_Cross_xS(**kwargs):
     print("DiffusionTransformerNetwork: Separate_DiT_Deformation_Reference_Cross_Feature_xS")
-    hidden_size = 132 if use_rotary else 128
-    return Separate_DiT_Deformation_Reference_Cross_Feature(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Separate_DiT_Deformation_Reference_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
 DiT_models = {
-    "Joint_DiT_Deformation_Reference_Cross_Feature_xS": Joint_DiT_Deformation_Reference_Cross_Feature_xS,
-    "Separate_DiT_Deformation_Reference_Cross_Feature_xS": Separate_DiT_Deformation_Reference_Cross_Feature_xS,
+    "Joint_DiT_Deformation_Reference_Cross_xS": Joint_DiT_Deformation_Reference_Cross_xS,
+    "Separate_DiT_Deformation_Reference_Cross_xS": Separate_DiT_Deformation_Reference_Cross_xS,
 }
 
 def get_model(model_cfg):
-    #rotary = "Rel3D_" if model_cfg.rotary else ""
     cross = "Cross_" if model_cfg.cross_atten else ""
-    feature = "Feature_" if model_cfg.feature else ""
-    encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
+    joint = "Joint_" if model_cfg.joint_encode else ""
+    # feature = "Feature_" if model_cfg.feature else ""
+    # encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
 
     model_take = "Joint_" if model_cfg.model_take == "joint" else "Separate_" if model_cfg.model_take == "separate" else ""
     # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
-    model_name = f"{model_take}{encoder}DiT_Deformation_Reference_{cross}{feature}{model_cfg.size}"
+    model_name = f"{model_take}DiT_Deformation_Reference_{cross}{model_cfg.size}"
     return DiT_models[model_name]
 
 class DeformationReferenceDiffusionTransformerNetwork(nn.Module):
@@ -63,7 +56,6 @@ class DeformationReferenceDiffusionTransformerNetwork(nn.Module):
     def __init__(self, model_cfg=None):
         super().__init__()
         self.dit = get_model(model_cfg)(
-            use_rotary=model_cfg.rotary,
             in_channels=model_cfg.in_channels,
             learn_sigma=model_cfg.learn_sigma,
             model_cfg=model_cfg,
@@ -98,6 +90,8 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         self.wandb_cfg = cfg.wandb
         self.prediction_type = self.model_cfg.type # flow or point
         self.mode = cfg.mode # train or eval
+        self.pred_frame = self.model_cfg.pred_frame
+        self.noisy_goal_scale = self.model_cfg.noisy_goal_scale
 
         # prediction type-specific processing
         # TODO: eventually, this should be removed by updating dataset to use "point" instead of "pc"
@@ -108,6 +102,13 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid prediction type: {self.prediction_type}")
         
+        if self.pred_frame == "noisy_goal":
+            assert self.model_cfg.noisy_goal_scale > 0.0
+        elif self.pred_frame == "anchor_center":
+            assert self.model_cfg.noisy_goal_scale == 0.0
+        else:
+            raise ValueError(f"Invalid prediction type: {self.pred_frame}")
+
         # mode-specific processing
         if self.mode == "train":
             self.run_cfg = cfg.training
@@ -159,6 +160,12 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         else:
             raise ValueError("Choose model_take from [\"joint\", \"separate\"]")
 
+        #print(f"### Translation Noise Scale: {self.diff_translation_noise_scale}")
+        #print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
+        print("Initializing TAX3D Dense Displacement Diffusion Module")
+        print(f"### Prediction Reference Frame: {self.pred_ref_frame}")
+        print(f"### Referemce Noise Scale: {self.ref_error_scale}")
+
 
     def configure_optimizers(self):
         assert self.mode == "train", "Can only configure optimizers in training mode."
@@ -194,6 +201,9 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         """
         Forward pass to compute diffusion training loss.
         """
+        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
+        pred_ref = batch["pred_ref"]
+
         ground_truth = batch[self.label_key].permute(0, 2, 1) # channel first
         model_kwargs = self.get_model_kwargs(batch)
 
@@ -235,6 +245,9 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
             progress: whether to show progress bar
             full_prediction: whether to return full prediction (flow and point, goal and world frame)
         """
+        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
+        pred_ref = batch["pred_ref"]
+
         # TODO: replace bs with batch_size?
         bs, sample_size = batch["pc_action"].shape[:2]
         model_kwargs = self.get_model_kwargs(batch, num_samples)
@@ -328,7 +341,10 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
             batch: the input batch
             num_samples: the number of samples to generate
         """
-        ground_truth = batch[self.label_key].to(self.device).clone()
+        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
+        pred_ref = batch["pred_ref"]
+
+        ground_truth = batch[self.label_key].to(self.device)
         seg = batch["seg"].to(self.device).clone()
         goal_pc = batch["pc"].to(self.device).clone()
         scaling_factor = self.dataset_cfg.pcd_scale_factor
@@ -359,12 +375,13 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         pred_wta = pred[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            T_goal2world = Transform3d(
-                matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
+            T_goalUnAug = Transform3d(
+                matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
             )
-
-            pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"].clone())
-            goal_point_world = T_goal2world.transform_points(goal_pc)
+            pred_ref = expand_pcd(pred_ref, num_samples)
+            
+            pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
+            goal_point_world = T_goalUnAug.transform_points(goal_pc + pred_ref)
             
             pred_point_world = pred_point_world / scaling_factor
             goal_point_world = goal_point_world / scaling_factor
@@ -442,6 +459,9 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         t = torch.randint(
             0, self.diff_steps, (self.batch_size,), device=self.device
         ).long()
+
+        batch = self.update_prediction_frame_batch(batch, stage="train")
+
         _, loss, loss_r, loss_s = self(batch, t)
         #########################################################
         # logging training metrics
@@ -493,6 +513,8 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
                 train_dataloader.dataset.set_eval_mode(True)
 
                 batch = next(iter(train_dataloader))  # Fetch new batch with eval_mode=True
+                batch = self.update_prediction_frame_batch(batch, stage="inference")
+                
                 # TODO: Debug why without this line, it will rasie gpu/cpu different device error
                 batch = {k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
@@ -542,6 +564,7 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         self.eval()
         with torch.no_grad():
             # winner-take-all predictions
+            batch = self.update_prediction_frame_batch(batch, stage="inference")
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
         
         ####################################################
@@ -582,6 +605,7 @@ class DenseDeformationReferenceDiffusionModule(L.LightningModule):
         """
         if self.dataset_cfg.material == "rigid":
             # winner-take-all predictions
+            batch = self.update_prediction_frame_batch(batch, stage="inference")
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
             return {
                 "rmse": pred_wta_dict["rmse"],
@@ -624,20 +648,55 @@ class DDRDModule(DenseDeformationReferenceDiffusionModule):
         """
         Get world-frame predictions from the given batch and predictions.
         """
-        T_action2world = Transform3d(
-            matrix=expand_pcd(batch["T_action2world"].to(self.device), num_samples)
+        T_actionUnAug = Transform3d(
+            matrix=expand_pcd(batch["T_actionUnAug"].to(self.device), num_samples)
         )
-        T_goal2world = Transform3d(
-            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
+        T_goalUnAug = Transform3d(
+            matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
         )
 
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
-        pc_action_world = T_action2world.transform_points(pc_action)
+        pred_ref = expand_pcd(batch["pred_ref"].to(self.device), num_samples)
+        action_ref = expand_pcd(batch["action_ref"].to(self.device), num_samples)
+
+        pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
+        pc_action_world = T_actionUnAug.transform_points(pc_action + action_ref)
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
-            T_goal2world.transform_points(res) for res in pred_dict["results"]
+            T_goalUnAug.transform_points(res + pred_ref) for res in pred_dict["results"]
         ]
         return pred_flow_world, pred_point_world, results_world
+
+    def update_prediction_frame_batch(self, batch, stage):
+        # TODO: for now, since gmm is not available, we will use noisy goal to simulate it
+        if self.pred_ref_frame == "anchor":
+            pred_ref = batch["pc_anchor"].mean(axis=1, keepdim=True)
+        elif self.pred_ref_frame == "noisy_goal":
+            if stage == "train":
+                # we are adding noise to the goal to train model to robust to gmm error
+                pred_ref = batch["pc"].mean(axis=1, keepdim=True)
+                pred_ref = pred_ref + self.ref_error_scale * torch.randn_like(pred_ref)
+            elif stage == "inference":
+                # for now, we are using noisy goal to simulate gmm
+                pred_ref = batch["pc"].mean(axis=1, keepdim=True)
+                pred_ref = pred_ref + self.ref_error_scale * torch.randn_like(pred_ref)
+            else:
+                raise ValueError(f"Invalid stage: {stage}")
+        else:
+            raise ValueError(f"Invalid prediction reference frame: {self.pred_ref_frame}")
+
+        action_mean = batch["pc_action"].mean(axis=1, keepdim=True)
+        anchor_mean = pred_ref
+                
+        batch["pc_action"] = batch["pc_action"] - action_mean
+        batch["pc_anchor"] = batch["pc_anchor"] - anchor_mean
+        
+        batch["pc"] = batch["pc"] - anchor_mean
+        batch["flow"] = batch["flow"] - anchor_mean + action_mean
+        
+        batch["pred_ref"] = pred_ref
+        batch["action_ref"] = action_mean
+
+        return batch
 
     def get_viz_args(self, batch, viz_idx):
         """

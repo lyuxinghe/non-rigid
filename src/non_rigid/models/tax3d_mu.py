@@ -3,10 +3,14 @@ from typing import Any, Dict
 import lightning as L
 import numpy as np
 import omegaconf
+import plotly.express as px
+import rpad.pyg.nets.dgcnn as dgcnn
 import rpad.visualize_3d.plots as vpl
-import plotly.graph_objects as go
 import torch
 import torch.nn.functional as F
+import torch_geometric.data as tgd
+import torch_geometric.transforms as tgt
+import torchvision as tv
 import wandb
 from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
@@ -16,51 +20,58 @@ from torch_geometric.nn import fps
 from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
 from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
-from non_rigid.models.dit.diffusion import create_diffusion
-from non_rigid.models.dit.models import (
-    DiT_PointCloud_Cross,
-    DiT_PointCloud_Cross_Joint,
-)
+from non_rigid.models.dit.diffusion import create_diffusion_mu
+from non_rigid.models.dit.models import Mu_DiT_Take1, Mu_DiT_Take2
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
 
-def DiT_PointCloud_Cross_xS(**kwargs):
-    return DiT_PointCloud_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def DiT_PointCloud_Cross_Joint_xS(**kwargs):
-    return DiT_PointCloud_Cross_Joint(depth=5, hidden_size=128, num_heads=4, **kwargs)
+def Mu_DiT_Take1_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take1_xS")
+    hidden_size = 132 if use_rotary else 128
+    return Mu_DiT_Take1(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
 
+def Mu_DiT_Take2_xS(use_rotary, **kwargs):
+    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+    print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take2_xS")
+    hidden_size = 132 if use_rotary else 128
+    return Mu_DiT_Take2(depth=5, hidden_size=hidden_size, num_heads=8, **kwargs)
+
+# TODO: clean up all unused functions
 DiT_models = {
-    "DiT_PointCloud_Cross_xS": DiT_PointCloud_Cross_xS,
-    "DiT_PointCloud_Cross_Joint_xS": DiT_PointCloud_Cross_Joint_xS,
+    "Mu_DiT_Take1_xS": Mu_DiT_Take1_xS,
+    "Mu_DiT_Take2_xS": Mu_DiT_Take2_xS,
 }
 
 
 def get_model(model_cfg):
-    cross = "Cross_" if model_cfg.cross_atten else ""
-    joint = "Joint_" if model_cfg.joint_encode else ""
-    model_name = f"DiT_PointCloud_{cross}{joint}{model_cfg.size}"
+    #rotary = "Rel3D_" if model_cfg.rotary else ""
+    model_take = "Take1" if model_cfg.model_take == 1 else "Take2"
+    # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
+    model_name = f"Mu_DiT_{model_take}_{model_cfg.size}"
     return DiT_models[model_name]
 
 
-class DiffusionTransformerNetwork(nn.Module):
+class MuFrameDiffusionTransformerNetwork(nn.Module):
     """
     Network containing the specified Diffusion Transformer architecture.
     """
     def __init__(self, model_cfg=None):
         super().__init__()
         self.dit = get_model(model_cfg)(
+            use_rotary=model_cfg.rotary,
             in_channels=model_cfg.in_channels,
             learn_sigma=model_cfg.learn_sigma,
             model_cfg=model_cfg,
         )
     
-    def forward(self, x, t, **kwargs):
-        return self.dit(x, t, **kwargs)
+    def forward(self, xr_t, xs_t, t, **kwargs):
+        return self.dit(xr_t, xs_t, t, **kwargs)
     
 
 
-class DenseDisplacementDiffusionModule(L.LightningModule):
+class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
     """
     Generalized Dense Displacement Diffusion (DDD) module that handles model training, inference, 
     evaluation, and visualization. This module is inherited and overriden by scene-level and 
@@ -74,8 +85,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         self.wandb_cfg = cfg.wandb
         self.prediction_type = self.model_cfg.type # flow or point
         self.mode = cfg.mode # train or eval
-        self.pred_frame = self.model_cfg.pred_frame
-        self.noisy_goal_scale = self.model_cfg.noisy_goal_scale
+        self.pred_ref_frame = self.model_cfg.pred_ref_frame
 
         # prediction type-specific processing
         # TODO: eventually, this should be removed by updating dataset to use "point" instead of "pc"
@@ -86,12 +96,13 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid prediction type: {self.prediction_type}")
         
-        if self.pred_frame == "noisy_goal":
-            assert self.model_cfg.noisy_goal_scale > 0.0
-        elif self.pred_frame == "anchor_center":
-            assert self.model_cfg.noisy_goal_scale == 0.0
+        if self.pred_ref_frame == "noisy_goal":
+            assert self.model_cfg.ref_error_scale != 0.0
+            self.ref_error_scale = self.model_cfg.ref_error_scale
+        elif self.pred_ref_frame == "anchor":
+            self.ref_error_scale = 0.0
         else:
-            raise ValueError(f"Invalid prediction type: {self.pred_frame}")
+            raise ValueError(f"Invalid prediction type: {self.pred_ref_frame}")
 
         # mode-specific processing
         if self.mode == "train":
@@ -123,19 +134,22 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         self.num_wta_trials = self.run_cfg.num_wta_trials
         self.diff_translation_noise_scale = self.model_cfg.diff_translation_noise_scale
         self.diff_rotation_noise_scale = self.model_cfg.diff_rotation_noise_scale
-        self.diffusion = create_diffusion(
+        #self.time_based_weighting = self.model_cfg.time_based_weighting
+
+        self.diffusion = create_diffusion_mu(
             timestep_respacing=None,
             diffusion_steps=self.diff_steps,
             # noise_schedule=self.noise_schedule,
+            time_based_weighting="even",
         )
 
         # TODO: make this a info helper method
-        print("Initializing TAX3D Diffusion Transformer Network")
-        print(f"### Translation Noise Scale: {self.diff_translation_noise_scale}")
-        print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
-        print("Initializing TAX3D Dense Displacement Diffusion Module")
-        print(f"### Prediction Frame: {self.pred_frame}")
-        print(f"### Prediction Frame Noise Scale: {self.noisy_goal_scale}")
+        print("Initializing Mu-Frame Diffusion Transformer Network")
+        #print(f"### Translation Noise Scale: {self.diff_translation_noise_scale}")
+        #print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
+        print("Initializing Mu-Frame Dense Displacement Diffusion Module")
+        print(f"### Prediction Reference Frame: {self.pred_ref_frame}")
+        print(f"### Referemce Noise Scale: {self.ref_error_scale}")
 
     def configure_optimizers(self):
         assert self.mode == "train", "Can only configure optimizers in training mode."
@@ -161,7 +175,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         raise NotImplementedError("This should be implemented in the derived class.")
     
-    def update_batch_frames(self, batch, update_labels=False):
+    def update_prediction_frame_batch(self, batch, stage):
         """
         Convert data batch from world frame to prediction frame.
         """
@@ -177,7 +191,8 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         Forward pass to compute diffusion training loss.
         """
-        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
+        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
+        pred_ref = batch["pred_ref"]
         
         ground_truth = batch[self.label_key].permute(0, 2, 1) # channel first
         model_kwargs = self.get_model_kwargs(batch)
@@ -186,6 +201,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         # noise = torch.randn_like(ground_truth) * self.noise_scale
         loss_dict = self.diffusion.training_losses(
             model=self.network,
+            # TODO: set x_start as tuple, and dynamically noise 1 or 2 targets in diffusion code
             x_start=ground_truth,
             t=t,
             translation_noise_scale=self.diff_translation_noise_scale,
@@ -193,8 +209,13 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             model_kwargs=model_kwargs,
             # noise=noise,
         )
+        
+        loss_r = loss_dict["loss_r"].mean()
+        loss_s = loss_dict["loss_s"].mean()
+        
         loss = loss_dict["loss"].mean()
-        return None, loss
+
+        return None, loss, loss_r, loss_s
 
     @torch.no_grad()
     def predict(self, batch, num_samples, unflatten=False, progress=True, full_prediction=True):
@@ -207,76 +228,39 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             progress: whether to show progress bar
             full_prediction: whether to return full prediction (flow and point, goal and world frame)
         """
-        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
+        # TODO: replace bs with batch_size?
+        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
+        pred_ref = batch["pred_ref"].clone()
+        pred_ref = expand_pcd(pred_ref, num_samples)
         
         bs, sample_size = batch["pc_action"].shape[:2]
         model_kwargs = self.get_model_kwargs(batch, num_samples)
 
         # generating latents and running diffusion
-        z = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
-        '''
-        # test: in inference, if we trained with rotation noise we ought to also sample from it
-        if self.model_cfg.diff_rotation_noise_scale:
-            pc = batch["pc_action"].permute(0,2,1)
-            pc = expand_pcd(pc, num_samples)
-            N, _, _ = z.shape  # e.g. [batch_size, 3, num_points]
+        z_s = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
+        z_r = pred_ref.to(self.device).permute(0,2,1)
+        #z_r = torch.zeros(bs * num_samples, 3, 1, device=self.device)
 
-            # 1. Sample random rotation axes and normalize them.
-            random_axis = torch.randn(N, 3, device=pc.device)
-            random_axis = random_axis / random_axis.norm(dim=1, keepdim=True)
-
-            # 2. Sample random rotation angles (in degrees) and convert to radians.
-            random_angle = torch.randn(N, device=pc.device) * self.model_cfg.diff_rotation_noise_scale
-            random_angle_rad = random_angle * (np.pi / 180)
-
-            # 3. Compute sin and cos for each angle.
-            sin_theta = torch.sin(random_angle_rad)
-            cos_theta = torch.cos(random_angle_rad)
-            one_minus_cos = 1 - cos_theta
-
-            # 4. Extract axis components.
-            x_axis = random_axis[:, 0]
-            y_axis = random_axis[:, 1]
-            z_axis = random_axis[:, 2]
-            zeros = torch.zeros_like(x_axis)
-
-            # 5. Construct the skew-symmetric cross-product matrices for each axis.
-            #    Each K is of shape (3,3), and K will have shape (N, 3, 3)
-            K = torch.stack([torch.stack([zeros, -z_axis, y_axis], dim=1),
-                        torch.stack([z_axis, zeros, -x_axis], dim=1),
-                        torch.stack([-y_axis, x_axis, zeros], dim=1)], dim=1)
-
-            # 6. Compute K squared (batched matrix multiplication)
-            K2 = torch.bmm(K, K)
-
-            # 7. Create the identity matrix for each batch element.
-            I = torch.eye(3, device=pc.device).unsqueeze(0).repeat(N, 1, 1)
-
-            # 8. Compute the rotation matrices using the Rodrigues formula:
-            #    R = I + sin(theta)*K + (1-cos(theta))*(K^2)
-            R = I + sin_theta.view(N, 1, 1) * K + one_minus_cos.view(N, 1, 1) * K2
-
-            # 9. Apply the rotation matrices to the point clouds.
-            #    x_start: [N, 3, P] -> rotated_pc: [N, 3, P]
-            rotated_pc = torch.bmm(R, pc)
-
-            # 10. The rotation noise is the difference between the rotated and original points.
-            rotation_noise = rotated_pc - pc
-            z = z + rotation_noise
-        '''
         # test: in inference, if we trained with translation noise with scale=t, we sample noise from N(0, 1+t)
         #trans_noise_scale = torch.tensor(0.6, device=self.device)
         #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device) * torch.sqrt(1 + trans_noise_scale)
 
-        pred, results, _ = self.diffusion.p_sample_loop(
+        # TODO: p_sample for z_r is probably wrong
+        final_dict, results = self.diffusion.p_sample_loop(
             self.network,
-            z.shape,
-            z,
+            z_r.shape,
+            z_s.shape,
+            z_r,
+            z_s,
             clip_denoised=False,
             model_kwargs=model_kwargs,
             progress=progress,
             device=self.device,
         )
+        pred_r = final_dict["sample_r"]
+        pred_s = final_dict["sample_s"]
+        pred = pred_s + pred_r        
+        results = [res["sample_r"] + res["sample_s"] for res in results]
         pred = pred.permute(0, 2, 1)
 
         if not full_prediction:
@@ -313,8 +297,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
 
             # compute world frame predictions
             pred_flow_world, pred_point_world, results_world = self.get_world_preds(
-                batch, num_samples, pc_action, pred_dict
-            )
+                batch, num_samples, pc_action, pred_dict)
             
             pred_dict["flow"]["pred_world"] = pred_flow_world
             pred_dict["point"]["pred_world"] = pred_point_world
@@ -330,51 +313,48 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             batch: the input batch
             num_samples: the number of samples to generate
         """
+        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
+        pred_ref = batch["pred_ref"]
         
-        # ground_truth = batch[self.label_key].to(self.device)
+        ground_truth = batch[self.label_key].to(self.device)
         seg = batch["seg"].to(self.device)
-        ground_truth_point_world = batch["pc_world"].to(self.device)
-        # goal_pc = batch["pc"].to(self.device)
+        goal_pc = batch["pc"].to(self.device)
         scaling_factor = self.dataset_cfg.pcd_scale_factor
 
         # re-shaping and expanding for winner-take-all
-        bs = ground_truth_point_world.shape[0]
-        # ground_truth = expand_pcd(ground_truth, num_samples)
+        bs = ground_truth.shape[0]
+        ground_truth = expand_pcd(ground_truth, num_samples)
         seg = expand_pcd(seg, num_samples)
-        # goal_pc = expand_pcd(goal_pc, num_samples)
-        ground_truth_point_world = expand_pcd(ground_truth_point_world, num_samples)
+        goal_pc = expand_pcd(goal_pc, num_samples)
 
         # generating diffusion predictions
+        # TODO: this should probably specific full_prediction=False
         pred_dict = self.predict(
-            batch, num_samples, unflatten=False, progress=True, full_prediction=True,
+            batch, num_samples, unflatten=False, progress=True
         )
-        # pred = pred_dict[self.prediction_type]["pred"]
-        pred_point_world = pred_dict["point"]["pred_world"]
+        pred = pred_dict[self.prediction_type]["pred"]
 
         # scale the pcd back to original size for error calculation
-        # pred_scaled = pred / scaling_factor
-        # ground_truth_scaled = ground_truth / scaling_factor
+        pred_scaled = pred / scaling_factor
+        ground_truth_scaled = ground_truth / scaling_factor
 
         # computing error metrics
-        if self.dataset_cfg.material == "deform":
-            seg = seg == 0
-        rmse = flow_rmse(pred_point_world, ground_truth_point_world, mask=True, seg=seg).reshape(bs, num_samples)
-        pred_point_world = pred_point_world.reshape(bs, num_samples, -1, 3)
+        rmse = flow_rmse(pred_scaled, ground_truth_scaled, mask=True, seg=seg).reshape(bs, num_samples)
+        pred = pred.reshape(bs, num_samples, -1, 3)
 
         # computing winner-take-all metrics
         winner = torch.argmin(rmse, dim=-1)
         rmse_wta = rmse[torch.arange(bs), winner]
-        pred_point_world_wta = pred_point_world[torch.arange(bs), winner]
+        pred_wta = pred[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            raise NotImplementedError("Rigid metrics not fixed yet.")
             T_goalUnAug = Transform3d(
                 matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
             )
             pred_ref = expand_pcd(pred_ref, num_samples)
             
-            pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
-            goal_point_world = T_goalUnAug.transform_points(goal_pc + pred_ref)
+            pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
+            goal_point_world = T_goalUnAug.transform_points(goal_pc)
             
             pred_point_world = pred_point_world / scaling_factor
             goal_point_world = goal_point_world / scaling_factor
@@ -400,14 +380,16 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
                 "rot": rotation_errs,
                 "rot_wta": rotation_err_wta,
             }
-
+        
         else:
             return {
-                "pred_point_world": pred_point_world,
-                "pred_point_world_wta": pred_point_world_wta,
+                "pred": pred,
+                "pred_wta": pred_wta,
                 "rmse": rmse,
                 "rmse_wta": rmse_wta,
             }
+
+
 
     def log_viz_to_wandb(self, batch, pred_wta_dict, tag):
         """
@@ -420,9 +402,17 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         # pick a random sample in the batch to visualize
         viz_idx = np.random.randint(0, batch["pc"].shape[0])
-        pred_action_viz = pred_wta_dict["pred_point_world"][viz_idx, 0, :, :3]
-        pred_action_wta_viz = pred_wta_dict["pred_point_world_wta"][viz_idx, :, :3]
+        pred_viz = pred_wta_dict["pred"][viz_idx, 0, :, :3]
+        pred_wta_viz = pred_wta_dict["pred_wta"][viz_idx, :, :3]
         viz_args = self.get_viz_args(batch, viz_idx)
+
+        # getting predicted action point cloud
+        if self.prediction_type == "flow":
+            pred_action_viz = viz_args["pc_action_viz"] + pred_viz
+            pred_action_wta_viz = viz_args["pc_action_viz"] + pred_wta_viz
+        elif self.prediction_type == "point":
+            pred_action_viz = pred_viz
+            pred_action_wta_viz = pred_wta_viz
 
         # logging predicted vs ground truth point cloud
         viz_args["pred_action_viz"] = pred_action_viz
@@ -443,14 +433,16 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             0, self.diff_steps, (self.batch_size,), device=self.device
         ).long()
         
-        # batch = self.update_prediction_frame_batch(batch, stage="train")
-        batch = self.update_batch_frames(batch, update_labels=True)
-        _, loss = self(batch, t)
+        batch = self.update_prediction_frame_batch(batch, stage="train")
+                
+        _, loss, loss_r, loss_s = self(batch, t)
         #########################################################
         # logging training metrics
         #########################################################
         self.log_dict(
-            {"train/loss": loss},
+            {"train/loss": loss,
+            "train/loss_r": loss_r,
+            "train/loss_s": loss_s},
             add_dataloader_idx=False,
             prog_bar=True,
         )
@@ -459,21 +451,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         do_additional_logging = (
             self.global_step % self.additional_train_logging_period == 0
         )
-
-        '''
-        # Perform gradient monitoring after backward pass
-        max_grad = 0
-        for name, param in self.network.named_parameters():
-            if param.grad is not None:
-                grad_norm = param.grad.data.norm(2).item()  # Compute L2 norm of gradient
-                max_grad = max(max_grad, grad_norm)
-        
-        # Log gradient norm
-        self.log("train/max_grad_norm", max_grad, prog_bar=True)
-        if max_grad > 1e3:  # Example threshold for gradient explosion
-            self.log("train/grad_warning", 1.0)
-            print(f"Warning: Exploding gradient detected! Max Gradient Norm: {max_grad:.4f}")
-        '''
 
         # additional logging
         if do_additional_logging:
@@ -485,8 +462,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
                 train_dataloader.dataset.set_eval_mode(True)
 
                 batch = next(iter(train_dataloader))  # Fetch new batch with eval_mode=True
-                # batch = self.update_prediction_frame_batch(batch, stage="inference")
-                batch = self.update_batch_frames(batch, update_labels=True)
+                batch = self.update_prediction_frame_batch(batch, stage="inference")
 
                 # TODO: Debug why without this line, it will rasie gpu/cpu different device error
                 batch = {k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
@@ -537,8 +513,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         self.eval()
         with torch.no_grad():
             # winner-take-all predictions
-            # batch = self.update_prediction_frame_batch(batch, stage="inference")
-            batch = self.update_batch_frames(batch, update_labels=True)
+            batch = self.update_prediction_frame_batch(batch, stage="inference")
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
         
         ####################################################
@@ -579,7 +554,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         if self.dataset_cfg.material == "rigid":
             # winner-take-all predictions
-            # batch = self.update_prediction_frame_batch(batch, stage="inference")
+            batch = self.update_prediction_frame_batch(batch, stage="inference")
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
             return {
                 "rmse": pred_wta_dict["rmse"],
@@ -597,7 +572,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
                 "rmse_wta": pred_wta_dict["rmse_wta"],
             }
     
-class CrossDisplacementModule(DenseDisplacementDiffusionModule):
+class MuFrameCrossDisplacementModule(MuFrameDenseDisplacementDiffusionModule):
     """
     Object-centric DDD module. Applies cross attention between action and anchor objects.
     """
@@ -622,86 +597,70 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         """
         Get world-frame predictions from the given batch and predictions.
         """
-        T_action2world = Transform3d(
-            matrix=expand_pcd(batch["T_action2world"].to(self.device), num_samples)
+        T_actionUnAug = Transform3d(
+            matrix=expand_pcd(batch["T_actionUnAug"].to(self.device), num_samples)
         )
-        T_goal2world = Transform3d(
-            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
+        T_goalUnAug = Transform3d(
+            matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
         )
 
-        pred_frame = expand_pcd(batch["pred_frame"].to(self.device), num_samples)
-        action_context_frame = expand_pcd(batch["action_context_frame"].to(self.device), num_samples)
+        pred_ref = expand_pcd(batch["pred_ref"].to(self.device), num_samples)
+        action_ref = expand_pcd(batch["action_ref"].to(self.device), num_samples)
 
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"] + pred_frame)
-        pc_action_world = T_action2world.transform_points(pc_action + action_context_frame)
+        pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
+        pc_action_world = T_actionUnAug.transform_points(pc_action + action_ref)
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
-            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results"]
+            T_goalUnAug.transform_points(res) for res in pred_dict["results"]
         ]
         return pred_flow_world, pred_point_world, results_world
 
-    def update_batch_frames(self, batch, update_labels=False):
-        # Processing prediction frame.
-        if self.model_cfg.pred_frame == "anchor_center":
-            pred_frame = batch["pc_anchor"].mean(axis=1, keepdim=True)
-        elif self.model_cfg.pred_frame == "noisy_goal":
-            pred_frame = batch["noisy_goal"].unsqueeze(1)
+    def update_prediction_frame_batch(self, batch, stage):
+        # TODO: for now, since gmm is not available, we will use noisy goal to simulate it
+        if self.pred_ref_frame == "anchor":
+            raise NotImplementedError("Mu-frame not implemented for anchor centroid prediction!")
+        elif self.pred_ref_frame == "noisy_goal":
+            if stage == "train":
+                # NOTE: during training, we will not have access to prediction frame until t=100,
+                #       since pred_ref will be gt_center + sqrt(alpha) * gt_error.
+                B, _, C = batch["pc"].shape
+                pred_ref = torch.zeros((B, 1, C)).to(self.device)
+            elif stage == "inference":
+                # During inference,
+                # for now, we are using noisy goal to simulate gmm
+                pred_ref = batch["pc"].mean(axis=1, keepdim=True)
+                pred_ref = pred_ref + self.ref_error_scale * torch.randn_like(pred_ref)
+            else:
+                raise ValueError(f"Invalid stage: {stage}")
         else:
-            raise ValueError(f"Invalid prediction frame: {self.model_cfg.pred_frame}")
+            raise ValueError(f"Invalid prediction reference frame: {self.pred_ref_frame}")
 
-        # Processing action context frame.
-        if self.model_cfg.action_context_frame == "action_center":
-            action_context_frame = batch["pc_action"].mean(axis=1, keepdim=True)
-        else:
-            raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
+        action_mean = batch["pc_action"].mean(axis=1, keepdim=True)
+        anchor_mean = pred_ref
+                
+        batch["pc_action"] = batch["pc_action"] - action_mean
+        #batch["pc_anchor"] = batch["pc_anchor"] - anchor_mean
         
-        batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
-        batch["pc_action"] = batch["pc_action"] - action_context_frame
+        #batch["pc"] = batch["pc"] - anchor_mean
+        #batch["flow"] = batch["flow"] - anchor_mean + action_mean
+        batch["flow"] = batch["flow"] + action_mean
 
-        # Updating labels, if necessary.
-        if update_labels:
-            # Compute ground truth point cloud in world frame.
-            T_goal2world = Transform3d(
-                matrix=batch["T_goal2world"]#.to(self.device)
-            )
-            batch["pc_world"] = T_goal2world.transform_points(batch["pc"])
+        batch["pred_ref"] = pred_ref
+        batch["action_ref"] = action_mean
 
-            # Put point and flow labels in prediction frame.
-            batch["pc"] = batch["pc"] - pred_frame
-            batch["flow"] = batch["flow"] - pred_frame + action_context_frame
-        
-        batch["pred_frame"] = pred_frame
-        batch["action_context_frame"] = action_context_frame
         return batch
         
     def get_viz_args(self, batch, viz_idx):
         """
-        Get visualization arguments for wandb logging. Point clouds are visualized in the world 
-        frame for consistency.
+        Get visualization arguments for wandb logging.
         """
-        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
-
-        pc_pos_viz = batch["pc_world"][viz_idx, :, :3]
+        pc_pos_viz = batch["pc"][viz_idx, :, :3]
         pc_action_viz = batch["pc_action"][viz_idx, :, :3]
         pc_anchor_viz = batch["pc_anchor"][viz_idx, :, :3]
-
-        # Put action and anchor point clouds in the world frame.
-        pred_frame = batch["pred_frame"][viz_idx, :, :3]
-        action_context_frame = batch["action_context_frame"][viz_idx, :, :3]
-
-        T_action2world = Transform3d(
-            matrix=batch["T_action2world"][viz_idx].to(self.device)
-        )
-        T_goal2world = Transform3d(
-            matrix=batch["T_goal2world"][viz_idx].to(self.device)
-        )
-
-        pc_action_viz = T_action2world.transform_points(pc_action_viz + action_context_frame)
-        pc_anchor_viz = T_goal2world.transform_points(pc_anchor_viz + pred_frame)
-
         viz_args = {
             "pc_pos_viz": pc_pos_viz,
             "pc_action_viz": pc_action_viz,
             "pc_anchor_viz": pc_anchor_viz,
         }
         return viz_args
+

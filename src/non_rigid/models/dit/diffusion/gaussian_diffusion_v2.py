@@ -141,7 +141,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
     return np.array(betas)
 
 
-class GaussianDiffusion:
+class GaussianDiffusionv2:
     """
     Utilities for training and sampling diffusion models.
     Original ported from this codebase:
@@ -156,12 +156,14 @@ class GaussianDiffusion:
         betas,
         model_mean_type,
         model_var_type,
-        loss_type
+        loss_type,
+        time_based_weighting
     ):
 
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
+        self.time_based_weighting = time_based_weighting
 
         # Use float64 for accuracy.
         betas = np.array(betas, dtype=np.float64)
@@ -414,7 +416,7 @@ class GaussianDiffusion:
         if cond_fn is not None:
             out["mean"] = self.condition_mean(cond_fn, out, x, t, model_kwargs=model_kwargs)
         sample = out["mean"] + nonzero_mask * th.exp(0.5 * out["log_variance"]) * noise
-        return {"sample": sample, "pred_xstart": out["pred_xstart"], "extra": out["extra"]}
+        return {"sample": sample, "pred_xstart": out["pred_xstart"]}
 
     def p_sample_loop(
         self,
@@ -448,7 +450,6 @@ class GaussianDiffusion:
         """
         final = None
         results = [noise]
-        extras = []
         for sample in self.p_sample_loop_progressive(
             model,
             shape,
@@ -462,8 +463,7 @@ class GaussianDiffusion:
         ):
             final = sample
             results.append(final["sample"])
-            extras.append(final["extra"])
-        return final["sample"], results, extras
+        return final["sample"], results
 
     def p_sample_loop_progressive(
         self,
@@ -716,6 +716,47 @@ class GaussianDiffusion:
         output = th.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
 
+    def _time_based_weights(self, t, T, func="sigmoid", k=10.0, m=0.5):
+        """
+        Compute time-based weights using a sigmoid function.
+
+        Parameters:
+            t (float or Tensor): Current timestep (0 <= t <= T)
+            T (float): Total number of timesteps
+            func (string): Type of time-based function
+            k (float): Slope parameter of the sigmoid (default: 10.0)
+            m (float): Midpoint of the sigmoid (default: 0.5)
+
+        Returns:
+            w_r, w_s (tuple): Where w_s = sigmoid coefficient, and w_r = 1 - w_s.
+        """
+        # Ensure t is a float tensor
+        if not th.is_tensor(t):
+            t = th.tensor(t, dtype=th.float64)
+
+        x = t / T  # Normalize to [0, 1]
+
+        if func == "even":
+            coeff = th.tensor(0.5, dtype=th.float64, device=x.device)
+        elif func == "linear":
+            coeff = x
+        elif func == "sigmoid":
+            # Make sure everything is on the same device and is a tensor
+            x = x.float()
+            k = th.tensor(k, dtype=th.float64, device=x.device)
+            m = th.tensor(m, dtype=th.float64, device=x.device)
+
+            Lx = 1.0 / (1.0 + th.exp(-k * (x - m)))
+            L0 = 1.0 / (1.0 + th.exp(-k * (0.0 - m)))
+            L1 = 1.0 / (1.0 + th.exp(-k * (1.0 - m)))
+            coeff = (Lx - L0) / (L1 - L0)
+        else:
+            raise ValueError("Unsupported function type. Use 'sigmoid', 'linear', or 'even'.")
+
+        w_s = coeff
+        w_r = 1.0 - coeff
+        return w_r, w_s
+
     def training_losses(self, model, x_start, t, translation_noise_scale, rotation_noise_scale, model_kwargs=None, noise=None):
         """
         Compute training losses for a single timestep.
@@ -801,6 +842,26 @@ class GaussianDiffusion:
             rotation_noise = rotated_pc - x_start
             noise = noise + rotation_noise
             
+        if self.time_based_weighting:
+
+            xr = x_start.mean(dim=-1, keepdim=True)  # [B, C, 1]
+            xs = x_start - xr                        # [B, C, N]
+            
+            # Generate STANDARD noise for ENTIRE point cloud
+            noise = th.randn_like(x_start)  # [B, C, N]
+            
+            # Decompose noise into mean/shape components
+            noise_r = noise.mean(dim=-1, keepdim=True)  # [B, C, 1]
+            noise_s = noise - noise_r                   # [B, C, N]
+            
+            # Apply diffusion to WHOLE CLOUD using standard formula
+            x_t = self.q_sample(x_start, t, noise=noise)
+            
+            # Store decomposed noise for loss calculation
+            #target_r = noise_r * np.sqrt(N)  # Compensate for mean scaling
+            #target_s = noise_s * np.sqrt(N/(N-1))  # Compensate for residual scaling
+            target_r = noise_r
+            target_s = noise_s
 
         x_t = self.q_sample(x_start, t, noise=noise)
         '''
@@ -829,9 +890,6 @@ class GaussianDiffusion:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
             model_output = model(x_t, t, **model_kwargs)
-
-            if isinstance(model_output, tuple):
-                model_out, _ = model_output
 
             if self.model_var_type in [
                 ModelVarType.LEARNED,
@@ -863,11 +921,27 @@ class GaussianDiffusion:
                 ModelMeanType.EPSILON: noise,
             }[self.model_mean_type]
             assert model_output.shape == target.shape == x_start.shape
-            terms["mse"] = mean_flat((target - model_output) ** 2)
-            if "vb" in terms:
-                terms["loss"] = terms["mse"] + terms["vb"]
+
+            if self.time_based_weighting:
+                eps_pred_r = model_output.mean(dim=-1, keepdim=True)
+                eps_pred_s = model_output - eps_pred_r
+                loss_r = ((target_r - eps_pred_r) ** 2).mean()
+                loss_s = ((target_s - eps_pred_s) ** 2).mean()
+
+                w_r, w_s = self._time_based_weights(t=t, T=self.num_timesteps, func=self.time_based_weighting)
+
+                terms["mse"] = w_r * loss_r + w_s * loss_s
+                if "vb" in terms:
+                    terms["loss"] = terms["mse"] + terms["vb"]
+                else:
+                    terms["loss"] = terms["mse"]
+
             else:
-                terms["loss"] = terms["mse"]
+                terms["mse"] = mean_flat((target - model_output) ** 2)
+                if "vb" in terms:
+                    terms["loss"] = terms["mse"] + terms["vb"]
+                else:
+                    terms["loss"] = terms["mse"]
         else:
             raise NotImplementedError(self.loss_type)
 

@@ -13,6 +13,9 @@ from non_rigid.utils.transform_utils import random_se3
 from non_rigid.utils.pointcloud_utils import downsample_pcd 
 from non_rigid.utils.augmentation_utils import plane_occlusion
 
+import rpad.visualize_3d.plots as vpl
+import plotly.graph_objects as go
+
 
 class DedoDataset(data.Dataset):
     def __init__(self, root, dataset_cfg, split):
@@ -34,15 +37,6 @@ class DedoDataset(data.Dataset):
         # setting sample sizes
         self.sample_size_action = self.dataset_cfg.sample_size_action
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
-
-        # additional dataset params
-        self.scene = self.dataset_cfg.scene
-        self.world_frame = self.dataset_cfg.world_frame
-        
-        # TODO: this is here for consistency; just error out for scene-level dataset
-        # experiments from now on should just be object-level
-        if self.scene:
-            raise NotImplementedError("Scene-level DEDO dataset not yet implemented.")
         
     def __len__(self):
         return self.size
@@ -125,45 +119,83 @@ class DedoDataset(data.Dataset):
         anchor_pc = T.transform_points(anchor_pc)
         goal_action_pc = T.transform_points(goal_action_pc)
 
-        # center the point clouds
-        if self.dataset_cfg.noisy_goal:
-            center = goal_action_pc.mean(axis=0) + torch.normal(mean=torch.zeros(3), std=torch.ones(3))
-        elif self.dataset_cfg.center_type == "action_center":
-            center = action_pc.mean(axis=0)
-        elif self.dataset_cfg.center_type == "anchor_center":
-            center = anchor_pc.mean(axis=0)
-        elif self.dataset_cfg.center_type == "scene_center":
-            center = torch.cat([action_pc, anchor_pc], dim=0).mean(axis=0)
-        elif self.dataset_cfg.center_type == "none":
-            center = torch.zeros(3, dtype=torch.float32)
-        else:
-            raise ValueError(f"Invalid center type: {self.dataset_cfg.center_type}")
 
-        if self.dataset_cfg.action_context_center_type == "center":
-            action_center = action_pc.mean(axis=0)
-        elif self.dataset_cfg.action_context_center_type == "none":
-            action_center = torch.zeros(3, dtype=torch.float32)
-        else:
-            raise ValueError(f"Invalid action context center type: {self.dataset_cfg.action_context_center_type}")
-    
-        goal_action_pc = goal_action_pc - center
-        anchor_pc = anchor_pc - center
-        action_pc = action_pc - action_center
+        #################### NEW CODE ######################
 
-        # updating item
-        T_goal2world = Translate(center.unsqueeze(0)).compose(T.inverse())
-        T_action2world = Translate(action_center.unsqueeze(0)).compose(T.inverse())
+        # # center goal action and anchor in the scene (action + anchor) frame
+        # scene_center = torch.cat([action_pc, anchor_pc], dim=0).mean(axis=0)
+        # goal_action_pc = goal_action_pc - scene_center
+        # anchor_pc = anchor_pc - scene_center
 
-        gt_flow = goal_action_pc - action_pc
-        # TODO: eventually, rename this key to "point"
-        item["pc_action"] = action_pc # Action points in initial position for context
-        item["pc_anchor"] = anchor_pc # Anchor points in goal position
-        item["pc"] = goal_action_pc # Ground-truth action points
-        item["flow"] = gt_flow # Ground-truth flow (cross-frame) to action points
-        item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0)
-        item["T_action2world"] = T_action2world.get_matrix().squeeze(0)
+        # # center action in its own frame
+        # action_center = action_pc.mean(axis=0)
+        # action_pc = action_pc - action_center
+
+        # # updating item
+        # T_goal2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
+        # T_action2world = Translate(action_center.unsqueeze(0)).compose(T.inverse())
+
+        goal_flow = goal_action_pc - action_pc
+
+        item["pc_action"] = action_pc # Action points in the action frame
+        item["pc_anchor"] = anchor_pc # Anchor points in the scene frame
         item["seg"] = action_seg
         item["seg_anchor"] = anchor_seg
+        item["T_goal2world"] = T.inverse().get_matrix().squeeze(0)
+        item["T_action2world"] = T.inverse().get_matrix().squeeze(0)
+
+        # Training-specific labels
+        # TODO: eventually, rename this key to "point"
+        item["pc"] = goal_action_pc # Ground-truth goal action points in the scene frame
+        item["flow"] = goal_flow # Ground-truth flow (cross-frame) to action points
+        
+        if self.dataset_cfg.pred_frame == "noisy_goal":
+            # "Simulate" the GMM prediction as noisy goal
+            goal_center = goal_action_pc.mean(axis=0)
+            item["noisy_goal"] = goal_center + self.dataset_cfg.noisy_goal_scale * torch.normal(mean=torch.zeros(3), std=torch.ones(3))
+
+        #################### OLD CODE ######################
+
+
+        # # center the point clouds
+        # if self.dataset_cfg.noisy_goal:
+        #     center = goal_action_pc.mean(axis=0) + torch.normal(mean=torch.zeros(3), std=torch.ones(3))
+        # elif self.dataset_cfg.center_type == "action_center":
+        #     center = action_pc.mean(axis=0)
+        # elif self.dataset_cfg.center_type == "anchor_center":
+        #     center = anchor_pc.mean(axis=0)
+        # elif self.dataset_cfg.center_type == "scene_center":
+        #     center = torch.cat([action_pc, anchor_pc], dim=0).mean(axis=0)
+        # elif self.dataset_cfg.center_type == "none":
+        #     center = torch.zeros(3, dtype=torch.float32)
+        # else:
+        #     raise ValueError(f"Invalid center type: {self.dataset_cfg.center_type}")
+
+        # if self.dataset_cfg.action_context_center_type == "center":
+        #     action_center = action_pc.mean(axis=0)
+        # elif self.dataset_cfg.action_context_center_type == "none":
+        #     action_center = torch.zeros(3, dtype=torch.float32)
+        # else:
+        #     raise ValueError(f"Invalid action context center type: {self.dataset_cfg.action_context_center_type}")
+    
+        # goal_action_pc = goal_action_pc - center
+        # anchor_pc = anchor_pc - center
+        # action_pc = action_pc - action_center
+
+        # # updating item
+        # T_goal2world = Translate(center.unsqueeze(0)).compose(T.inverse())
+        # T_action2world = Translate(action_center.unsqueeze(0)).compose(T.inverse())
+
+        # gt_flow = goal_action_pc - action_pc
+        # # TODO: eventually, rename this key to "point"
+        # item["pc_action"] = action_pc # Action points in initial position for context
+        # item["pc_anchor"] = anchor_pc # Anchor points in goal position
+        # item["pc"] = goal_action_pc # Ground-truth action points
+        # item["flow"] = gt_flow # Ground-truth flow (cross-frame) to action points
+        # item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0)
+        # item["T_action2world"] = T_action2world.get_matrix().squeeze(0)
+        # item["seg"] = action_seg
+        # item["seg_anchor"] = anchor_seg
 
         return item
 
@@ -202,11 +234,6 @@ class DedoDataModule(L.LightningDataModule):
             self.dataset_cfg.scene_transform_type = "identity"
             self.dataset_cfg.rotation_variance = 0.0
             self.dataset_cfg.translation_variance = 0.0
-        # if world frame, don't mean-center the point clouds
-        if self.dataset_cfg.world_frame:
-            print("-------Turning off mean-centering for world frame predictions.-------")
-            self.dataset_cfg.center_type = "none"
-            self.dataset_cfg.action_context_center_type = "none"
 
         # initializing datasets
         self.train_dataset = DedoDataset(self.root, self.dataset_cfg, "train_tax3d")
@@ -217,7 +244,7 @@ class DedoDataModule(L.LightningDataModule):
         return data.DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
-            shuffle=True if self.stage == "train" else False,
+            shuffle=False if self.stage == "train" else False,
             num_workers=self.num_workers,
             collate_fn=cloth_collate_fn,
         )
@@ -244,7 +271,6 @@ class DedoDataModule(L.LightningDataModule):
 def cloth_collate_fn(batch):
     # batch can contain a list of dictionaries
     # we need to convert those to a dictionary of lists
-    # dict_keys = ["deform_transform", "rigid_transform", "deform_params", "rigid_params"]
     dict_keys = ["deform_data", "rigid_data"]
     keys = batch[0].keys()
     out = {k: None for k in keys}

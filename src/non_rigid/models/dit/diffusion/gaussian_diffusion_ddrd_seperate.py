@@ -495,8 +495,8 @@ class GaussianDiffusionDDRDSeparate:
             model,
             shape_r,
             shape_s,
-            noise_r=None,
-            noise_s=None,
+            noise_r=None,   # BUG!
+            noise_s=None,   # BUG!
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             cond_fn=cond_fn,
