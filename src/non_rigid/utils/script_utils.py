@@ -24,12 +24,8 @@ from non_rigid.models.tax3d_mu import (
     MuFrameDiffusionTransformerNetwork,
     MuFrameCrossDisplacementModule,
 )
-from non_rigid.models.tax3d_v2 import (
-    TAX3Dv2Network,
-    TAX3Dv2Module,
-)
 
-from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule
+from non_rigid.datasets.dedo import DedoDataModule
 from non_rigid.datasets.rigid import RigidDataModule
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
@@ -37,16 +33,15 @@ PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
     
 
 def create_model(cfg):
+    # setting dataset-specific model params
+    cfg.model.pcd_scale = cfg.dataset.pcd_scale
+
     if cfg.model.name == "df_cross":
         network_fn = DiffusionTransformerNetwork
-        # module_fn = Tax3dModule
         module_fn = CrossDisplacementModule
     elif cfg.model.name == "ddrd":
         network_fn = DeformationReferenceDiffusionTransformerNetwork
         module_fn = DDRDModule
-    elif cfg.model.name == "tax3d_v2":
-        network_fn = TAX3Dv2Network
-        module_fn = TAX3Dv2Module
     elif cfg.model.name == "mu":
         network_fn = MuFrameDiffusionTransformerNetwork
         module_fn = MuFrameCrossDisplacementModule
@@ -61,14 +56,13 @@ def create_model(cfg):
 
 
 def create_datamodule(cfg):
-    # check that dataset and model types are compatible
-    if cfg.model.type != cfg.dataset.type:
-        raise ValueError(
-            f"Model type: '{cfg.model.type}' and dataset type: '{cfg.dataset.type}' are incompatible."
-        )
+    # setting model-specific dataset params
+    cfg.dataset.pred_frame = cfg.model.pred_frame
+    cfg.dataset.noisy_goal_scale = cfg.model.noisy_goal_scale
+    cfg.dataset.action_context_frame = cfg.model.action_context_frame
 
     if cfg.dataset.material == "deform":
-        datamodule_fn = ProcClothFlowDataModule
+        datamodule_fn = DedoDataModule
     elif cfg.dataset.material == "rigid":
         datamodule_fn = RigidDataModule
 
@@ -97,64 +91,6 @@ def create_datamodule(cfg):
     # updating job config sample sizes
     job_cfg.sample_size = cfg.dataset.sample_size_action + cfg.dataset.sample_size_anchor
     job_cfg.sample_size_anchor = cfg.dataset.sample_size_anchor
-
-    # training-specific job config setup
-    if cfg.mode == "train":
-        job_cfg.num_training_steps = len(datamodule.train_dataloader()) * job_cfg.epochs
-
-    return cfg, datamodule
-
-def create_datamodule_legacy(cfg):
-    # check that dataset and model types are compatible
-    if cfg.model.type != cfg.dataset.type:
-        raise ValueError(
-            f"Model type: '{cfg.model.type}' and dataset type: '{cfg.dataset.type}' are incompatible."
-        )
-
-    # TODO: Unify these flags !
-    # Currently: 
-    dataset_mapping = {
-        ("deform", True, False): ProcClothFlowFeatureDataModule,
-        ("deform", False, False): ProcClothFlowDataModule,
-        ("rigid", True, False): RigidFeatureDataModule,
-        ("rigid", False, True): RigidDataNoisyGoalModule,
-        ("rigid", False, False): RigidDataModule
-    }
-
-    # Determine keys dynamically
-    dataset_key = (cfg.dataset.material, "feature" in cfg.model.name, cfg.dataset.noisy_goal)
-
-    # Assign the function dynamically
-    datamodule_fn = dataset_mapping.get(dataset_key, lambda: ValueError(f"Invalid dataset name: {cfg.dataset.name}"))
-
-    # job-specific datamodule pre-processing
-    if cfg.mode == "eval":
-        job_cfg = cfg.inference
-        # check for full action
-        if job_cfg.action_full:
-            cfg.dataset.sample_size_action = -1
-        stage = "predict"
-    elif cfg.mode == "train":
-        job_cfg = cfg.training
-        stage = "fit"
-    else:
-        raise ValueError(f"Invalid mode: {cfg.mode}")
-
-    # setting up datamodule
-    datamodule = datamodule_fn(
-        batch_size=job_cfg.batch_size,
-        val_batch_size=job_cfg.val_batch_size,
-        num_workers=cfg.resources.num_workers,
-        dataset_cfg=cfg.dataset,
-    )
-    datamodule.setup(stage)
-
-    # updating job config sample sizes
-    if cfg.dataset.scene:
-        job_cfg.sample_size = cfg.dataset.sample_size_action + cfg.dataset.sample_size_anchor
-    else:
-        job_cfg.sample_size = cfg.dataset.sample_size_action
-        job_cfg.sample_size_anchor = cfg.dataset.sample_size_anchor
 
     # training-specific job config setup
     if cfg.mode == "train":

@@ -23,7 +23,6 @@ from non_rigid.models.dit.diffusion import create_diffusion
 from non_rigid.models.dit.models import DiT_PointCloud_Unc as DiT_pcu
 from non_rigid.models.dit.models import (
     DiT_PointCloud_Unc_Cross,
-    Rel3D_DiT_PointCloud_Unc_Cross,
     DiT_PointCloud_Cross,
     DiT_PointCloud
 )
@@ -43,12 +42,6 @@ def DiT_pcu_cross_xS(**kwargs):
     return DiT_PointCloud_Unc_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
 
-def Rel3D_DiT_pcu_cross_xS(**kwargs):
-    # Embed dim divisible by 3 for 3D positional encoding and divisible by num_heads for multi-head attention
-    return Rel3D_DiT_PointCloud_Unc_Cross(
-        depth=5, hidden_size=132, num_heads=4, **kwargs
-    )
-
 def DiT_PointCloud_Cross_xS(use_rotary, **kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
     hidden_size = 132 if use_rotary else 128
@@ -64,8 +57,6 @@ DiT_models = {
     "DiT_pcu_S": DiT_pcu_S,
     "DiT_pcu_xS": DiT_pcu_xS,
     "DiT_pcu_cross_xS": DiT_pcu_cross_xS,
-    "Rel3D_DiT_pcu_cross_xS": Rel3D_DiT_pcu_cross_xS,
-    # there is no Rel3D_DiT_pcu_xS
     "DiT_PointCloud_Cross_xS": DiT_PointCloud_Cross_xS,
     # TODO: add the SD model here
     "DiT_PointCloud_xS": DiT_PointCloud_xS,
@@ -73,7 +64,6 @@ DiT_models = {
 
 
 def get_model(model_cfg):
-    #rotary = "Rel3D_" if model_cfg.rotary else ""
     cross = "Cross_" if model_cfg.name == "df_cross" else ""
     # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
     model_name = f"DiT_PointCloud_{cross}{model_cfg.size}"

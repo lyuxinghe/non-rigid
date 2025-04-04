@@ -181,7 +181,7 @@ def main(cfg):
                 ),
                 ModelCheckpoint(
                     dirpath=cfg.lightning.checkpoint_dir,
-                    filename="{epoch}-{step}-{val_wta_rmse_0:.3f}",
+                    filename="{epoch}-{step}-{val_rmse_wta_0:.3f}",
                     monitor="val_rmse_wta_0",
                     mode="min",
                     save_weights_only=False,
