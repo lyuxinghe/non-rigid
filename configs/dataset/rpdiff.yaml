@@ -14,7 +14,7 @@ rpdiff_descriptions_path: /data/lyuxing/tax3d/rpdiff/descriptions/
 ###################################################
 # General Dataset Parameters
 # Full Config
-num_demos: 3200 # Number of demonstrations to load
+num_demos: # Number of demonstrations to load
 train_dataset_size: # None: Use the length of loaded dataset
 val_dataset_size: 400 # None: Use the length of loaded dataset
 test_dataset_size: 400  # None: Use the length of loaded dataset
