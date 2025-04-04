@@ -367,75 +367,6 @@ class DiTRefBlock(nn.Module):
         x = x + self.mlp(self.norm2(x))
         return x
 
-class DiTRelativeCrossBlock(nn.Module):
-    """
-    A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning 
-    and 3D relative self attention + 3D relative scene cross attention.
-    """
-
-    def __init__(
-        self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, **block_kwargs
-    ):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.self_attn = MultiheadRelativeAttentionWrapper(
-            embed_dim=hidden_size, 
-            num_heads=num_heads,
-            dropout=0.0,
-            bias=True
-        )
-        
-        self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.cross_attn = MultiheadRelativeAttentionWrapper(
-            embed_dim=hidden_size,
-            num_heads=num_heads,
-            dropout=0.0,
-            bias=True
-        )
-        
-        self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
-        self.mlp = Mlp(
-            in_features=hidden_size,
-            hidden_features=mlp_hidden_dim,
-            act_layer=approx_gelu,
-            drop=0,
-        )
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(hidden_size, 9 * hidden_size, bias=True)
-        )
-
-    def forward(self, x, y, c, x_pos=None, y_pos=None):
-        (
-            shift_msa,
-            scale_msa,
-            gate_msa,
-            shift_mca,
-            scale_mca,
-            gate_mca,
-            shift_x,
-            scale_x,
-            gate_x,
-        ) = self.adaLN_modulation(c).chunk(9, dim=1)
-        
-        x = modulate(self.norm1(x), shift_msa, scale_msa)
-        x = x + gate_msa.unsqueeze(1) * self.self_attn(
-            query=x, key=x, value=x, rotary_pe=(x_pos, x_pos)
-        )[0] # [0] is the attention output
-        
-        x = modulate(self.norm2(x), shift_mca, scale_mca)
-        x = x + gate_mca.unsqueeze(1) * self.cross_attn(
-            query=x, key=y, value=y, rotary_pe=(x_pos, y_pos)
-        )[0] # [0] is the attention output
-        
-        x = x + gate_x.unsqueeze(1) * self.mlp(
-            modulate(self.norm3(x), shift_x, scale_x)
-        )
-        
-        return x
-
-
 class FinalLayer(nn.Module):
     """
     The final layer of DiT.
@@ -2122,12 +2053,6 @@ class Mu_DiT_Take3(nn.Module):
         self.num_heads = num_heads
         self.model_cfg = model_cfg
 
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
-
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
             # We are concatenating x and x0 features so we halve the hidden size
@@ -2205,16 +2130,15 @@ class Mu_DiT_Take3(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         self.blocks_r = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
         self.blocks_s = nn.ModuleList(
             [
-                block_fn(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
@@ -2369,12 +2293,6 @@ class Mu_DiT_Take4(nn.Module):
         self.num_heads = num_heads
         self.model_cfg = model_cfg
 
-        # Rotary embeddings for relative positional encoding
-        if self.model_cfg.rotary:
-            self.rotary_pos_enc = RotaryPositionEncoding3D(hidden_size)
-        else:
-            self.rotary_pos_enc = None
-
         x_encoder_hidden_dims = hidden_size
         if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
             # We are concatenating x and x0 features so we halve the hidden size
@@ -2435,7 +2353,6 @@ class Mu_DiT_Take4(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
 
         # DiT blocks
-        block_fn_s = DiTRelativeCrossBlock if self.model_cfg.rotary else DiTCrossBlock
         block_fn_r = DiTRefBlock
         self.blocks_r = nn.ModuleList(
             [
@@ -2445,7 +2362,7 @@ class Mu_DiT_Take4(nn.Module):
         )
         self.blocks_s = nn.ModuleList(
             [
-                block_fn_s(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
                 for _ in range(depth)
             ]
         )
