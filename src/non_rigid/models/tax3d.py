@@ -18,8 +18,7 @@ from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
 from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
 from non_rigid.models.dit.diffusion import create_diffusion
 from non_rigid.models.dit.models import (
-    DiT_PointCloud_Cross,
-    DiT_PointCloud_Cross_Joint,
+    DiT_PointCloud_Cross
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -27,19 +26,14 @@ from non_rigid.utils.pointcloud_utils import expand_pcd
 def DiT_PointCloud_Cross_xS(**kwargs):
     return DiT_PointCloud_Cross(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def DiT_PointCloud_Cross_Joint_xS(**kwargs):
-    return DiT_PointCloud_Cross_Joint(depth=5, hidden_size=128, num_heads=4, **kwargs)
-
 DiT_models = {
-    "DiT_PointCloud_Cross_xS": DiT_PointCloud_Cross_xS,
-    "DiT_PointCloud_Cross_Joint_xS": DiT_PointCloud_Cross_Joint_xS,
+    "DiT_PointCloud_Cross_xS": DiT_PointCloud_Cross_xS
 }
 
 
 def get_model(model_cfg):
     cross = "Cross_" if model_cfg.cross_atten else ""
-    joint = "Joint_" if model_cfg.joint_encode else ""
-    model_name = f"DiT_PointCloud_{cross}{joint}{model_cfg.size}"
+    model_name = f"DiT_PointCloud_{cross}{model_cfg.size}"
     return DiT_models[model_name]
 
 
