@@ -169,6 +169,8 @@ def main(cfg):
         num_samples = cfg.inference.num_wta_trials # // bs
         num_batches = len(dataset) // bs
         eval_keys = ["pc_action", "pc_anchor", "pc", "flow", "seg", "seg_anchor", "T_action2world", "T_goal2world"]
+        if cfg.model.pred_frame == "noisy_goal":
+            eval_keys.append("noisy_goal")
         # if cfg.model.diffuse_ref_frame:
         #     eval_keys.append("goal_origin")
         # if cfg.model.rel_pose:
@@ -229,6 +231,7 @@ def main(cfg):
                 sampled_ref_frames = sampled_ref_frames.cpu()
                 batch["ref_frame"] = sampled_ref_frames
 
+            batch = model.update_batch_frames(batch, update_labels=True)
             pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
             pred_point_world = pred_dict["point"]["pred_world"]
 
@@ -242,9 +245,9 @@ def main(cfg):
 
             for j in range(bs):
                 # expand ground truth pc to compute RMSE for cloth-specific sample
-                gt_pc = batch["pc"][j].unsqueeze(0).to(device)
+                gt_pc_world = batch["pc_world"][j].unsqueeze(0).to(device)
                 seg = batch["seg"][j].unsqueeze(0).to(device)
-                gt_pc = expand_pcd(gt_pc, num_samples * bs)
+                gt_pc_world = expand_pcd(gt_pc_world, num_samples * bs)
                 seg = expand_pcd(seg, num_samples * bs)
 
                 # if predicting reference frame, update ground truth
@@ -256,10 +259,10 @@ def main(cfg):
                 #     gt_pc = gt_pc + expand_pcd(gt_ref_frame[j].unsqueeze(0), num_samples * bs)
                 
                 # put ground truth in world frame
-                T_goal2world = Transform3d(
-                    matrix=expand_pcd(batch["T_goal2world"][j].unsqueeze(0).to(device), num_samples * bs) 
-                )
-                gt_pc_world = T_goal2world.transform_points(gt_pc)
+                # T_goal2world = Transform3d(
+                #     matrix=expand_pcd(batch["T_goal2world"][j].unsqueeze(0).to(device), num_samples * bs) 
+                # )
+                # gt_pc_world = T_goal2world.transform_points(gt_pc)
 
                 seg = seg == 0
                 batch_rmse[j] = flow_rmse(pred_point_world, gt_pc_world, mask=True, seg=seg)

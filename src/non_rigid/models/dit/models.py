@@ -994,65 +994,35 @@ class Joint_DiT_Deformation_Reference_Cross(nn.Module):
         self.num_heads = num_heads
         self.model_cfg = model_cfg
 
-        x_encoder_hidden_dims = hidden_size
-        if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
-            # We are concatenating x and x0 features so we halve the hidden size
-            x_encoder_hidden_dims = hidden_size // 2
+        # Initializing point cloud encoder wrapper.
+        if self.model_cfg.point_encoder == "mlp":
+            encoder_fn = partial(mlp_encoder, in_channels=self.in_channels)
+        elif self.model_cfg.point_encoder == "pn2":
+            encoder_fn = partial(pn2_encoder, in_channels=self.in_channels, model_cfg=self.model_cfg)
+        else:
+            raise ValueError(f"Invalid point_encoder: {self.model_cfg.point_encoder}")
 
-        # Encoder for current timestep x features       
-        if self.model_cfg.x_encoder == "mlp":
-            # x_embedder is conv1d layer instead of 2d patch embedder
-            self.x_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        else:
-            raise ValueError(f"Invalid x_encoder: {self.model_cfg.x_encoder}")
-        
-        # Encoder for y features
-        if self.model_cfg.y_encoder == "mlp":
-            self.y_embedder = nn.Conv1d(
-                in_channels,
-                hidden_size,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.y_encoder == "dgcnn":
-            self.y_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=hidden_size
-            )
-        else:
-            raise ValueError(f"Invalid y_encoder: {self.model_cfg.y_encoder}")            
+        # Creating base encoders - action (x0), anchor (y), and noised prediction (x).
+        self.x_encoder = encoder_fn(out_channels=hidden_size)
+        self.x0_encoder = encoder_fn(out_channels=hidden_size)
+        self.y_encoder = encoder_fn(out_channels=hidden_size)
 
-        # Encoder for x0 features
-        if self.model_cfg.x0_encoder == "mlp":
-            self.x0_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.x0_encoder == "dgcnn":
-            self.x0_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=x_encoder_hidden_dims
-            )
-        elif self.model_cfg.x0_encoder is None:
-            pass
+        # Creating extra feature encoders, if necessary.
+        if self.model_cfg.feature:
+            self.shape_encoder = encoder_fn(out_channels=hidden_size)
+            self.flow_zeromean_encoder = encoder_fn(out_channels=hidden_size)
+            self.x_corr_encoder = encoder_fn(out_channels=hidden_size)
+            self.action_mixer = mlp_encoder(5 * hidden_size, hidden_size)
         else:
-            raise ValueError(f"Invalid x0_encoder: {self.model_cfg.x0_encoder}")
-        
-        # Timestamp embedding
+            self.action_mixer = mlp_encoder(2 * hidden_size, hidden_size)
+
+        # Learnable frame embedding.
+        self.ref_frame_token = nn.Parameter(torch.randn(1, 1, hidden_size))
+
+        # Timestamp embedding.
         self.t_embedder = TimestepEmbedder(hidden_size)
 
-        # DiT blocks
+        # DiT blocks.
         self.blocks = nn.ModuleList(
             [
                 DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
@@ -1060,8 +1030,9 @@ class Joint_DiT_Deformation_Reference_Cross(nn.Module):
             ]
         )
 
-        # functionally setting patch size to 1 for a point cloud
-        self.final_layer = FinalLayer(hidden_size, 1, self.out_channels)
+        # Final layers; functionally setting patch size to 1 for a point cloud.
+        self.final_layer_r = FinalLayer(hidden_size, 1, self.out_channels)
+        self.final_layer_s = FinalLayer(hidden_size, 1, self.out_channels)
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -1074,11 +1045,6 @@ class Joint_DiT_Deformation_Reference_Cross(nn.Module):
 
         self.apply(_basic_init)
 
-        # Initialize x_embed like nn.Linear (instead of nn.Conv2d):
-        w = self.x_embedder.weight.data
-        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-        nn.init.constant_(self.x_embedder.bias, 0)
-
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
@@ -1089,17 +1055,23 @@ class Joint_DiT_Deformation_Reference_Cross(nn.Module):
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
 
         # Zero-out output layers:
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.final_layer.linear.weight, 0)
-        nn.init.constant_(self.final_layer.linear.bias, 0)
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_r.linear.weight, 0)
+        nn.init.constant_(self.final_layer_r.linear.bias, 0)
+
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_s.linear.weight, 0)
+        nn.init.constant_(self.final_layer_s.linear.bias, 0)
 
     def forward(
             self,
-            x: torch.Tensor,
+            xr_t: torch.Tensor,
+            xs_t: torch.Tensor,
             t: torch.Tensor,
             y: torch.Tensor,
-            x0: Optional[torch.Tensor] = None,
+            x0: torch.Tensor,
     ) -> torch.Tensor:
         """
         Forward pass of DiT with scene cross attention.
@@ -1110,35 +1082,56 @@ class Joint_DiT_Deformation_Reference_Cross(nn.Module):
             y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
             x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
         """
-        # encode x, y, x0 features
-        x_emb = self.x_embedder(x)
+        x = xr_t + xs_t
+        if self.model_cfg.type == "flow":
+            x_flow = x
+            x_recon = x + x0
+        else:
+            x_flow = x - x0
+            x_recon = x
 
-        if self.model_cfg.x0_encoder is not None:
-            assert x0 is not None, "x0 features must be provided if x0_encoder is not None"
-            x0_emb = self.x0_embedder(x0)
-            x_emb = torch.cat([x_emb, x0_emb], dim=1)
+        # Encode base features - action (x0), anchor (y), and noised prediction (x).
+        x_enc = self.x_encoder(x)
+        x0_enc = self.x0_encoder(x0)
+        y_enc = self.y_encoder(y).permute(0, 2, 1)
 
-        if self.model_cfg.y_encoder is not None:
-            y_emb = self.y_embedder(y)
-            y_emb = y_emb.permute(0, 2, 1)
+        # Encode extra features, if necessary.
+        if self.model_cfg.feature:
+            shape_enc = self.shape_encoder(
+                x_recon - torch.mean(x_recon, dim=2, keepdim=True)
+            )
+            flow_zeromean_enc = self.flow_zeromean_encoder(
+                x_flow - torch.mean(x_flow, dim=2, keepdim=True)
+            )
+            x_corr_enc = self.x_corr_encoder(
+                x_recon if self.model_cfg.type == "flow" else x_flow
+            )
+            action_features = [x_enc, x0_enc, shape_enc, flow_zeromean_enc, x_corr_enc]
+        else:
+            action_features = [x_enc, x0_enc]
+        
+        # Compress action features to hidden size through action mixer.
+        x_enc = torch.cat(action_features, dim=1)
+        x_enc = self.action_mixer(x_enc).permute(0, 2, 1)
 
-        x = x_emb.permute(0, 2, 1)
+        # Concatenating reference frame token to the action features.
+        x_enc = torch.cat(
+            [x_enc, self.ref_frame_token.expand(x_enc.shape[0], -1, -1)], dim=1
+        )
 
-        # timestep embedding
+        # Timestep embedding.
         t_emb = self.t_embedder(t)
 
         # forward pass through DiT blocks
         for block in self.blocks:
-            x = block(x, y_emb, t_emb)
+            x_enc = block(x_enc, y_enc, t_emb)
 
-        # final layer
-        # (8,512, 128)
-        x = self.final_layer(x, t_emb)
-        # (8,512, 6)
+        xs_out = x_enc[:, :-1, :]  # (8, 512, 128)
+        xr_out = x_enc[:, -1:, :]  # (8, 512, 128)
+        xs_out = self.final_layer_s(xs_out, t_emb).permute(0, 2, 1)
+        xr_out = self.final_layer_r(xr_out, t_emb).permute(0, 2, 1)
 
-        x = x.permute(0, 2, 1)
-
-        return x, delta_center
+        return xr_out, xs_out
 
 
 class Separate_DiT_Deformation_Reference_Cross(nn.Module):
@@ -1162,84 +1155,33 @@ class Separate_DiT_Deformation_Reference_Cross(nn.Module):
         self.out_channels = 6 if learn_sigma else 3
         self.num_heads = num_heads
         self.model_cfg = model_cfg
-
-        x_encoder_hidden_dims = hidden_size
-        if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
-            # We are concatenating x and x0 features so we halve the hidden size
-            x_encoder_hidden_dims = hidden_size // 2
         
-        # Encoder for current timestep x features       
-        if self.model_cfg.x_encoder == "mlp":
-            # x_embedder is conv1d layer instead of 2d patch embedder
-            self.x_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims//2,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
+        # Initializing point cloud encoder wrapper.
+        if self.model_cfg.point_encoder == "mlp":
+            encoder_fn = partial(mlp_encoder, in_channels=self.in_channels)
+        elif self.model_cfg.point_encoder == "pn2":
+            encoder_fn = partial(pn2_encoder, in_channels=self.in_channels, model_cfg=self.model_cfg)
         else:
-            raise ValueError(f"Invalid x_encoder: {self.model_cfg.x_encoder}")
+            raise ValueError(f"Invalid point_encoder: {self.model_cfg.point_encoder}")
+
+        # Creating base encoders - action (x0), anchor (y), and noised prediction (x, xr, xs).
+        self.x_encoder = encoder_fn(out_channels=hidden_size)
+        self.xr_encoder = encoder_fn(out_channels=hidden_size)
+        self.xs_encoder = encoder_fn(out_channels=hidden_size)
+        self.x0_encoder = encoder_fn(out_channels=hidden_size)
+        self.y_encoder = encoder_fn(out_channels=hidden_size)
+
+        # Creating extra feature encoders, if necessary.
+        if self.model_cfg.feature:
+            raise NotImplementedError("Feature encoder not implemented for separate DiT.")
+        else:
+            self.action_r_mixer = mlp_encoder(3 * hidden_size, hidden_size)
+            self.action_s_mixer = mlp_encoder(3 * hidden_size, hidden_size)
         
-        self.xr_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims//2,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-        )
-
-        self.xs_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims//2,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-        )
-
-        # Encoder for y features
-        if self.model_cfg.y_encoder == "mlp":
-            self.y_embedder = nn.Conv1d(
-                in_channels,
-                hidden_size,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.y_encoder == "dgcnn":
-            self.y_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=hidden_size
-            )
-        else:
-            raise ValueError(f"Invalid y_encoder: {self.model_cfg.y_encoder}")            
-
-        # Encoder for x0 features
-        if self.model_cfg.x0_encoder == "mlp":
-            self.x0_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.x0_encoder == "dgcnn":
-            self.x0_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=x_encoder_hidden_dims
-            )
-        elif self.model_cfg.x0_encoder is None:
-            pass
-        else:
-            raise ValueError(f"Invalid x0_encoder: {self.model_cfg.x0_encoder}")
-        
-        # Timestamp embedding
+        # Timestamp embedding.
         self.t_embedder = TimestepEmbedder(hidden_size)
 
-        # DiT blocks
+        # DiT blocks.
         self.blocks_r = nn.ModuleList(
             [
                 DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
@@ -1252,7 +1194,8 @@ class Separate_DiT_Deformation_Reference_Cross(nn.Module):
                 for _ in range(depth)
             ]
         )
-        # functionally setting patch size to 1 for a point cloud
+
+        # Final layers; functionally setting patch size to 1 for a point cloud.
         self.final_layer_r = FinalLayer_r(hidden_size, 1, self.out_channels)
         self.final_layer_s = FinalLayer_s(hidden_size, 1, self.out_channels)
         self.initialize_weights()
@@ -1266,14 +1209,6 @@ class Separate_DiT_Deformation_Reference_Cross(nn.Module):
                     nn.init.constant_(module.bias, 0)
 
         self.apply(_basic_init)
-
-        # Initialize x_embed like nn.Linear (instead of nn.Conv2d):
-        wr = self.xr_embedder.weight.data
-        nn.init.xavier_uniform_(wr.view([wr.shape[0], -1]))
-        nn.init.constant_(self.xr_embedder.bias, 0)
-        ws = self.xs_embedder.weight.data
-        nn.init.xavier_uniform_(ws.view([ws.shape[0], -1]))
-        nn.init.constant_(self.xs_embedder.bias, 0)
 
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
@@ -1304,7 +1239,7 @@ class Separate_DiT_Deformation_Reference_Cross(nn.Module):
             xs_t: torch.Tensor,
             t: torch.Tensor,
             y: torch.Tensor,
-            x0: Optional[torch.Tensor] = None,
+            x0: torch.Tensor,
     ) -> torch.Tensor:
         """
         Forward pass of DiT with scene cross attention.
@@ -1318,27 +1253,28 @@ class Separate_DiT_Deformation_Reference_Cross(nn.Module):
         # encode x, y, x0 features
         
         x = xr_t + xs_t
-        recon_emb = self.x_embedder(x)
+        recon_emb = self.x_encoder(x)
         
-        xr_emb = self.xr_embedder(xr_t)
+        xr_emb = self.xr_encoder(xr_t)
         xr_emb_exp = xr_emb.expand(-1, -1, recon_emb.size(-1))  # [B, hidden_half, N]
         xr_emb = torch.cat([xr_emb_exp, recon_emb], dim=1)
 
-        xs_emb = self.xs_embedder(xs_t)
+        xs_emb = self.xs_encoder(xs_t)
         xs_emb = torch.cat([xs_emb, recon_emb], dim=1)
 
-        if self.model_cfg.x0_encoder is not None:
-            assert x0 is not None, "x0 features must be provided if x0_encoder is not None"
-            x0_emb = self.x0_embedder(x0)
-            xr_emb = torch.cat([xr_emb, x0_emb], dim=1)
-            xs_emb = torch.cat([xs_emb, x0_emb], dim=1)
+        x0_emb = self.x0_encoder(x0)
+        xr_emb = torch.cat([xr_emb, x0_emb], dim=1)
+        xs_emb = torch.cat([xs_emb, x0_emb], dim=1)
 
-        if self.model_cfg.y_encoder is not None:
-            y_emb = self.y_embedder(y)
-            y_emb = y_emb.permute(0, 2, 1)
+        y_emb = self.y_encoder(y)
+        y_emb = y_emb.permute(0, 2, 1)
 
-        xr = xr_emb.permute(0, 2, 1)
-        xs = xs_emb.permute(0, 2, 1)
+        # xr = xr_emb.permute(0, 2, 1)
+        # xs = xs_emb.permute(0, 2, 1)
+
+        # Compress action features to hidden size through action mixers.
+        xr = self.action_r_mixer(xr_emb).permute(0, 2, 1)
+        xs = self.action_s_mixer(xs_emb).permute(0, 2, 1)
 
         # timestep embedding
         t_emb = self.t_embedder(t)
@@ -1359,226 +1295,6 @@ class Separate_DiT_Deformation_Reference_Cross(nn.Module):
         xr = xr.permute(0, 2, 1)
 
         return xr, xs
-
-
-'''
-class Separate_DiT_Deformation_Reference_Cross_Feature(nn.Module):
-    """
-    Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention.
-    """
-    def __init__(
-            self,
-            in_channels=3,
-            hidden_size=1152,
-            depth=28,
-            num_heads=16,
-            mlp_ratio=4.0,
-            learn_sigma=True,
-            model_cfg=None,
-    ):
-        super().__init__()
-        self.learn_sigma = learn_sigma
-        self.in_channels = in_channels
-        # self.out_channels = in_channels * 2 if learn_sigma else in_channels
-        self.out_channels = 6 if learn_sigma else 3
-        self.num_heads = num_heads
-        self.model_cfg = model_cfg
-
-        x_encoder_hidden_dims = hidden_size
-        if self.model_cfg.x_encoder is not None and self.model_cfg.x0_encoder is not None:
-            # We are concatenating x and x0 features so we halve the hidden size
-            x_encoder_hidden_dims = hidden_size // 2
-        
-        # Encoder for current timestep x features       
-        if self.model_cfg.x_encoder == "mlp":
-            # x_embedder is conv1d layer instead of 2d patch embedder
-            self.x_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims // 2,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        else:
-            raise ValueError(f"Invalid x_encoder: {self.model_cfg.x_encoder}")
-
-        self.xs_embedder = nn.Conv1d(
-            in_channels,
-            x_encoder_hidden_dims // 2,
-            kernel_size=1,
-            stride=1,
-            padding=0,
-            bias=True,
-        )
-
-        # Encoder for y features
-        if self.model_cfg.y_encoder == "mlp":
-            self.y_embedder = nn.Conv1d(
-                in_channels,
-                hidden_size,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.y_encoder == "dgcnn":
-            self.y_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=hidden_size
-            )
-        else:
-            raise ValueError(f"Invalid y_encoder: {self.model_cfg.y_encoder}")            
-
-        # Encoder for x0 features
-        if self.model_cfg.x0_encoder == "mlp":
-            self.x0_embedder = nn.Conv1d(
-                in_channels,
-                x_encoder_hidden_dims,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=True,
-            )
-        elif self.model_cfg.x0_encoder == "dgcnn":
-            self.x0_embedder = DGCNN(
-                input_dims=in_channels, emb_dims=x_encoder_hidden_dims
-            )
-        elif self.model_cfg.x0_encoder is None:
-            pass
-        else:
-            raise ValueError(f"Invalid x0_encoder: {self.model_cfg.x0_encoder}")
-        
-        # Timestamp embedding
-        self.t_embedder = TimestepEmbedder(hidden_size)
-
-        # DiT blocks
-        self.blocks = nn.ModuleList(
-            [
-                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
-                for _ in range(depth)
-            ]
-        )
-
-        # functionally setting patch size to 1 for a point cloud
-        self.final_layer_r = FinalLayer(hidden_size, 1, self.out_channels)
-        self.final_layer_s = FinalLayer(hidden_size, 1, self.out_channels)
-        
-        self.ref_frame_token = nn.Parameter(torch.randn(1, 1, hidden_size))
-
-        self.initialize_weights()
-
-    def initialize_weights(self):
-        # Initialize transformer layers:
-        def _basic_init(module):
-            if isinstance(module, nn.Linear):
-                torch.nn.init.xavier_uniform_(module.weight)
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
-
-        self.apply(_basic_init)
-
-        # Initialize x_embed like nn.Linear (instead of nn.Conv2d):
-        w = self.x_embedder.weight.data
-        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-        nn.init.constant_(self.x_embedder.bias, 0)
-
-        ws = self.xs_embedder.weight.data
-        nn.init.xavier_uniform_(ws.view([w.shape[0], -1]))
-        nn.init.constant_(self.xs_embedder.bias, 0)
-
-        # Initialize timestep embedding MLP:
-        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
-        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
-
-        # Zero-out adaLN modulation layers in DiT blocks:
-        for block in self.blocks:
-            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
-            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
-
-        # Zero-out output layers:
-        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.final_layer_r.linear.weight, 0)
-        nn.init.constant_(self.final_layer_r.linear.bias, 0)
-
-        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.final_layer_s.linear.weight, 0)
-        nn.init.constant_(self.final_layer_s.linear.bias, 0)
-
-    def forward(
-            self,
-            xr_t: torch.Tensor,
-            xs_t: torch.Tensor,
-            t: torch.Tensor,
-            y: torch.Tensor,
-            x0: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """
-        Forward pass of DiT with scene cross attention.
-
-        Args:
-            x (torch.Tensor): (B, D, N) tensor of batched current timestep x (e.g. noised action) features
-            t (torch.Tensor): (B,) tensor of diffusion timesteps
-            y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
-            x0 (Optional[torch.Tensor]): (B, D, N) tensor of un-noised x (e.g. action) features
-        """
-        # noise-centering, if enabled
-        
-        #if self.model_cfg.type == "point":
-        #    delta_center = torch.mean(x, dim=2, keepdim=True)
-        #    x = x - delta_center
-        #    y = y - delta_center
-        #    x0 = x0 - delta_center
-        #elif self.model_cfg.type == "flow":
-        #    reconstruction = x + x0
-        #    delta_center = torch.mean(reconstruction, dim=2, keepdim=True)
-        #    x = x - delta_center
-        #    y = y - delta_center
-        #    x0 = x0 - delta_center
-        
-
-        # encode x, y, x0 features
-        x = xr_t + xs_t        
-        x_emb = self.x_embedder(x)
-        shape_emb = self.xs_embedder(xs_t)
-        x_emb = torch.cat([x_emb, shape_emb], dim=1)
-
-        if self.model_cfg.x0_encoder is not None:
-            assert x0 is not None, "x0 features must be provided if x0_encoder is not None"
-            x0_emb = self.x0_embedder(x0)
-            x_emb = torch.cat([x_emb, x0_emb], dim=1)
-
-        if self.model_cfg.y_encoder is not None:
-            y_emb = self.y_embedder(y)
-            y_emb = y_emb.permute(0, 2, 1)
-
-        x = x_emb.permute(0, 2, 1)
-
-        token = self.ref_frame_token.expand(x.size(0), 1, self.ref_frame_token.size(-1))
-        x = torch.cat([x, token], dim=1)
-
-        # timestep embedding
-        t_emb = self.t_embedder(t)
-
-        # forward pass through DiT blocks
-        for block in self.blocks:
-            x = block(x, y_emb, t_emb)
-        # (8,512, 128)
-        
-        xr_token = x[:, -1:, :]
-        xs_token = x[:, :-1, :]
-
-        # final layer
-        xs = self.final_layer_s(xs_token, t_emb) # (8,512, 6)
-
-        xr = self.final_layer_r(xr_token, t_emb) # (8,1, 6)
-
-        xs = xs.permute(0, 2, 1)
-        xr = xr.permute(0, 2, 1)
-
-        return xr, xs
-'''
         
 #################################################################################
 #                               Mu-Frame Model                                  #

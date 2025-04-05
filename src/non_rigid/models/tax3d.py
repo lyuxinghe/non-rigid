@@ -443,7 +443,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             0, self.diff_steps, (self.batch_size,), device=self.device
         ).long()
         
-        # batch = self.update_prediction_frame_batch(batch, stage="train")
         batch = self.update_batch_frames(batch, update_labels=True)
         _, loss = self(batch, t)
         #########################################################
@@ -485,7 +484,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
                 train_dataloader.dataset.set_eval_mode(True)
 
                 batch = next(iter(train_dataloader))  # Fetch new batch with eval_mode=True
-                # batch = self.update_prediction_frame_batch(batch, stage="inference")
                 batch = self.update_batch_frames(batch, update_labels=True)
 
                 # TODO: Debug why without this line, it will rasie gpu/cpu different device error
@@ -537,7 +535,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         self.eval()
         with torch.no_grad():
             # winner-take-all predictions
-            # batch = self.update_prediction_frame_batch(batch, stage="inference")
             batch = self.update_batch_frames(batch, update_labels=True)
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
         
@@ -579,7 +576,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         if self.dataset_cfg.material == "rigid":
             # winner-take-all predictions
-            # batch = self.update_prediction_frame_batch(batch, stage="inference")
+            batch = self.update_batch_frames(batch, update_labels=True)
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
             return {
                 "rmse": pred_wta_dict["rmse"],

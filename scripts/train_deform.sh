@@ -25,12 +25,12 @@ COMMAND=$@
 DATASET_PARAMS="dataset=$DATASET_NAME"
 
 if [ $MODEL_TYPE == "cross_flow" ]; then
-  echo "Training cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
+  echo "Training cross flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=flow"
 
 elif [ $MODEL_TYPE == "cross_point" ]; then
-  echo "Training cross relative point model on dataset $DATASET_NAME with command: $COMMAND."
+  echo "Training cross point model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=point"
 
@@ -38,6 +38,11 @@ elif [ $MODEL_TYPE == "ddrd" ]; then
   echo "Training shape-frame model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=ddrd model.type=point model.model_take=separate"
+
+elif [ $MODEL_TYPE == "ddrd_test" ]; then
+  echo "Training shape-frame model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=ddrd model.type=point model.model_take=joint"
 
 fi
 
