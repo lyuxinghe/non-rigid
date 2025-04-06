@@ -200,8 +200,8 @@ class RPDiffDataset(data.Dataset):
         s_anchor_pc_ = T1.transform_points(s_anchor_pc)
         a_action_pc_ = T0.transform_points(a_action_pc)
 
-        T_goalUnAug = Translate(-scene_center.unsqueeze(0)).compose(T1.inverse().compose(Translate(scene_center.unsqueeze(0))))
-        T_actionUnAug = Translate(-action_center.unsqueeze(0)).compose(T0.inverse().compose(Translate(action_center.unsqueeze(0))))
+        T_goalUnAug = Translate(scene_center.unsqueeze(0)).compose(T1.inverse().compose(Translate(-scene_center.unsqueeze(0))))
+        T_actionUnAug = Translate(action_center.unsqueeze(0)).compose(T0.inverse().compose(Translate(-action_center.unsqueeze(0))))
 
         goal_action_pc_ = s_goal_action_pc_ + scene_center
         anchor_pc_ = s_anchor_pc_ + scene_center

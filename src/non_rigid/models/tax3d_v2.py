@@ -24,6 +24,7 @@ from non_rigid.models.dit.diffusion import create_diffusion_mu, create_diffusion
 from non_rigid.models.dit.models import (
     TAX3Dv2_MuFrame_DiT,
     TAX3Dv2_FixedFrame_Token_DiT,
+    TAX3Dv2_FixedFrame_Dual_DiT,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -36,6 +37,8 @@ def TAX3Dv2_MuFrame_DiT_xS(**kwargs):
 def TAX3Dv2_FixedFrame_DiT_xS(**kwargs):
     # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
     return TAX3Dv2_FixedFrame_Token_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
+    #return TAX3Dv2_FixedFrame_Dual_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
+
 
 # TODO: clean up all unused functions
 DiT_models = {
@@ -374,10 +377,13 @@ class TAX3Dv2BaseModule(L.LightningModule):
                 matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
             )
             pred_ref = expand_pcd(pred_ref, num_samples)
-            
-            pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
-            goal_point_world = T_goalUnAug.transform_points(goal_pc)
-            
+            if self.model_name == "tax3dv2_muframe":
+                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
+                goal_point_world = T_goalUnAug.transform_points(goal_pc)
+            else:
+                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
+                goal_point_world = T_goalUnAug.transform_points(goal_pc + pred_ref)
+
             pred_point_world = pred_point_world / scaling_factor
             goal_point_world = goal_point_world / scaling_factor
 
@@ -747,21 +753,21 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
 
     def update_prediction_frame_batch(self, batch, stage):
         # TODO: for now, since gmm is not available, we will use noisy goal to simulate it
-        if self.pred_ref_frame == "anchor":
+        if self.pred_frame == "anchor":
             pred_ref = batch["pc_anchor"].mean(axis=1, keepdim=True)
-        elif self.pred_ref_frame == "noisy_goal":
+        elif self.pred_frame == "noisy_goal":
             if stage == "train":
                 # we are adding noise to the goal to train model to robust to gmm error
                 pred_ref = batch["pc"].mean(axis=1, keepdim=True)
-                pred_ref = pred_ref + self.ref_error_scale * torch.randn_like(pred_ref)
+                pred_ref = pred_ref + self.noisy_goal_scale * torch.randn_like(pred_ref)
             elif stage == "inference":
                 # for now, we are using noisy goal to simulate gmm
                 pred_ref = batch["pc"].mean(axis=1, keepdim=True)
-                pred_ref = pred_ref + self.ref_error_scale * torch.randn_like(pred_ref)
+                pred_ref = pred_ref + self.noisy_goal_scale * torch.randn_like(pred_ref)
             else:
                 raise ValueError(f"Invalid stage: {stage}")
         else:
-            raise ValueError(f"Invalid prediction reference frame: {self.pred_ref_frame}")
+            raise ValueError(f"Invalid prediction reference frame: {self.pred_frame}")
 
         action_mean = batch["pc_action"].mean(axis=1, keepdim=True)
         anchor_mean = pred_ref

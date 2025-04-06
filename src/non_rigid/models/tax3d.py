@@ -691,53 +691,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
                 "rmse_wta": pred_wta_dict["rmse_wta"],
             }
     
-
-'''
-class SceneDisplacementModule(DenseDisplacementDiffusionModule):
-    """
-    Scene-level DDD module. Applies self-attention to the entire scene.
-    """
-    def __init__(self, network, cfg) -> None:
-        super().__init__(network, cfg)
-
-    def get_model_kwargs(self, batch, num_samples=None):
-        pc_action = batch["pc_action"].to(self.device)
-        if num_samples is not None:
-            # expand point clouds if num_samples is provided; used for WTA predictions
-            pc_action = expand_pcd(pc_action, num_samples)
-
-        pc_action = pc_action.permute(0, 2, 1) # channel first
-        model_kwargs = dict(x0=pc_action)
-        return model_kwargs
-    
-    def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
-        """
-        Get world-frame predictions from the given batch and predictions.
-        """
-        T_goal2world = Transform3d(
-            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
-        )
-
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
-        pc_action_world = T_goal2world.transform_points(pc_action)
-        pred_flow_world = pred_point_world - pc_action_world
-        results_world = [
-            T_goal2world.transform_points(res) for res in pred_dict["results"]
-        ]
-        return pred_flow_world, pred_point_world, results_world
-    
-    def get_viz_args(self, batch, viz_idx):
-        """
-        Get visualization arguments for wandb logging.
-        """
-        pc_pos_viz = batch["pc"][viz_idx, :, :3]
-        pc_action_viz = batch["pc_action"][viz_idx, :, :3]
-        viz_args = {
-            "pc_pos_viz": pc_pos_viz,
-            "pc_action_viz": pc_action_viz,
-        }
-        return viz_args
-'''
 class CrossDisplacementModule(DenseDisplacementDiffusionModule):
     """
     Object-centric DDD module. Applies cross attention between action and anchor objects.

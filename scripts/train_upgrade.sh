@@ -13,6 +13,7 @@
 # Noisy Goal Centroid
 # ./train_upgrade.sh 0 cross_point_relative rpdiff_fit online model.pred_ref_frame=noisy_goal model.ref_error_scale=1.0 resources.num_workers=16
 # ./train_upgrade.sh 0 cross_flow_relative rpdiff_fit online model.pred_ref_frame=noisy_goal model.ref_error_scale=1.0 resources.num_workers=16
+# ./train_upgrade.sh 0 tax3dv2_fixedframe rpdiff_fit offline model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.diff_rotation_noise_scale=45 resources.num_workers=16
 
 # Resuming from a crashed run:
 #./train_rigid.sh 0 ddrd_flow_separate rpdiff_fit online checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-03-02/17-41-55/checkpoints/last.ckpt'
@@ -68,6 +69,11 @@ elif [ $MODEL_TYPE == "tax3dv2_muframe" ]; then
   echo "Training TAX3Dv2 Mu-Frame point model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=tax3dv2_muframe model.type=point"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
+elif [ $MODEL_TYPE == "tax3dv2_fixedframe" ]; then
+  echo "Training TAX3Dv2 Fixed-Frame point model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=tax3dv2_fixedframe model.type=point"
   DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
 fi
 
