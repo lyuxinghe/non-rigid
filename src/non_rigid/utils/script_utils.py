@@ -44,18 +44,24 @@ def create_model(cfg):
     if cfg.model.name == "df_cross":
         network_fn = DiffusionTransformerNetwork
         module_fn = CrossDisplacementModule
+
     elif cfg.model.name == "ddrd":
         network_fn = DeformationReferenceDiffusionTransformerNetwork
         module_fn = DDRDModule
-    elif cfg.model.name == "tax3dv2_muframe":
+
+    elif cfg.model.name == "tax3dv2":
         network_fn = TAX3Dv2Network
-        module_fn = TAX3Dv2MuFrameModule
-    elif cfg.model.name == "tax3dv2_fixedframe":
-        network_fn = TAX3Dv2Network
-        module_fn = TAX3Dv2FixedFrameModule
+        if cfg.model.frame_type == "fixed":
+            module_fn = TAX3Dv2FixedFrameModule
+        elif cfg.model.frame_type == "mu":
+            module_fn = TAX3Dv2MuFrameModule
+        else:
+            raise ValueError(f"Invalid frame type: {cfg.model.frame_type}")
+        
     elif cfg.model.name == "mu":
         network_fn = MuFrameDiffusionTransformerNetwork
         module_fn = MuFrameCrossDisplacementModule
+        
     else:
         raise ValueError(f"Invalid model name: {cfg.model.name}")
 

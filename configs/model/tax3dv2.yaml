@@ -1,4 +1,4 @@
-name: ddrd
+name: tax3dv2
 
 #####################################################
 # Model Architecture Parameters
@@ -9,10 +9,9 @@ in_channels: 3 # Number of input channels
 learn_sigma: True # Learn sigma for diffusion
 cross_atten: True # Use cross attention for diffusion
 point_encoder: mlp # (mlp, pn2) Point cloud encoder architecture
-feature: False # If True, encode additional features
-joint_encode: False # If True, use joint encoding for point cloud feature
-predict_xstart: False
-model_take: joint # (joint, separate)
+feature: True # If True, encode additional features
+joint_encode: True # If True, use joint encoding for point cloud feature
+frame_type: fixed # (fixed, mu) Type of frame-prediction for the model
 
 #####################################################
 # Model-specific Dataset/Data-processing Parameters
@@ -26,7 +25,7 @@ action_context_frame: action_center # [action_center] frame for action context
 # Dataset-specific Model Parameters
 #####################################################
 # These are shared and overriden by the dataset config.
-pcd_scale: null # Scale range for the point clouds
+pcd_scale: 1 # Scale range for the point clouds
 
 #####################################################
 # Model Diffusion Parameters

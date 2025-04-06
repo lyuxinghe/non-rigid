@@ -44,6 +44,11 @@ elif [ $MODEL_TYPE == "ddrd_test" ]; then
 
   MODEL_PARAMS="model=ddrd model.type=point model.model_take=joint"
 
+elif [ $MODEL_TYPE == "tax3dv2" ]; then
+  echo "Training tax3dv2 model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=tax3dv2 model.type=point"
+
 fi
 
 WANDB_MODE=$WANDB_MODE python train.py \
