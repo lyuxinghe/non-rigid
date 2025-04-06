@@ -64,6 +64,11 @@ elif [ $MODEL_TYPE == "ddrd_point_separate" ]; then
 
   MODEL_PARAMS="model=ddrd model.type=point model.model_take=separate"
   DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
+elif [ $MODEL_TYPE == "tax3dv2_muframe" ]; then
+  echo "Training TAX3Dv2 Mu-Frame point model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=tax3dv2_muframe model.type=point"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
 fi
 
 WANDB_MODE=$WANDB_MODE python train.py \

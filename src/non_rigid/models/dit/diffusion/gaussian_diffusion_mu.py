@@ -157,7 +157,8 @@ class GaussianDiffusionMuFrame:
         model_mean_type,
         model_var_type,
         loss_type,
-        time_based_weighting
+        time_based_weighting,
+        rotation_noise_scale,
     ):
 
         self.model_mean_type = model_mean_type
@@ -168,6 +169,9 @@ class GaussianDiffusionMuFrame:
         # TODO: custom variance for each?
         self.var_r = 1.0
         self.var_s = 1.0
+
+        # diffusion noise scale
+        self.rotation_noise_scale = rotation_noise_scale
 
         # Use float64 for accuracy.
         betas = np.array(betas, dtype=np.float64)
@@ -1098,7 +1102,7 @@ class GaussianDiffusionMuFrame:
         w_r = 1.0 - coeff
         return w_r, w_s
 
-    def training_losses(self, model, x_start, t, translation_noise_scale, rotation_noise_scale, model_kwargs=None, noise=None):
+    def training_losses(self, model, x_start, t, model_kwargs=None, noise=None):
         """
         Compute training losses for a single timestep using separate forward processes for
         the reference (R) and shape (S) components.
@@ -1124,6 +1128,52 @@ class GaussianDiffusionMuFrame:
         # Sample independent noise terms for each branch.
         noise_r_err = th.randn_like(xr_start_err)  # noise for R: [B, C, 1]
         noise_s = th.randn_like(xs_start)  # noise for S: [B, C, N]
+
+        if self.rotation_noise_scale:
+            N, C, P = x_start.shape  # e.g. [batch_size, 3, num_points]
+
+            # 1. Sample random rotation axes and normalize them.
+            random_axis = th.randn(N, 3, device=x_start.device)
+            random_axis = random_axis / random_axis.norm(dim=1, keepdim=True)
+
+            # 2. Sample random rotation angles (in degrees) and convert to radians.
+            random_angle = th.randn(N, device=x_start.device) * self.rotation_noise_scale
+            random_angle_rad = random_angle * (np.pi / 180)
+
+            # 3. Compute sin and cos for each angle.
+            sin_theta = th.sin(random_angle_rad)
+            cos_theta = th.cos(random_angle_rad)
+            one_minus_cos = 1 - cos_theta
+
+            # 4. Extract axis components.
+            x = random_axis[:, 0]
+            y = random_axis[:, 1]
+            z = random_axis[:, 2]
+            zeros = th.zeros_like(x)
+
+            # 5. Construct the skew-symmetric cross-product matrices for each axis.
+            #    Each K is of shape (3,3), and K will have shape (N, 3, 3)
+            K = th.stack([th.stack([zeros, -z, y], dim=1),
+                        th.stack([z, zeros, -x], dim=1),
+                        th.stack([-y, x, zeros], dim=1)], dim=1)
+
+            # 6. Compute K squared (batched matrix multiplication)
+            K2 = th.bmm(K, K)
+
+            # 7. Create the identity matrix for each batch element.
+            I = th.eye(3, device=x_start.device).unsqueeze(0).repeat(N, 1, 1)
+
+            # 8. Compute the rotation matrices using the Rodrigues formula:
+            #    R = I + sin(theta)*K + (1-cos(theta))*(K^2)
+            R = I + sin_theta.view(N, 1, 1) * K + one_minus_cos.view(N, 1, 1) * K2
+
+            # 9. Apply the rotation matrices to the point clouds.
+            #    x_start: [N, 3, P] -> rotated_pc: [N, 3, P]
+            rotated_pc = th.bmm(R, x_start)
+
+            # 10. The rotation noise is the difference between the rotated and original points.
+            rotation_noise = rotated_pc - x_start
+            noise_s = noise_s + rotation_noise
 
         # Compute the forward noising for each branch.
         xr_err_t = self.q_sample(xr_start_err, t, noise=noise_r_err)  # [B, C, 1]
