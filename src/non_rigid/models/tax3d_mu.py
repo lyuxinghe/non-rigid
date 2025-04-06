@@ -589,6 +589,7 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
             }
         else:
             # winner-take-all predictions
+            batch = self.update_prediction_frame_batch(batch, stage="inference")
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
             return {
                 "rmse": pred_wta_dict["rmse"],

@@ -64,13 +64,13 @@ class RPDiffDataset(data.Dataset):
         child_start_pcd = demo['multi_obj_start_pcd'].item()['child']
         parent_final_pcd = demo['multi_obj_final_pcd'].item()['parent']
         child_final_pcd = demo['multi_obj_final_pcd'].item()['child']
-        relative_trans = demo['relative_trans']
+        #relative_trans = demo['relative_trans']
 
         action_pc = torch.as_tensor(child_start_pcd).float()
         anchor_pc = torch.as_tensor(parent_start_pcd).float()
         goal_action_pc = torch.as_tensor(child_final_pcd).float()
         goal_anchor_pc = torch.as_tensor(parent_final_pcd).float()  # same as anchor_pc
-        relative_trans = torch.as_tensor(relative_trans).float()
+        #relative_trans = torch.as_tensor(relative_trans).float()
 
         # TODO: apply scale factor to adjust relative_trans aw
         action_pc *= self.dataset_cfg.pcd_scale_factor
@@ -147,9 +147,9 @@ class RPDiffDataset(data.Dataset):
 
         # Extract rotation and translation from relative_trans
         # TODO: adjust them with the scaling factor
-        T_init = relative_trans
-        R_action_to_goal = relative_trans[:3, :3]  # Rotation matrix
-        t_action_to_goal = relative_trans[:3, 3]   # Translation vector
+        #T_init = relative_trans
+        #R_action_to_goal = relative_trans[:3, :3]  # Rotation matrix
+        #t_action_to_goal = relative_trans[:3, 3]   # Translation vector
 
         '''
         if self.centroid_frame:

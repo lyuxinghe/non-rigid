@@ -26,7 +26,8 @@ from non_rigid.models.tax3d_mu import (
 )
 from non_rigid.models.tax3d_v2 import (
     TAX3Dv2Network,
-    TAX3Dv2Module,
+    TAX3Dv2MuFrameModule,
+    TAX3Dv2FixedFrameModule
 )
 
 from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule
@@ -44,9 +45,12 @@ def create_model(cfg):
     elif cfg.model.name == "ddrd":
         network_fn = DeformationReferenceDiffusionTransformerNetwork
         module_fn = DDRDModule
-    elif cfg.model.name == "tax3d_v2":
+    elif cfg.model.name == "tax3dv2_muframe":
         network_fn = TAX3Dv2Network
-        module_fn = TAX3Dv2Module
+        module_fn = TAX3Dv2MuFrameModule
+    elif cfg.model.name == "tax3dv2_fixedframe":
+        network_fn = TAX3Dv2Network
+        module_fn = TAX3Dv2FixedFrameModule
     elif cfg.model.name == "mu":
         network_fn = MuFrameDiffusionTransformerNetwork
         module_fn = MuFrameCrossDisplacementModule

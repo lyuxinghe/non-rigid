@@ -59,6 +59,14 @@ def load_rpdiff(dir, num_demos = None):
         points_anchor = demo['multi_obj_start_pcd'].item()['parent']
         points_action = demo['multi_obj_start_pcd'].item()['child']
         points_goal_action = demo['multi_obj_final_pcd'].item()['child']
+
+        if points_goal_action.size < 512 or points_action.size < 512 or points_anchor.size < 512:
+            print(f"[WARN] Skipping file {npz_file} due to small point cloud:")
+            print(f"       goal_pcd shape:   {points_goal_action.shape}  (size={points_goal_action.size})")
+            print(f"       action_pcd shape: {points_action.shape}  (size={points_action.size})")
+            print(f"       anchor_pcd shape: {points_anchor.shape}  (size={points_anchor.size})")
+            continue
+
         loaded_action.append(points_action)
         loaded_anchor.append(points_anchor)
         loaded_goal_action.append(points_goal_action)
@@ -374,6 +382,8 @@ def compute_scaling_factor(goal_action_pcds, action_pcds, anchor_pcds, mode='anc
     print(f"[INFO] TEST Total scaled variance     : {total_var_scaled}")
 '''
 
+import numpy as np
+
 def compute_variance_stats(goal_pcds, action_pcds, anchor_pcds, scalar=1.0, mode='anchor_centroid', noisy_std=1.0, label=''):
     centers, shapes, flows = [], [], []
 
@@ -394,7 +404,8 @@ def compute_variance_stats(goal_pcds, action_pcds, anchor_pcds, scalar=1.0, mode
             flow = (goal_pcd - center) - (action_pcd - center_action)
 
         centers.append(center)
-        shapes.append(goal_pcd - center_goal)
+        # Only use action object for shape variance now
+        shapes.append(action_pcd - center_action)
         flows.append(flow)
 
     centers = np.stack(centers, axis=0)
@@ -412,7 +423,6 @@ def compute_variance_stats(goal_pcds, action_pcds, anchor_pcds, scalar=1.0, mode
     print(f"[INFO] {label} flow variance   (F):      {var_F}")
     print(f"[INFO] {label} mean flow:                {mean_F}")
     print(f"[INFO] {label} flow - mean(flow) var:    {var_F_centered}")
-    print(f"[INFO] {label} total variance (R + S):   {var_R + var_S}")
     print(f"[INFO] {label} suggested noise stds     : center = {np.sqrt(var_R.mean()):.4f}, shape = {np.sqrt(var_S.mean()):.4f}")
 
     return {
@@ -421,27 +431,22 @@ def compute_variance_stats(goal_pcds, action_pcds, anchor_pcds, scalar=1.0, mode
         'var_F': var_F,
         'mean_F': mean_F,
         'var_F_centered': var_F_centered,
-        'total_var': var_R + var_S
     }
 
 
 def compute_scaling_factor(goal_action_pcds, action_pcds, anchor_pcds, mode='anchor_centroid', noisy_std=1.0, test_scale=15):
     """
-    Computes scalar scaling factor based on variance of centers and shapes, plus flow statistics.
+    Computes a scalar scaling factor based only on the shape variance of the action object point cloud.
     """
-    assert mode in ['anchor_centroid', 'noisy_goal'], "Invalid mode"
-
-    print("[INFO] Calculating ORIGINAL variances...")
+    print("[INFO] Calculating shape-based scale from action point clouds...")
     original_stats = compute_variance_stats(
         goal_action_pcds, action_pcds, anchor_pcds,
         scalar=1.0, mode=mode, noisy_std=noisy_std, label='Original'
     )
 
-    axis_scaling = np.sqrt(1.0 / original_stats['total_var'])
-    scalar_scaling = axis_scaling.mean()
-
-    print(f"[INFO] Per-axis scaling factor:       {axis_scaling}")
-    print(f"[INFO] Scalar scaling factor:         {scalar_scaling}")
+    # Use only the shape variance (action object size)
+    scalar_scaling = 1.0 / np.sqrt(original_stats['var_S'].mean())
+    print(f"[INFO] Suggested scalar scaling factor (based on action shape): {scalar_scaling:.4f}")
 
     print("\n[INFO] Recomputing SCALED variances (suggested scale)...")
     scaled_stats = compute_variance_stats(
@@ -456,6 +461,7 @@ def compute_scaling_factor(goal_action_pcds, action_pcds, anchor_pcds, mode='anc
     )
 
     return scalar_scaling, original_stats, scaled_stats, test_scaled_stats
+
 
 
 # Example usage
@@ -485,7 +491,9 @@ if __name__ == "__main__":
     print(f"NDF Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
     '''
     
-    rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_med_single/task_name_mug_on_rack', num_demos=None)
+    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/can_in_cabinet_stack/task_name_stack_can_in_cabinet', num_demos=None)
+    rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf', num_demos=None)
+
     '''
     mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_action, scaling_factor=10.0)
     print(f"RPDiff Action Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
