@@ -26,29 +26,21 @@ from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
 
 
-def Mu_DiT_Take1_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def Mu_DiT_Take1_xS(**kwargs):
     print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take1_xS")
-    hidden_size = 132 if use_rotary else 128
-    return Mu_DiT_Take1(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Mu_DiT_Take1(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def Mu_DiT_Take2_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def Mu_DiT_Take2_xS(**kwargs):
     print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take2_xS")
-    hidden_size = 132 if use_rotary else 128
-    return Mu_DiT_Take2(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Mu_DiT_Take2(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def Mu_DiT_Take3_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def Mu_DiT_Take3_xS(**kwargs):
     print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take3_xS")
-    hidden_size = 132 if use_rotary else 128
-    return Mu_DiT_Take3(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Mu_DiT_Take3(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def Mu_DiT_Take4_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
+def Mu_DiT_Take4_xS(**kwargs):
     print("MuFrameDiffusionTransformerNetwork: Mu_DiT_Take4_xS")
-    hidden_size = 132 if use_rotary else 128
-    return Mu_DiT_Take4(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+    return Mu_DiT_Take4(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
 # TODO: clean up all unused functions
 DiT_models = {
@@ -71,7 +63,6 @@ def get_model(model_cfg):
         model_take = "Take4"
     else:
         raise ValueError(f"Invalid model take: {model_cfg.model_take}")
-    # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
     model_name = f"Mu_DiT_{model_take}_{model_cfg.size}"
     return DiT_models[model_name]
 
@@ -83,7 +74,6 @@ class MuFrameDiffusionTransformerNetwork(nn.Module):
     def __init__(self, model_cfg=None):
         super().__init__()
         self.dit = get_model(model_cfg)(
-            use_rotary=model_cfg.rotary,
             in_channels=model_cfg.in_channels,
             learn_sigma=model_cfg.learn_sigma,
             model_cfg=model_cfg,
@@ -108,7 +98,8 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
         self.wandb_cfg = cfg.wandb
         self.prediction_type = self.model_cfg.type # flow or point
         self.mode = cfg.mode # train or eval
-        self.pred_ref_frame = self.model_cfg.pred_ref_frame
+        self.pred_frame = self.model_cfg.pred_frame
+        self.noisy_goal_scale = self.model_cfg.noisy_goal_scale
 
         # prediction type-specific processing
         # TODO: eventually, this should be removed by updating dataset to use "point" instead of "pc"
@@ -119,13 +110,12 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid prediction type: {self.prediction_type}")
         
-        if self.pred_ref_frame == "noisy_goal":
-            assert self.model_cfg.ref_error_scale != 0.0
-            self.ref_error_scale = self.model_cfg.ref_error_scale
-        elif self.pred_ref_frame == "anchor":
-            self.ref_error_scale = 0.0
+        if self.pred_frame == "noisy_goal":
+            assert self.model_cfg.noisy_goal_scale > 0.0
+        elif self.pred_frame == "anchor_center":
+            assert self.model_cfg.noisy_goal_scale == 0.0
         else:
-            raise ValueError(f"Invalid prediction type: {self.pred_ref_frame}")
+            raise ValueError(f"Invalid prediction type: {self.pred_frame}")
 
         # mode-specific processing
         if self.mode == "train":
@@ -171,8 +161,8 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
         #print(f"### Translation Noise Scale: {self.diff_translation_noise_scale}")
         #print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
         print("Initializing Mu-Frame Dense Displacement Diffusion Module")
-        print(f"### Prediction Reference Frame: {self.pred_ref_frame}")
-        print(f"### Referemce Noise Scale: {self.ref_error_scale}")
+        print(f"### Prediction Reference Frame: {self.pred_frame}")
+        print(f"### Referemce Noise Scale: {self.noisy_goal_scale}")
 
     def configure_optimizers(self):
         assert self.mode == "train", "Can only configure optimizers in training mode."
@@ -198,7 +188,7 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
         """
         raise NotImplementedError("This should be implemented in the derived class.")
     
-    def update_prediction_frame_batch(self, batch, stage):
+    def update_batch_frames(self, batch, update_labels=False):
         """
         Convert data batch from world frame to prediction frame.
         """
@@ -214,8 +204,9 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
         """
         Forward pass to compute diffusion training loss.
         """
-        assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
-        pred_ref = batch["pred_ref"]
+        # assert "pred_ref" in batch.keys(), "Please run update_prediction_frame_batch to update the data batch!"
+        # pred_ref = batch["pred_ref"]
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
         
         ground_truth = batch[self.label_key].permute(0, 2, 1) # channel first
         model_kwargs = self.get_model_kwargs(batch)

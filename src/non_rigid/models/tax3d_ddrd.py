@@ -40,12 +40,7 @@ DiT_models = {
 
 def get_model(model_cfg):
     cross = "Cross_" if model_cfg.cross_atten else ""
-    joint = "Joint_" if model_cfg.joint_encode else ""
-    # feature = "Feature_" if model_cfg.feature else ""
-    # encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
-
     model_take = "Joint_" if model_cfg.model_take == "joint" else "Separate_" if model_cfg.model_take == "separate" else ""
-    # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
     model_name = f"{model_take}DiT_Deformation_Reference_{cross}{model_cfg.size}"
     return DiT_models[model_name]
 
@@ -686,6 +681,8 @@ class DDRDModule(DenseDeformationReferenceDiffusionModule):
         pred_frame = expand_pcd(batch["pred_frame"].to(self.device), num_samples)
         action_context_frame = expand_pcd(batch["action_context_frame"].to(self.device), num_samples)
 
+        # handle scaling logic
+        
         pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"] + pred_frame)
         pc_action_world = T_action2world.transform_points(pc_action + action_context_frame)
         pred_flow_world = pred_point_world - pc_action_world

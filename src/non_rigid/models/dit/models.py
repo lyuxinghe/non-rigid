@@ -906,7 +906,6 @@ class Joint_DiT_Deformation_Reference_Cross(nn.Module):
 
         return xr_out, xs_out
 
-
 class Separate_DiT_Deformation_Reference_Cross(nn.Module):
     """
     Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention.
