@@ -2,16 +2,11 @@ from typing import Any, Dict
 
 import lightning as L
 import numpy as np
-import omegaconf
-import rpad.visualize_3d.plots as vpl
-import plotly.graph_objects as go
 import torch
-import torch.nn.functional as F
 import wandb
 from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
 from torch import nn, optim
-from torch_geometric.nn import fps
 
 from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
@@ -323,28 +318,24 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             batch: the input batch
             num_samples: the number of samples to generate
         """
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
         
-        # ground_truth = batch[self.label_key].to(self.device)
         seg = batch["seg"].to(self.device)
         ground_truth_point_world = batch["pc_world"].to(self.device)
-        # goal_pc = batch["pc"].to(self.device)
         scaling_factor = self.dataset_cfg.pcd_scale_factor
 
         # re-shaping and expanding for winner-take-all
         bs = ground_truth_point_world.shape[0]
-        # ground_truth = expand_pcd(ground_truth, num_samples)
         seg = expand_pcd(seg, num_samples)
-        # goal_pc = expand_pcd(goal_pc, num_samples)
         ground_truth_point_world = expand_pcd(ground_truth_point_world, num_samples)
 
         # generating diffusion predictions
         pred_dict = self.predict(
             batch, num_samples, unflatten=False, progress=True, full_prediction=True,
         )
-        # pred = pred_dict[self.prediction_type]["pred"]
         pred_point_world = pred_dict["point"]["pred_world"]
 
-        # scale the pcd back to original size for error calculation
+        # TODO: this should happen inside get model kwags
         # pred_scaled = pred / scaling_factor
         # ground_truth_scaled = ground_truth / scaling_factor
 

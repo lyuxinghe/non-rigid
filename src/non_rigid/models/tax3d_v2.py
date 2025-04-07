@@ -2,20 +2,11 @@ from typing import Any, Dict
 
 import lightning as L
 import numpy as np
-import omegaconf
-import plotly.express as px
-import rpad.pyg.nets.dgcnn as dgcnn
-import rpad.visualize_3d.plots as vpl
 import torch
-import torch.nn.functional as F
-import torch_geometric.data as tgd
-import torch_geometric.transforms as tgt
-import torchvision as tv
 import wandb
 from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
 from torch import nn, optim
-from torch_geometric.nn import fps
 
 from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
@@ -335,27 +326,23 @@ class TAX3Dv2BaseModule(L.LightningModule):
         """
         assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames to update the data batch!"
 
-        # ground_truth = batch[self.label_key].to(self.device)
         seg = batch["seg"].to(self.device)
         ground_truth_point_world = batch["pc_world"].to(self.device)
-        # goal_pc = batch["pc"].to(self.device)
         scaling_factor = self.dataset_cfg.pcd_scale_factor
 
         # re-shaping and expanding for winner-take-all
         bs = ground_truth_point_world.shape[0]
-        # ground_truth = expand_pcd(ground_truth, num_samples)
         seg = expand_pcd(seg, num_samples)
-        # goal_pc = expand_pcd(goal_pc, num_samples)
         ground_truth_point_world = expand_pcd(ground_truth_point_world, num_samples)
 
         # generating diffusion predictions
-        # TODO: this should probably specific full_prediction=False
         pred_dict = self.predict(
             batch, num_samples, unflatten=False, progress=True
         )
         # pred = pred_dict[self.prediction_type]["pred"]
         pred_point_world = pred_dict["point"]["pred_world"]
 
+        # TODO: this should happen inside get model kwargs
         # pred_scaled = pred / scaling_factor
         # ground_truth_scaled = ground_truth / scaling_factor
 
@@ -545,7 +532,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         self.eval()
         with torch.no_grad():
             # winner-take-all predictions
-            bath = self.update_batch_frames(batch, update_labels=True)
+            batch = self.update_batch_frames(batch, update_labels=True)
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
         
         ####################################################
@@ -687,7 +674,7 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
         """
         assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
 
-        pc_pos_viz = batch["pc"][viz_idx, :, :3]
+        pc_pos_viz = batch["pc_world"][viz_idx, :, :3]
         pc_action_viz = batch["pc_action"][viz_idx, :, :3]
         pc_anchor_viz = batch["pc_anchor"][viz_idx, :, :3]
 
