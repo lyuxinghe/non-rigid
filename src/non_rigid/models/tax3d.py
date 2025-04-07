@@ -32,8 +32,7 @@ DiT_models = {
 
 
 def get_model(model_cfg):
-    cross = "Cross_" if model_cfg.cross_atten else ""
-    model_name = f"DiT_PointCloud_{cross}{model_cfg.size}"
+    model_name = f"DiT_PointCloud_Cross_{model_cfg.size}"
     return DiT_models[model_name]
 
 

@@ -16,10 +16,6 @@ from non_rigid.models.tax3d import (
     DiffusionTransformerNetwork,
     CrossDisplacementModule,
 )
-from non_rigid.models.tax3d_ddrd import (
-    DeformationReferenceDiffusionTransformerNetwork,
-    DDRDModule,
-)
 from non_rigid.models.tax3d_v2 import (
     TAX3Dv2Network,
     TAX3Dv2MuFrameModule,
@@ -41,10 +37,6 @@ def create_model(cfg):
         network_fn = DiffusionTransformerNetwork
         module_fn = CrossDisplacementModule
 
-    elif cfg.model.name == "ddrd":
-        network_fn = DeformationReferenceDiffusionTransformerNetwork
-        module_fn = DDRDModule
-
     elif cfg.model.name == "tax3dv2":
         network_fn = TAX3Dv2Network
         if cfg.model.frame_type == "fixed":
@@ -53,10 +45,6 @@ def create_model(cfg):
             module_fn = TAX3Dv2MuFrameModule
         else:
             raise ValueError(f"Invalid frame type: {cfg.model.frame_type}")
-        
-    elif cfg.model.name == "mu":
-        network_fn = MuFrameDiffusionTransformerNetwork
-        module_fn = MuFrameCrossDisplacementModule
         
     else:
         raise ValueError(f"Invalid model name: {cfg.model.name}")
