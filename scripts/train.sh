@@ -67,7 +67,11 @@ elif [ $MODEL_TYPE == "tax3dv2_muframe" ]; then
 
   MODEL_PARAMS="model=tax3dv2_muframe model.type=point"
   DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
+elif [ $MODEL_TYPE == "tax3dv2_fixedframe" ]; then
+  echo "Training TAX3Dv2 Fixed-Frame point model on dataset $DATASET_NAME with command: $COMMAND."
 
+  MODEL_PARAMS="model=tax3dv2_fixedframe model.type=point"
+  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
 fi
 
 

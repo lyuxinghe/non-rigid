@@ -20,10 +20,6 @@ from non_rigid.models.tax3d_ddrd import (
     DeformationReferenceDiffusionTransformerNetwork,
     DDRDModule,
 )
-from non_rigid.models.tax3d_mu import (
-    MuFrameDiffusionTransformerNetwork,
-    MuFrameCrossDisplacementModule,
-)
 from non_rigid.models.tax3d_v2 import (
     TAX3Dv2Network,
     TAX3Dv2MuFrameModule,

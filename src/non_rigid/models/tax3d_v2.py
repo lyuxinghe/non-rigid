@@ -24,6 +24,7 @@ from non_rigid.models.dit.diffusion import create_diffusion_mu, create_diffusion
 from non_rigid.models.dit.models import (
     TAX3Dv2_MuFrame_DiT,
     TAX3Dv2_FixedFrame_Token_DiT,
+    TAX3Dv2_FixedFrame_Dual_DiT,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -34,6 +35,8 @@ def TAX3Dv2_MuFrame_DiT_xS(**kwargs):
 
 def TAX3Dv2_FixedFrame_DiT_xS(**kwargs):
     return TAX3Dv2_FixedFrame_Token_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
+    #return TAX3Dv2_FixedFrame_Dual_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
+
 
 DiT_models = {
     "TAX3Dv2_MuFrame_DiT_xS": TAX3Dv2_MuFrame_DiT_xS,
@@ -374,10 +377,13 @@ class TAX3Dv2BaseModule(L.LightningModule):
                 matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
             )
             pred_ref = expand_pcd(pred_ref, num_samples)
-            
-            pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
-            goal_point_world = T_goalUnAug.transform_points(goal_pc)
-            
+            if self.model_name == "tax3dv2_muframe":
+                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
+                goal_point_world = T_goalUnAug.transform_points(goal_pc)
+            else:
+                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
+                goal_point_world = T_goalUnAug.transform_points(goal_pc + pred_ref)
+
             pred_point_world = pred_point_world / scaling_factor
             goal_point_world = goal_point_world / scaling_factor
 
