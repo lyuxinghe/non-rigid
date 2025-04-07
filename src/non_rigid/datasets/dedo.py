@@ -24,17 +24,16 @@ class DedoDataset(data.Dataset):
         self.split = split
         self.dataset_dir = self.root / self.split
         self.num_demos = int(len(os.listdir(self.dataset_dir)))
-        # TODO: print a message when loading dataset?
         self.dataset_cfg = dataset_cfg
 
-        # determining dataset size - if not specified, use all demos in directory once
+        # Determining dataset size - if not specified, use all demos in directory once.
         size = self.dataset_cfg.train_size if "train" in self.split else self.dataset_cfg.val_size
         if size is not None:
             self.size = size
         else:
             self.size = self.num_demos
 
-        # setting sample sizes
+        # Setting sample sizes.
         self.sample_size_action = self.dataset_cfg.sample_size_action
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
         
@@ -48,14 +47,16 @@ class DedoDataset(data.Dataset):
             use_indices: if not None, use these indices to downsample the point clouds. If indices are provided,
                 sample_size_action and sample_size_anchor are ignored.
         """
-        # loop over the dataset multiple times - allows for arbitrary dataset and batch size
+        # Loop over the dataset multiple times - allows for arbitrary dataset and batch size.
         file_index = index % self.num_demos
-        # load data
+
+        # Load data.
         demo = np.load(self.dataset_dir / f"demo_{file_index}.npz", allow_pickle=True)
         action_pc = torch.as_tensor(demo["action_pc"]).float()
         anchor_pc = torch.as_tensor(demo["anchor_pc"]).float()
         flow = torch.as_tensor(demo["flow"]).float()
-        # loading segmentation masks if available TODO: eventually, assume these are available
+
+        # Loading segmentation masks, if available. TODO: eventually, assume these are available
         if "action_seg" in demo:
             action_seg = torch.as_tensor(demo["action_seg"]).int()
         else:
@@ -66,13 +67,13 @@ class DedoDataset(data.Dataset):
         else:
             anchor_seg = torch.ones_like(anchor_pc[:, 0]).int()
 
-        # initializing item dict
+        # Initializing item dict.
         item = {
             "deform_data": demo["deform_data"].item(),
             "rigid_data": demo["rigid_data"].item(),
         }
 
-        # downsample action 
+        # Downsample action. 
         if use_indices is not None and "action_pc_indices" in use_indices:
             action_pc_indices = use_indices["action_pc_indices"]
             action_pc = action_pc[action_pc_indices]
@@ -87,7 +88,7 @@ class DedoDataset(data.Dataset):
         else:
             action_pc_indices = torch.arange(action_pc.shape[0])
 
-        # downsample anchor
+        # Downsample anchor.
         if use_indices is not None and "anchor_pc_indices" in use_indices:
             anchor_pc_indices = use_indices["anchor_pc_indices"]
             anchor_pc = anchor_pc[anchor_pc_indices]
@@ -100,15 +101,15 @@ class DedoDataset(data.Dataset):
         else:
             anchor_pc_indices = torch.arange(anchor_pc.shape[0])
 
-        # return indices if specified
+        # Return indices, if specified.
         if return_indices:
             item["action_pc_indices"] = action_pc_indices
             item["anchor_pc_indices"] = anchor_pc_indices
 
-        # compute goal action point cloud
+        # Compute goal action point cloud.
         goal_action_pc = action_pc + flow
 
-        # apply scene-level augmentation
+        # Apply scene-level augmentation.
         T = random_se3(
             N=1,
             rot_var=self.dataset_cfg.rotation_variance,
@@ -119,21 +120,15 @@ class DedoDataset(data.Dataset):
         anchor_pc = T.transform_points(anchor_pc)
         goal_action_pc = T.transform_points(goal_action_pc)
 
+        # Center point clouds in scene frame.
+        scene_center = torch.cat([action_pc, anchor_pc], dim=0).mean(axis=0)
+        goal_action_pc = goal_action_pc - scene_center
+        anchor_pc = anchor_pc - scene_center
+        action_pc = action_pc - scene_center
 
-        #################### NEW CODE ######################
-
-        # # center goal action and anchor in the scene (action + anchor) frame
-        # scene_center = torch.cat([action_pc, anchor_pc], dim=0).mean(axis=0)
-        # goal_action_pc = goal_action_pc - scene_center
-        # anchor_pc = anchor_pc - scene_center
-
-        # # center action in its own frame
-        # action_center = action_pc.mean(axis=0)
-        # action_pc = action_pc - action_center
-
-        # # updating item
-        # T_goal2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
-        # T_action2world = Translate(action_center.unsqueeze(0)).compose(T.inverse())
+        # Update item.
+        T_goal2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
+        T_action2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
 
         goal_flow = goal_action_pc - action_pc
 
@@ -141,61 +136,18 @@ class DedoDataset(data.Dataset):
         item["pc_anchor"] = anchor_pc # Anchor points in the scene frame
         item["seg"] = action_seg
         item["seg_anchor"] = anchor_seg
-        item["T_goal2world"] = T.inverse().get_matrix().squeeze(0)
-        item["T_action2world"] = T.inverse().get_matrix().squeeze(0)
+        item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0) # Transform from goal action frame to world frame
+        item["T_action2world"] = T_action2world.get_matrix().squeeze(0) # Transform from action frame to world frame
 
-        # Training-specific labels
+        # Training-specific labels.
         # TODO: eventually, rename this key to "point"
         item["pc"] = goal_action_pc # Ground-truth goal action points in the scene frame
         item["flow"] = goal_flow # Ground-truth flow (cross-frame) to action points
         
         if self.dataset_cfg.pred_frame == "noisy_goal":
-            # "Simulate" the GMM prediction as noisy goal
+            # "Simulate" the GMM prediction as noisy goal.
             goal_center = goal_action_pc.mean(axis=0)
             item["noisy_goal"] = goal_center + self.dataset_cfg.noisy_goal_scale * torch.normal(mean=torch.zeros(3), std=torch.ones(3))
-
-        #################### OLD CODE ######################
-
-
-        # # center the point clouds
-        # if self.dataset_cfg.noisy_goal:
-        #     center = goal_action_pc.mean(axis=0) + torch.normal(mean=torch.zeros(3), std=torch.ones(3))
-        # elif self.dataset_cfg.center_type == "action_center":
-        #     center = action_pc.mean(axis=0)
-        # elif self.dataset_cfg.center_type == "anchor_center":
-        #     center = anchor_pc.mean(axis=0)
-        # elif self.dataset_cfg.center_type == "scene_center":
-        #     center = torch.cat([action_pc, anchor_pc], dim=0).mean(axis=0)
-        # elif self.dataset_cfg.center_type == "none":
-        #     center = torch.zeros(3, dtype=torch.float32)
-        # else:
-        #     raise ValueError(f"Invalid center type: {self.dataset_cfg.center_type}")
-
-        # if self.dataset_cfg.action_context_center_type == "center":
-        #     action_center = action_pc.mean(axis=0)
-        # elif self.dataset_cfg.action_context_center_type == "none":
-        #     action_center = torch.zeros(3, dtype=torch.float32)
-        # else:
-        #     raise ValueError(f"Invalid action context center type: {self.dataset_cfg.action_context_center_type}")
-    
-        # goal_action_pc = goal_action_pc - center
-        # anchor_pc = anchor_pc - center
-        # action_pc = action_pc - action_center
-
-        # # updating item
-        # T_goal2world = Translate(center.unsqueeze(0)).compose(T.inverse())
-        # T_action2world = Translate(action_center.unsqueeze(0)).compose(T.inverse())
-
-        # gt_flow = goal_action_pc - action_pc
-        # # TODO: eventually, rename this key to "point"
-        # item["pc_action"] = action_pc # Action points in initial position for context
-        # item["pc_anchor"] = anchor_pc # Anchor points in goal position
-        # item["pc"] = goal_action_pc # Ground-truth action points
-        # item["flow"] = gt_flow # Ground-truth flow (cross-frame) to action points
-        # item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0)
-        # item["T_action2world"] = T_action2world.get_matrix().squeeze(0)
-        # item["seg"] = action_seg
-        # item["seg_anchor"] = anchor_seg
 
         return item
 
