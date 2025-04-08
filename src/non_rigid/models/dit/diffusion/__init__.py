@@ -8,7 +8,7 @@ from . import gaussian_diffusion_ddrd_joint as gd_ddrd_joint
 from . import gaussian_diffusion_ddrd_seperate as gd_ddrd_separate
 from . import gaussian_diffusion_mu as gd_mu
 from . import gaussian_diffusion_v2 as gd_v2
-from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, SpacedDiffusionv2, space_timesteps
+from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, SpacedDiffusionMuFrame, SpacedDiffusionv2, space_timesteps
 
 def create_diffusion(
     timestep_respacing,
@@ -98,6 +98,7 @@ def create_diffusion_ddrd_separate(
     rescale_learned_sigmas=False,
     diffusion_steps=1000,
     time_based_weighting=False,
+    rotation_noise_scale=False,
 ):
     betas = gd_ddrd_separate.get_named_beta_schedule(noise_schedule, diffusion_steps)
     if use_kl:
@@ -125,6 +126,7 @@ def create_diffusion_ddrd_separate(
         ),
         loss_type=loss_type,
         time_based_weighting=time_based_weighting,
+        rotation_noise_scale=rotation_noise_scale,
         # rescale_timesteps=rescale_timesteps,
     )
 
@@ -138,6 +140,7 @@ def create_diffusion_mu(
     rescale_learned_sigmas=False,
     diffusion_steps=1000,
     time_based_weighting=False,
+    rotation_noise_scale=False,
 ):
     betas = gd_mu.get_named_beta_schedule(noise_schedule, diffusion_steps)
     if use_kl:
@@ -165,6 +168,7 @@ def create_diffusion_mu(
         ),
         loss_type=loss_type,
         time_based_weighting=time_based_weighting,
+        rotation_noise_scale=rotation_noise_scale,
         # rescale_timesteps=rescale_timesteps,
     )
 

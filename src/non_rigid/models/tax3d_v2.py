@@ -2,53 +2,46 @@ from typing import Any, Dict
 
 import lightning as L
 import numpy as np
-import omegaconf
-import plotly.express as px
-import rpad.pyg.nets.dgcnn as dgcnn
-import rpad.visualize_3d.plots as vpl
 import torch
-import torch.nn.functional as F
-import torch_geometric.data as tgd
-import torch_geometric.transforms as tgt
-import torchvision as tv
 import wandb
 from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
 from torch import nn, optim
-from torch_geometric.nn import fps
 
 from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
 from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
-from non_rigid.models.dit.diffusion import create_diffusion_v2
+from non_rigid.models.dit.diffusion import create_diffusion_mu, create_diffusion_ddrd_separate
 from non_rigid.models.dit.models import (
-    TAX3Dv2_DiT,
+    TAX3Dv2_MuFrame_DiT,
+    TAX3Dv2_FixedFrame_Token_DiT,
+    TAX3Dv2_FixedFrame_Dual_DiT,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
 
 
-def TAX3Dv2_DiT_xS(use_rotary, **kwargs):
-    # hidden size divisible by 3 for rotary embedding, and divisible by num_heads for multi-head attention
-    hidden_size = 132 if use_rotary else 128
-    return TAX3Dv2_DiT(depth=5, hidden_size=hidden_size, num_heads=4, **kwargs)
+def TAX3Dv2_MuFrame_DiT_xS(**kwargs):
+    return TAX3Dv2_MuFrame_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
+
+def TAX3Dv2_FixedFrame_DiT_xS(**kwargs):
+    return TAX3Dv2_FixedFrame_Token_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
 
-# TODO: clean up all unused functions
 DiT_models = {
-    "TAX3Dv2_DiT_xS": TAX3Dv2_DiT_xS,
+    "TAX3Dv2_MuFrame_DiT_xS": TAX3Dv2_MuFrame_DiT_xS,
+    "TAX3Dv2_FixedFrame_DiT_xS": TAX3Dv2_FixedFrame_DiT_xS,
 }
 
 
 def get_model(model_cfg):
-    #rotary = "Rel3D_" if model_cfg.rotary else ""
-    #cross = "Cross_" if model_cfg.cross_atten else ""
-    #feature = "Point_Feature_" if model_cfg.feature == "point" else "Flow_Feature_" if model_cfg.feature == "flow" else ""
-    #encoder = "PN2_" if model_cfg.encoder_backbone == "pn2" else ""
-
-    # model_name = f"{rotary}DiT_pcu_{cross}{model_cfg.size}"
-    #model_name = f"{encoder}DiT_PointCloud_{cross}{feature}{model_cfg.size}"
-    model_name = "TAX3Dv2_DiT_xS"
+    # TODO: move fixed/mu frame to model config as a flag
+    if model_cfg.frame_type == "fixed":
+        model_name = "TAX3Dv2_FixedFrame_DiT_xS"
+    elif model_cfg.frame_type == "mu":
+        model_name = "TAX3Dv2_MuFrame_DiT_xS"
+    else:
+        raise ValueError("Choose model_take from [\"tax3dv2_muframe\", \"tax3dv2_fixedframe\"]")
     return DiT_models[model_name]
 
 
@@ -59,14 +52,13 @@ class TAX3Dv2Network(nn.Module):
     def __init__(self, model_cfg=None):
         super().__init__()
         self.dit = get_model(model_cfg)(
-            use_rotary=model_cfg.rotary,
             in_channels=model_cfg.in_channels,
             learn_sigma=model_cfg.learn_sigma,
             model_cfg=model_cfg,
         )
     
-    def forward(self, x, t, **kwargs):
-        return self.dit(x, t, **kwargs)
+    def forward(self, xr_t, xs_t, t, **kwargs):
+        return self.dit(xr_t, xs_t, t, **kwargs)
     
 
 
@@ -79,12 +71,14 @@ class TAX3Dv2BaseModule(L.LightningModule):
     def __init__(self, network, cfg) -> None:
         super().__init__()
         self.network = network
+        self.mode = cfg.mode # train or eval
         self.model_cfg = cfg.model
         self.dataset_cfg = cfg.dataset
         self.wandb_cfg = cfg.wandb
         self.prediction_type = self.model_cfg.type # flow or point
-        self.mode = cfg.mode # train or eval
-        self.centroid_frame = self.dataset_cfg.centroid_frame
+        self.pred_frame = self.model_cfg.pred_frame
+        self.noisy_goal_scale = self.model_cfg.noisy_goal_scale
+        # self.model_name = self.model_cfg.name
 
         # prediction type-specific processing
         # TODO: eventually, this should be removed by updating dataset to use "point" instead of "pc"
@@ -95,6 +89,13 @@ class TAX3Dv2BaseModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid prediction type: {self.prediction_type}")
         
+        if self.pred_frame == "noisy_goal":
+            assert self.model_cfg.noisy_goal_scale > 0.0
+        elif self.pred_frame == "anchor_center":
+            assert self.model_cfg.noisy_goal_scale == 0.0
+        else:
+            raise ValueError(f"Invalid prediction type: {self.pred_frame}")
+
         # mode-specific processing
         if self.mode == "train":
             self.run_cfg = cfg.training
@@ -119,18 +120,48 @@ class TAX3Dv2BaseModule(L.LightningModule):
         self.sample_size_anchor = self.run_cfg.sample_size_anchor
 
         # diffusion params
-        # self.noise_schedule = model_cfg.diff_noise_schedule
-        # self.noise_scale = model_cfg.diff_noise_scale
-        self.diff_steps = self.model_cfg.diff_train_steps # TODO: rename to diff_steps
+        self.diff_steps = self.model_cfg.diff_train_steps
         self.num_wta_trials = self.run_cfg.num_wta_trials
         self.time_based_weighting = self.model_cfg.time_based_weighting
 
-        self.diffusion = create_diffusion_v2(
-            timestep_respacing=None,
-            diffusion_steps=self.diff_steps,
-            # noise_schedule=self.noise_schedule,
-            time_based_weighting=self.time_based_weighting,             
-        )
+        # TODO: have 3 different noise scale for per-point, translation, and rotation
+        self.diff_translation_noise_scale = self.model_cfg.diff_translation_noise_scale 
+        self.diff_rotation_noise_scale = self.model_cfg.diff_rotation_noise_scale
+
+        if self.model_cfg.frame_type == "mu":
+            self.diffusion = create_diffusion_mu(
+                timestep_respacing=None,
+                diffusion_steps=self.diff_steps,
+                time_based_weighting=self.time_based_weighting,
+                rotation_noise_scale=self.diff_rotation_noise_scale,
+            )
+
+            print("Initializing TAX3Dv2 Mu-Frame Diffusion Transformer Network")
+            print(f"### Translation Noise Scale: {self.diff_translation_noise_scale}")
+            print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
+            print("Initializing TAX3Dv2 Mu-Frame Dense Displacement Diffusion Module")
+            print(f"### Prediction Reference Frame: {self.pred_frame}")
+            print(f"### Reference Noise Scale: {self.noisy_goal_scale}")
+
+        elif self.model_cfg.frame_type == "fixed":
+            # TODO: rename this diffusion code to create_diffusion_fixed
+            self.diffusion = create_diffusion_ddrd_separate(
+                timestep_respacing=None,
+                diffusion_steps=self.diff_steps,
+                time_based_weighting=self.time_based_weighting,
+                rotation_noise_scale=self.diff_rotation_noise_scale,
+            )
+
+            print("Initializing TAX3Dv2 Fixed-Frame Diffusion Transformer Network")
+            print(f"### Translation Noise Scale: {self.diff_translation_noise_scale}")
+            print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
+            print("Initializing TAX3Dv2 Fixed-Frame Dense Displacement Diffusion Module")
+            print(f"### Prediction Reference Frame: {self.pred_frame}")
+            print(f"### Reference Noise Scale: {self.noisy_goal_scale}")
+
+        else:
+            raise ValueError("Choose model_take from [\"tax3dv2_muframe\", \"tax3dv2_fixedframe\"]")
+        
 
     def configure_optimizers(self):
         assert self.mode == "train", "Can only configure optimizers in training mode."
@@ -150,12 +181,18 @@ class TAX3Dv2BaseModule(L.LightningModule):
         """
         raise NotImplementedError("This should be implemented in the derived class.")
     
+    def update_batch_frames(self, batch, update_labels=False):
+        """
+        Convert data batch from world frame to prediction frame.
+        """
+        raise NotImplementedError("This should be implemented in the derived class.")
+
     def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
         """
         Get world frame predictions from the given batch and predictions.
         """
         raise NotImplementedError("This should be implemented in the derived class.")
-    
+
     def get_viz_args(self, batch, viz_idx):
         """
         Get visualization arguments for wandb logging.
@@ -166,11 +203,10 @@ class TAX3Dv2BaseModule(L.LightningModule):
         """
         Forward pass to compute diffusion training loss.
         """
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
+
         ground_truth = batch[self.label_key].permute(0, 2, 1) # channel first
         model_kwargs = self.get_model_kwargs(batch)
-
-        diff_translation_noise_scale = self.model_cfg.diff_translation_noise_scale
-        diff_rotation_noise_scale = self.model_cfg.diff_rotation_noise_scale
 
         # run diffusion
         # noise = torch.randn_like(ground_truth) * self.noise_scale
@@ -178,13 +214,15 @@ class TAX3Dv2BaseModule(L.LightningModule):
             model=self.network,
             x_start=ground_truth,
             t=t,
-            translation_noise_scale=diff_translation_noise_scale,
-            rotation_noise_scale=diff_rotation_noise_scale,
             model_kwargs=model_kwargs,
             # noise=noise,
         )
+        loss_r = loss_dict["loss_r"].mean()
+        loss_s = loss_dict["loss_s"].mean()
+        
         loss = loss_dict["loss"].mean()
-        return None, loss
+
+        return None, loss, loss_r, loss_s
 
     @torch.no_grad()
     def predict(self, batch, num_samples, unflatten=False, progress=True, full_prediction=True):
@@ -197,26 +235,43 @@ class TAX3Dv2BaseModule(L.LightningModule):
             progress: whether to show progress bar
             full_prediction: whether to return full prediction (flow and point, goal and world frame)
         """
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
+        pred_frame = batch["pred_frame"].clone()
+        pred_frame = expand_pcd(pred_frame, num_samples)
+
         # TODO: replace bs with batch_size?
         bs, sample_size = batch["pc_action"].shape[:2]
         model_kwargs = self.get_model_kwargs(batch, num_samples)
 
         # generating latents and running diffusion
-        z = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
+        z_s = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
+
+        if self.model_cfg.frame_type == "mu":
+            z_r = pred_frame.to(self.device).permute(0,2,1)
+        elif self.model_cfg.frame_type == "fixed":
+            z_r = torch.randn(bs * num_samples, 3, 1, device=self.device)
+        else:
+            raise ValueError("Choose model_take from [\"tax3dv2_muframe\", \"tax3dv2_fixedframe\"]")
 
         # test: in inference, if we trained with translation noise with scale=t, we sample noise from N(0, 1+t)
         #trans_noise_scale = torch.tensor(0.6, device=self.device)
         #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device) * torch.sqrt(1 + trans_noise_scale)
 
-        pred, results = self.diffusion.p_sample_loop(
+        final_dict, results = self.diffusion.p_sample_loop(
             self.network,
-            z.shape,
-            z,
+            z_r.shape,
+            z_s.shape,
+            z_r,
+            z_s,
             clip_denoised=False,
             model_kwargs=model_kwargs,
             progress=progress,
             device=self.device,
         )
+        pred_r = final_dict["sample_r"]
+        pred_s = final_dict["sample_s"]
+        pred = pred_s + pred_r        
+        results = [res["sample_r"] + res["sample_s"] for res in results]
         pred = pred.permute(0, 2, 1)
 
         if not full_prediction:
@@ -269,44 +324,52 @@ class TAX3Dv2BaseModule(L.LightningModule):
             batch: the input batch
             num_samples: the number of samples to generate
         """
-        ground_truth = batch[self.label_key].to(self.device)
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames to update the data batch!"
+
         seg = batch["seg"].to(self.device)
-        goal_pc = batch["pc"].to(self.device)
+        ground_truth_point_world = batch["pc_world"].to(self.device)
         scaling_factor = self.dataset_cfg.pcd_scale_factor
 
         # re-shaping and expanding for winner-take-all
-        bs = ground_truth.shape[0]
-        ground_truth = expand_pcd(ground_truth, num_samples)
+        bs = ground_truth_point_world.shape[0]
         seg = expand_pcd(seg, num_samples)
-        goal_pc = expand_pcd(goal_pc, num_samples)
+        ground_truth_point_world = expand_pcd(ground_truth_point_world, num_samples)
 
         # generating diffusion predictions
-        # TODO: this should probably specific full_prediction=False
         pred_dict = self.predict(
             batch, num_samples, unflatten=False, progress=True
         )
-        pred = pred_dict[self.prediction_type]["pred"]
+        # pred = pred_dict[self.prediction_type]["pred"]
+        pred_point_world = pred_dict["point"]["pred_world"]
 
-        pred_scaled = pred / scaling_factor
-        ground_truth_scaled = ground_truth / scaling_factor
+        # TODO: this should happen inside get model kwargs
+        # pred_scaled = pred / scaling_factor
+        # ground_truth_scaled = ground_truth / scaling_factor
 
         # computing error metrics
-        rmse = flow_rmse(pred_scaled, ground_truth_scaled, mask=True, seg=seg).reshape(bs, num_samples)
-        pred = pred.reshape(bs, num_samples, -1, 3)
+        if self.dataset_cfg.material == "deform":
+            seg = seg == 0
+        rmse = flow_rmse(pred_point_world, ground_truth_point_world, mask=True, seg=seg).reshape(bs, num_samples)
+        pred_point_world = pred_point_world.reshape(bs, num_samples, -1, 3)
 
         # computing winner-take-all metrics
         winner = torch.argmin(rmse, dim=-1)
         rmse_wta = rmse[torch.arange(bs), winner]
-        pred_wta = pred[torch.arange(bs), winner]
+        pred_point_world_wta = pred_point_world[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            T_goal2world = Transform3d(
-                matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
+            raise NotImplementedError("Rigid metrics not fixed yet!")
+            T_goalUnAug = Transform3d(
+                matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
             )
+            pred_ref = expand_pcd(pred_ref, num_samples)
+            if self.model_name == "tax3dv2_muframe":
+                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
+                goal_point_world = T_goalUnAug.transform_points(goal_pc)
+            else:
+                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
+                goal_point_world = T_goalUnAug.transform_points(goal_pc + pred_ref)
 
-            pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
-            goal_point_world = T_goal2world.transform_points(goal_pc)
-            
             pred_point_world = pred_point_world / scaling_factor
             goal_point_world = goal_point_world / scaling_factor
 
@@ -331,16 +394,14 @@ class TAX3Dv2BaseModule(L.LightningModule):
                 "rot": rotation_errs,
                 "rot_wta": rotation_err_wta,
             }
-
+        
         else:
             return {
-                "pred": pred,
-                "pred_wta": pred_wta,
+                "pred_point_world": pred_point_world,
+                "pred_point_world_wta": pred_point_world_wta,
                 "rmse": rmse,
                 "rmse_wta": rmse_wta,
             }
-
-
 
     def log_viz_to_wandb(self, batch, pred_wta_dict, tag):
         """
@@ -353,17 +414,9 @@ class TAX3Dv2BaseModule(L.LightningModule):
         """
         # pick a random sample in the batch to visualize
         viz_idx = np.random.randint(0, batch["pc"].shape[0])
-        pred_viz = pred_wta_dict["pred"][viz_idx, 0, :, :3]
-        pred_wta_viz = pred_wta_dict["pred_wta"][viz_idx, :, :3]
+        pred_action_viz = pred_wta_dict["pred_point_world"][viz_idx, :, :3]
+        pred_action_wta_viz = pred_wta_dict["pred_point_world_wta"][viz_idx, :, :3]
         viz_args = self.get_viz_args(batch, viz_idx)
-
-        # getting predicted action point cloud
-        if self.prediction_type == "flow":
-            pred_action_viz = viz_args["pc_action_viz"] + pred_viz
-            pred_action_wta_viz = viz_args["pc_action_viz"] + pred_wta_viz
-        elif self.prediction_type == "point":
-            pred_action_viz = pred_viz
-            pred_action_wta_viz = pred_wta_viz
 
         # logging predicted vs ground truth point cloud
         viz_args["pred_action_viz"] = pred_action_viz
@@ -383,12 +436,17 @@ class TAX3Dv2BaseModule(L.LightningModule):
         t = torch.randint(
             0, self.diff_steps, (self.batch_size,), device=self.device
         ).long()
-        _, loss = self(batch, t)
+
+        batch = self.update_batch_frames(batch, update_labels=True)
+
+        _, loss, loss_r, loss_s = self(batch, t)
         #########################################################
         # logging training metrics
         #########################################################
         self.log_dict(
-            {"train/loss": loss},
+            {"train/loss": loss,
+            "train/loss_r": loss_r,
+            "train/loss_s": loss_s},
             add_dataloader_idx=False,
             prog_bar=True,
         )
@@ -423,6 +481,8 @@ class TAX3Dv2BaseModule(L.LightningModule):
                 train_dataloader.dataset.set_eval_mode(True)
 
                 batch = next(iter(train_dataloader))  # Fetch new batch with eval_mode=True
+                batch = self.update_batch_frames(batch, update_labels=True)
+
                 # TODO: Debug why without this line, it will rasie gpu/cpu different device error
                 batch = {k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
@@ -472,6 +532,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         self.eval()
         with torch.no_grad():
             # winner-take-all predictions
+            batch = self.update_batch_frames(batch, update_labels=True)
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
         
         ####################################################
@@ -512,6 +573,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         """
         if self.dataset_cfg.material == "rigid":
             # winner-take-all predictions
+            batch = self.update_batch_frames(batch, update_labels=True)
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
             return {
                 "rmse": pred_wta_dict["rmse"],
@@ -523,6 +585,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
             }
         else:
             # winner-take-all predictions
+            batch = self.update_batch_frames(batch, update_labels=True)
             pred_wta_dict = self.predict_wta(batch, self.num_wta_trials)
             return {
                 "rmse": pred_wta_dict["rmse"],
@@ -530,9 +593,128 @@ class TAX3Dv2BaseModule(L.LightningModule):
             }
     
 
-class TAX3Dv2Module(TAX3Dv2BaseModule):
+class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
     """
-    Object-centric DDD module. Applies cross attention between action and anchor objects.
+    Object-centric Diffusion module. Applies cross attention between action and anchor objects.
+    """
+    def __init__(self, network, cfg) -> None:
+        super().__init__(network, cfg)
+
+    def get_model_kwargs(self, batch, num_samples=None):
+        pc_action = batch["pc_action"].to(self.device)
+        pc_anchor = batch["pc_anchor"].to(self.device)
+
+        if num_samples is not None:
+            # expand point clouds if num_samples is provided; used for WTA predictions
+            pc_action = expand_pcd(pc_action, num_samples)
+            pc_anchor = expand_pcd(pc_anchor, num_samples)
+        
+        pc_action = pc_action.permute(0, 2, 1) # channel first
+        pc_anchor = pc_anchor.permute(0, 2, 1) # channel first
+        model_kwargs = dict(x0=pc_action, y=pc_anchor)
+
+        # Extract relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            rel_pos = batch["rel_pos"].to(self.device)
+            if num_samples is not None:
+                rel_pos = expand_pcd(rel_pos, num_samples)
+            model_kwargs["rel_pos"] = rel_pos
+
+        return model_kwargs
+    
+    def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
+        """
+        Get world-frame predictions from the given batch and predictions.
+        """
+        T_action2world = Transform3d(
+            matrix=expand_pcd(batch["T_action2world"].to(self.device), num_samples)
+        )
+        T_goal2world = Transform3d(
+            matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
+        )
+
+        # pred_frame = expand_pcd(batch["pred_frame"].to(self.device), num_samples)
+        action_context_frame = expand_pcd(batch["action_context_frame"].to(self.device), num_samples)
+
+        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
+        pc_action_world = T_action2world.transform_points(pc_action + action_context_frame)
+        pred_flow_world = pred_point_world - pc_action_world
+        results_world = [
+            T_goal2world.transform_points(res) for res in pred_dict["results"]
+        ]
+        return pred_flow_world, pred_point_world, results_world
+
+    def update_batch_frames(self, batch, update_labels=False):
+        # Processing prediction frame.
+        if self.model_cfg.pred_frame == "anchor_center":
+            raise NotImplementedError("Mu-frame not implemented for anchor centroid prediction!")
+        elif self.model_cfg.pred_frame == "noisy_goal":
+            pred_frame = batch["noisy_goal"].unsqueeze(1)
+        else:
+            raise ValueError(f"Invalid prediction reference frame: {self.pred_frame}")
+
+        # Processing action context frame.
+        if self.model_cfg.action_context_frame == "action_center":
+            action_context_frame = batch["pc_action"].mean(axis=1, keepdim=True)
+        else:
+            raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
+                
+        batch["pc_action"] = batch["pc_action"] - action_context_frame
+
+        # Updating labels, if necessary.
+        if update_labels:
+            # Compute ground truth point cloud in world frame.
+            T_goal2world = Transform3d(
+                matrix=batch["T_goal2world"]#.to(self.device)
+            )
+            batch["pc_world"] = T_goal2world.transform_points(batch["pc"])
+
+            # Put flow labels in prediction frame.
+            batch["flow"] = batch["flow"] + action_context_frame
+        
+        # Compute relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            batch["rel_pos"] = action_context_frame - pred_frame
+
+        batch["pred_frame"] = pred_frame
+        batch["action_context_frame"] = action_context_frame
+        return batch
+
+    def get_viz_args(self, batch, viz_idx):
+        """
+        Get visualization arguments for wandb logging.
+        """
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
+
+        pc_pos_viz = batch["pc_world"][viz_idx, :, :3]
+        pc_action_viz = batch["pc_action"][viz_idx, :, :3]
+        pc_anchor_viz = batch["pc_anchor"][viz_idx, :, :3]
+
+        # Put action and anchor point clouds in the world frame.
+        # pred_frame = batch["pred_frame"][viz_idx, :, :3]
+        action_context_frame = batch["action_context_frame"][viz_idx, :, :3]
+
+        T_action2world = Transform3d(
+            matrix=batch["T_action2world"][viz_idx].to(self.device)
+        )
+        T_goal2world = Transform3d(
+            matrix=batch["T_goal2world"][viz_idx].to(self.device)
+        )
+
+        pc_action_viz = T_action2world.transform_points(pc_action_viz + action_context_frame)
+        pc_anchor_viz = T_goal2world.transform_points(pc_anchor_viz)
+
+        viz_args = {
+            "pc_pos_viz": pc_pos_viz,
+            "pc_action_viz": pc_action_viz,
+            "pc_anchor_viz": pc_anchor_viz,
+        }
+        return viz_args
+
+
+class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
+    """
+    Object-centric Diffusion module. Applies cross attention between action and anchor objects.
     """
     def __init__(self, network, cfg) -> None:
         super().__init__(network, cfg)
@@ -548,6 +730,14 @@ class TAX3Dv2Module(TAX3Dv2BaseModule):
         pc_action = pc_action.permute(0, 2, 1) # channel first
         pc_anchor = pc_anchor.permute(0, 2, 1) # channel first
         model_kwargs = dict(x0=pc_action, y=pc_anchor)
+
+        # Extract relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            rel_pos = batch["rel_pos"].to(self.device)
+            if num_samples is not None:
+                rel_pos = expand_pcd(rel_pos, num_samples)
+            model_kwargs["rel_pos"] = rel_pos
+            
         return model_kwargs
     
     def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
@@ -561,25 +751,82 @@ class TAX3Dv2Module(TAX3Dv2BaseModule):
             matrix=expand_pcd(batch["T_goal2world"].to(self.device), num_samples)
         )
 
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"])
-        pc_action_world = T_action2world.transform_points(pc_action)
+        pred_frame = expand_pcd(batch["pred_frame"].to(self.device), num_samples)
+        action_context_frame = expand_pcd(batch["action_context_frame"].to(self.device), num_samples)
+
+        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"] + pred_frame)
+        pc_action_world = T_action2world.transform_points(pc_action + action_context_frame)
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
-            T_goal2world.transform_points(res) for res in pred_dict["results"]
+            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results"]
         ]
         return pred_flow_world, pred_point_world, results_world
+
+    def update_batch_frames(self, batch, update_labels=False):
+        # Processing prediction frame.
+        if self.model_cfg.pred_frame == "anchor_center":
+            pred_frame = batch["pc_anchor"].mean(axis=1, keepdim=True)
+        elif self.model_cfg.pred_frame == "noisy_goal":
+            pred_frame = batch["noisy_goal"].unsqueeze(1)
+        else:
+            raise ValueError(f"Invalid prediction frame: {self.model_cfg.pred_frame}")
+
+        # Processing action context frame.
+        if self.model_cfg.action_context_frame == "action_center":
+            action_context_frame = batch["pc_action"].mean(axis=1, keepdim=True)
+        else:
+            raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
+        
+        batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
+        batch["pc_action"] = batch["pc_action"] - action_context_frame
+
+        # Updating labels, if necessary.
+        if update_labels:
+            # Compute ground truth point cloud in world frame.
+            T_goal2world = Transform3d(
+                matrix=batch["T_goal2world"]#.to(self.device)
+            )
+            batch["pc_world"] = T_goal2world.transform_points(batch["pc"])
+
+            # Put point and flow labels in prediction frame.
+            batch["pc"] = batch["pc"] - pred_frame
+            batch["flow"] = batch["flow"] - pred_frame + action_context_frame
+        
+        # Compute relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            batch["rel_pos"] = action_context_frame - pred_frame
+        
+        batch["pred_frame"] = pred_frame
+        batch["action_context_frame"] = action_context_frame
+        return batch
 
     def get_viz_args(self, batch, viz_idx):
         """
         Get visualization arguments for wandb logging.
         """
-        pc_pos_viz = batch["pc"][viz_idx, :, :3]
+        assert "pred_frame" in batch.keys(), "Please run self.update_batch_frames() to update the data batch!"
+
+        pc_pos_viz = batch["pc_world"][viz_idx, :, :3]
         pc_action_viz = batch["pc_action"][viz_idx, :, :3]
         pc_anchor_viz = batch["pc_anchor"][viz_idx, :, :3]
+
+        # Put action and anchor point clouds in the world frame.
+        pred_frame = batch["pred_frame"][viz_idx, :, :3]
+        action_context_frame = batch["action_context_frame"][viz_idx, :, :3]
+
+        T_action2world = Transform3d(
+            matrix=batch["T_action2world"][viz_idx].to(self.device)
+        )
+        T_goal2world = Transform3d(
+            matrix=batch["T_goal2world"][viz_idx].to(self.device)
+        )
+
+        pc_action_viz = T_action2world.transform_points(pc_action_viz + action_context_frame)
+        pc_anchor_viz = T_goal2world.transform_points(pc_anchor_viz + pred_frame)
+
         viz_args = {
             "pc_pos_viz": pc_pos_viz,
             "pc_action_viz": pc_action_viz,
             "pc_anchor_viz": pc_anchor_viz,
         }
         return viz_args
-    

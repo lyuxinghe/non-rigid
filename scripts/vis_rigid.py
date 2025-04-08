@@ -317,7 +317,7 @@ def are_anchor_pcds_identical_rpdiff(file_path):
 
 if __name__ == "__main__":
     
-    file_path = "/home/lyuxing/Desktop/third_party/rpdiff/src/rpdiff/data/task_demos/mug_rack_easy_single_test/task_name_mug_on_rack/"  # Replace with actual file path
+    file_path = "/home/lyuxing/Desktop/third_party/rpdiff/src/rpdiff/data/task_demos/mug_on_rack_multi_large_proc_gen_demos/task_name_mug_on_rack_multi"  # Replace with actual file path
     save_dir = "./vis"  # Directory to save the visualizations
     views = "all"  # Use "all" or any single view like "default", "top", "side", "diagonal"
     rpdiff_visualize_point_cloud(file_path, save_dir, views, num_vis=100)

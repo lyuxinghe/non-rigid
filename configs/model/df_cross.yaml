@@ -7,10 +7,10 @@ type: point # (flow, point) Type of model
 size: xS # (xs, s, ...) Architecture of DiT
 in_channels: 3 # Number of input channels
 learn_sigma: True # Learn sigma for diffusion
-cross_atten: True # Use cross attention for diffusion
 point_encoder: mlp # (mlp, pn2) Point cloud encoder architecture
 feature: False # If True, encode additional features
 joint_encode: False # If True, use joint encoding for point cloud feature
+rel_pos: False # If True, encode relative position
 
 #####################################################
 # Model-specific Dataset/Data-processing Parameters

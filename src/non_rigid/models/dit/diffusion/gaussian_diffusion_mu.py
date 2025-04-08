@@ -157,7 +157,8 @@ class GaussianDiffusionMuFrame:
         model_mean_type,
         model_var_type,
         loss_type,
-        time_based_weighting
+        time_based_weighting,
+        rotation_noise_scale,
     ):
 
         self.model_mean_type = model_mean_type
@@ -168,6 +169,9 @@ class GaussianDiffusionMuFrame:
         # TODO: custom variance for each?
         self.var_r = 1.0
         self.var_s = 1.0
+
+        # diffusion noise scale
+        self.rotation_noise_scale = rotation_noise_scale
 
         # Use float64 for accuracy.
         betas = np.array(betas, dtype=np.float64)
@@ -356,7 +360,9 @@ class GaussianDiffusionMuFrame:
         }
 
         return out_r, out_s
-
+    
+    # p_mean_variance_reverse for delta_t = 0
+    '''
     def p_mean_variance_reverse(self, model, pred_ref, xr_t, xs_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
         """
         Apply the model to get p(x_{t-1} | x_t) and a prediction of x₀ separately for the
@@ -462,8 +468,122 @@ class GaussianDiffusionMuFrame:
         }
 
         return out_r, out_s
+        '''
+        
+    # p_mean_variance_reverse for delta_0 = 0
+    def p_mean_variance_reverse(self, model, pred_ref, xr_t, xs_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
+        """
+        Apply the model to get p(x_{t-1} | x_t) and a prediction of x₀ separately for the
+        reference and shape branches.
+        
+        Inputs:
+        - xr_t: the noisy reference input, shape [B, C, 1]
+        - xs_t: the noisy shape input, shape [B, C, N]
+        - t: timesteps, shape [B]
+        - model: callable that takes (xr_t, xs_t, t, **model_kwargs) and returns a tuple:
+                    (model_output_r, model_output_s)
+        - model_kwargs: extra keyword arguments for the model.
+        
+        Each model_output is expected to have 2*C channels (if learning variance), where the first C
+        channels predict the noise (or x₀ if ModelMeanType.START_X is used) and the next C channels are raw
+        variance predictions.
+        
+        Returns:
+        A tuple (out_r, out_s), where:
+            out_r: dict with keys {"mean", "variance", "log_variance", "pred_xstart", "extra"}
+                corresponding to the reference branch (shape [B, C, 1]).
+            out_s: dict with the same keys for the shape branch (shape [B, C, N]).
+        """
+        if model_kwargs is None:
+            model_kwargs = {}
 
+        # Get the model outputs for each branch.
+        # Expected shapes:
+        #   model_output_r: [B, 2C, 1]  for reference branch
+        #   model_output_s: [B, 2C, N]  for shape branch
+        model_output_r, model_output_s = model(pred_ref, xs_t, t, **model_kwargs)
+        extra = None
 
+        def process_xstart(x):
+            if denoised_fn is not None:
+                x = denoised_fn(x)
+            if clip_denoised:
+                return x.clamp(-1, 1)
+            return x
+
+        # Process the reference branch.
+        B, C = xr_t.shape[:2]
+        if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
+            assert model_output_r.shape[1] == 2 * C, f"Expected 2C channels for reference, got {model_output_r.shape[1]}"
+            ref_noise, ref_var_raw = th.split(model_output_r, C, dim=1)
+            # Use the spatial shape of xr_t ([B, C, 1]).
+            min_log_r = _extract_into_tensor(self.posterior_log_variance_clipped, t, xr_t.shape) + math.log(self.var_r)
+            max_log_r = _extract_into_tensor(np.log(self.betas), t, xr_t.shape) + math.log(self.var_r)
+            frac_r = (ref_var_raw + 1) / 2  # Map from [-1, 1] to [0, 1].
+            model_log_variance_r = frac_r * max_log_r + (1 - frac_r) * min_log_r
+            model_variance_r = th.exp(model_log_variance_r)
+        else:
+            raise NotImplementedError("Non-variance learning not implemented for reference branch.")
+
+        ##################### BUG: Below is Wrong! #####################
+        # For getting pred_xstart_r, since now xr_t=denoised(GMM_pred), 
+        # this is not strictly a diffusion objective, and you cannot use
+        # the noise equation to revert the xstart !!!
+        if self.model_mean_type == ModelMeanType.START_X:
+            raise NotImplementedError
+            #pred_xstart_r = process_xstart(ref_noise)
+        else:
+            #pred_xstart_r = process_xstart(self._predict_xstart_from_eps(x_t=xr_t, t=t, eps=ref_noise))
+            # NOTE: we inpaint delta_0 = 0 here, and we re-calculate delta_t using q_sample
+            pred_deltastart = th.zeros_like(xr_t)
+            pred_delta_t = self.q_sample(x_start=pred_deltastart, t=t, noise=ref_noise)
+            
+            
+        # Compute the branch's posterior mean using its own noisy input.
+        # NOTE: so here, the output is for the delta, not z!
+        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_deltastart, x_t=pred_delta_t, t=t)
+
+        if (t == self.num_timesteps - 1).any():
+            prev_delta_t = pred_delta_t
+        else:
+            prev_delta_t = xr_t
+
+        out_r = {
+            "mean": out_r_mean,
+            "variance": model_variance_r,
+            "log_variance": th.log(model_variance_r + 1e-8),
+            "pred_xstart": pred_deltastart,
+            "extra": extra,
+            "prev_delta_t": prev_delta_t
+        }
+
+        # Process the shape branch.
+        B, C, N = xs_t.shape
+        if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
+            assert model_output_s.shape[1] == 2 * C, f"Expected 2C channels for shape, got {model_output_s.shape[1]}"
+            shape_noise, shape_var_raw = th.split(model_output_s, C, dim=1)
+            min_log_s = _extract_into_tensor(self.posterior_log_variance_clipped, t, xs_t.shape) + math.log(self.var_s)
+            max_log_s = _extract_into_tensor(np.log(self.betas), t, xs_t.shape) + math.log(self.var_s)
+            frac_s = (shape_var_raw + 1) / 2
+            model_log_variance_s = frac_s * max_log_s + (1 - frac_s) * min_log_s
+            model_variance_s = th.exp(model_log_variance_s)
+        else:
+            raise NotImplementedError("Non-variance learning not implemented for shape branch.")
+
+        if self.model_mean_type == ModelMeanType.START_X:
+            pred_xstart_s = process_xstart(shape_noise)
+        else:
+            pred_xstart_s = process_xstart(self._predict_xstart_from_eps(x_t=xs_t, t=t, eps=shape_noise))
+        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t)
+        out_s = {
+            "mean": out_s_mean,
+            "variance": model_variance_s,
+            "log_variance": th.log(model_variance_s + 1e-8),
+            "pred_xstart": pred_xstart_s,
+            "extra": extra,
+        }
+
+        return out_r, out_s
 
     def _predict_xstart_from_eps(self, x_t, t, eps):
         assert x_t.shape == eps.shape, f"Error: x_t.shape {x_t.shape} != eps.shape {eps.shape}"
@@ -566,7 +686,7 @@ class GaussianDiffusionMuFrame:
         sample_r = out_r["mean"] + nonzero_mask_r * th.exp(0.5 * out_r["log_variance"]) * noise_r
         sample_s = out_s["mean"] + nonzero_mask_s * th.exp(0.5 * out_s["log_variance"]) * noise_s
 
-        return {"sample_r": sample_r, "sample_s": sample_s}
+        return {"sample_r": sample_r, "sample_s": sample_s, "prev_sample_r": out_r["prev_delta_t"]}
 
     def p_sample_loop(
         self,
@@ -618,8 +738,8 @@ class GaussianDiffusionMuFrame:
         ):
             final = out
             # NOTE: from t=T-1, sample_r will be the action_mean_err
-            results.append({"sample_r": final["sample_r"] + pred_ref, "sample_s": final["sample_s"]})
-        final_dict = {"sample_r": final["sample_r"] + pred_ref, "sample_s": final["sample_s"]}
+            results.append({"sample_r": final["sample_r"], "sample_s": final["sample_s"]})
+        final_dict = {"sample_r": final["sample_r"], "sample_s": final["sample_s"]}
         return final_dict, results
 
     def p_sample_loop_progressive(
@@ -661,7 +781,18 @@ class GaussianDiffusionMuFrame:
         pred_ref = noise_r.clone()
 
         # 1. delta_t = 0
+        #img_r = th.zeros_like(pred_ref)
         # 2. delta_t ~ N(0,1)
+        # TODO
+        # 3. delta_t ~ N(0,1) but is included within GMM_pred
+        # Initial delta_t from q(δ_T | δ₀=0)
+        '''
+        t_init = th.tensor([self.num_timesteps - 1] * pred_ref.shape[0], device=pred_ref.device)
+        eps = th.randn_like(pred_ref)
+        delta_t = self.q_sample(x_start=th.zeros_like(pred_ref), t=t_init, noise=eps)
+        img_r = delta_t.clone()
+        img_s = noise_s if noise_s is not None else th.randn(*shape_s, device=device)
+        '''
         img_r = th.zeros_like(pred_ref)
 
         if progress:
@@ -684,10 +815,16 @@ class GaussianDiffusionMuFrame:
                     cond_fn=cond_fn,
                     model_kwargs=model_kwargs,
                 )
+                delta_t_prev = out["prev_sample_r"]  # This is delta_{t-1}
+                delta_t = out["sample_r"]
+                pred_ref = pred_ref - delta_t_prev + delta_t   # z_{t-1} = z_t - δ_t + δ_{t-1}
+
+                img_s = out["sample_s"]
+                img_r = out["sample_r"]
+                out["sample_r"] = pred_ref
+
                 yield out
 
-                img_r = out["sample_r"]
-                img_s = out["sample_s"]
 
     def ddim_sample(
         self,
@@ -965,7 +1102,7 @@ class GaussianDiffusionMuFrame:
         w_r = 1.0 - coeff
         return w_r, w_s
 
-    def training_losses(self, model, x_start, t, translation_noise_scale, rotation_noise_scale, model_kwargs=None, noise=None):
+    def training_losses(self, model, x_start, t, model_kwargs=None, noise=None):
         """
         Compute training losses for a single timestep using separate forward processes for
         the reference (R) and shape (S) components.
@@ -991,6 +1128,52 @@ class GaussianDiffusionMuFrame:
         # Sample independent noise terms for each branch.
         noise_r_err = th.randn_like(xr_start_err)  # noise for R: [B, C, 1]
         noise_s = th.randn_like(xs_start)  # noise for S: [B, C, N]
+
+        if self.rotation_noise_scale:
+            N, C, P = x_start.shape  # e.g. [batch_size, 3, num_points]
+
+            # 1. Sample random rotation axes and normalize them.
+            random_axis = th.randn(N, 3, device=x_start.device)
+            random_axis = random_axis / random_axis.norm(dim=1, keepdim=True)
+
+            # 2. Sample random rotation angles (in degrees) and convert to radians.
+            random_angle = th.randn(N, device=x_start.device) * self.rotation_noise_scale
+            random_angle_rad = random_angle * (np.pi / 180)
+
+            # 3. Compute sin and cos for each angle.
+            sin_theta = th.sin(random_angle_rad)
+            cos_theta = th.cos(random_angle_rad)
+            one_minus_cos = 1 - cos_theta
+
+            # 4. Extract axis components.
+            x = random_axis[:, 0]
+            y = random_axis[:, 1]
+            z = random_axis[:, 2]
+            zeros = th.zeros_like(x)
+
+            # 5. Construct the skew-symmetric cross-product matrices for each axis.
+            #    Each K is of shape (3,3), and K will have shape (N, 3, 3)
+            K = th.stack([th.stack([zeros, -z, y], dim=1),
+                        th.stack([z, zeros, -x], dim=1),
+                        th.stack([-y, x, zeros], dim=1)], dim=1)
+
+            # 6. Compute K squared (batched matrix multiplication)
+            K2 = th.bmm(K, K)
+
+            # 7. Create the identity matrix for each batch element.
+            I = th.eye(3, device=x_start.device).unsqueeze(0).repeat(N, 1, 1)
+
+            # 8. Compute the rotation matrices using the Rodrigues formula:
+            #    R = I + sin(theta)*K + (1-cos(theta))*(K^2)
+            R = I + sin_theta.view(N, 1, 1) * K + one_minus_cos.view(N, 1, 1) * K2
+
+            # 9. Apply the rotation matrices to the point clouds.
+            #    x_start: [N, 3, P] -> rotated_pc: [N, 3, P]
+            rotated_pc = th.bmm(R, x_start)
+
+            # 10. The rotation noise is the difference between the rotated and original points.
+            rotation_noise = rotated_pc - x_start
+            noise_s = noise_s + rotation_noise
 
         # Compute the forward noising for each branch.
         xr_err_t = self.q_sample(xr_start_err, t, noise=noise_r_err)  # [B, C, 1]
