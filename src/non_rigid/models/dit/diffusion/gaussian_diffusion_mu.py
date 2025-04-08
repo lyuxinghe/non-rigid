@@ -470,7 +470,7 @@ class GaussianDiffusionMuFrame:
         return out_r, out_s
         '''
         
-    # p_mean_variance_reverse for delta_0 = 0
+    # p_mean_variance_reverse for forward noising deltat
     def p_mean_variance_reverse(self, model, pred_ref, xr_t, xs_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
         """
         Apply the model to get p(x_{t-1} | x_t) and a prediction of x₀ separately for the
@@ -525,10 +525,6 @@ class GaussianDiffusionMuFrame:
         else:
             raise NotImplementedError("Non-variance learning not implemented for reference branch.")
 
-        ##################### BUG: Below is Wrong! #####################
-        # For getting pred_xstart_r, since now xr_t=denoised(GMM_pred), 
-        # this is not strictly a diffusion objective, and you cannot use
-        # the noise equation to revert the xstart !!!
         if self.model_mean_type == ModelMeanType.START_X:
             raise NotImplementedError
             #pred_xstart_r = process_xstart(ref_noise)
