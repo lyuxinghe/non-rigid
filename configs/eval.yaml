@@ -23,10 +23,6 @@ seed: 42
 task_type: None # Set during eval loop based on dataset.
 use_gmm: False
 
-coverage: False
-precision: False
-viz: False
-
 # This is the checkpoint that we're evaluating. You can change this to whatever you need,
 # like if you want multiple checkpoints simultaneously, etc.
 checkpoint:

@@ -141,7 +141,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
             print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
             print("Initializing TAX3Dv2 Mu-Frame Dense Displacement Diffusion Module")
             print(f"### Prediction Reference Frame: {self.pred_frame}")
-            print(f"### Referemce Noise Scale: {self.noisy_goal_scale}")
+            print(f"### Reference Noise Scale: {self.noisy_goal_scale}")
 
         elif self.model_cfg.frame_type == "fixed":
             # TODO: rename this diffusion code to create_diffusion_fixed
@@ -157,7 +157,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
             print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
             print("Initializing TAX3Dv2 Fixed-Frame Dense Displacement Diffusion Module")
             print(f"### Prediction Reference Frame: {self.pred_frame}")
-            print(f"### Referemce Noise Scale: {self.noisy_goal_scale}")
+            print(f"### Reference Noise Scale: {self.noisy_goal_scale}")
 
         else:
             raise ValueError("Choose model_take from [\"tax3dv2_muframe\", \"tax3dv2_fixedframe\"]")
@@ -612,6 +612,14 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
         pc_action = pc_action.permute(0, 2, 1) # channel first
         pc_anchor = pc_anchor.permute(0, 2, 1) # channel first
         model_kwargs = dict(x0=pc_action, y=pc_anchor)
+
+        # Extract relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            rel_pos = batch["rel_pos"].to(self.device)
+            if num_samples is not None:
+                rel_pos = expand_pcd(rel_pos, num_samples)
+            model_kwargs["rel_pos"] = rel_pos
+
         return model_kwargs
     
     def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
@@ -663,6 +671,10 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
 
             # Put flow labels in prediction frame.
             batch["flow"] = batch["flow"] + action_context_frame
+        
+        # Compute relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            batch["rel_pos"] = action_context_frame - pred_frame
 
         batch["pred_frame"] = pred_frame
         batch["action_context_frame"] = action_context_frame
@@ -718,6 +730,14 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         pc_action = pc_action.permute(0, 2, 1) # channel first
         pc_anchor = pc_anchor.permute(0, 2, 1) # channel first
         model_kwargs = dict(x0=pc_action, y=pc_anchor)
+
+        # Extract relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            rel_pos = batch["rel_pos"].to(self.device)
+            if num_samples is not None:
+                rel_pos = expand_pcd(rel_pos, num_samples)
+            model_kwargs["rel_pos"] = rel_pos
+            
         return model_kwargs
     
     def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
@@ -771,6 +791,10 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             # Put point and flow labels in prediction frame.
             batch["pc"] = batch["pc"] - pred_frame
             batch["flow"] = batch["flow"] - pred_frame + action_context_frame
+        
+        # Compute relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            batch["rel_pos"] = action_context_frame - pred_frame
         
         batch["pred_frame"] = pred_frame
         batch["action_context_frame"] = action_context_frame

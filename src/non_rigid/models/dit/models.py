@@ -652,6 +652,16 @@ class DiT_PointCloud_Cross(nn.Module):
         # Timestamp embedding.
         self.t_embedder = TimestepEmbedder(hidden_size)
 
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            self.rel_pos_embedder = nn.Sequential(
+                nn.Linear(in_channels, hidden_size, bias=True),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size, bias=True),
+            )
+        else:
+            self.rel_pos_embedder = None
+
         # DiT blocks.
         self.blocks = nn.ModuleList(
             [
@@ -678,6 +688,11 @@ class DiT_PointCloud_Cross(nn.Module):
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
 
+        # Initialize relative position embedding MLP, if enabled:
+        if self.rel_pos_embedder is not None:
+            nn.init.normal_(self.rel_pos_embedder[0].weight, std=0.02)
+            nn.init.normal_(self.rel_pos_embedder[2].weight, std=0.02)
+
         # Zero-out adaLN modulation layers in DiT blocks:
         for block in self.blocks:
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
@@ -695,6 +710,7 @@ class DiT_PointCloud_Cross(nn.Module):
             t: torch.Tensor,
             y: torch.Tensor,
             x0: torch.Tensor,
+            rel_pos: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass of DiT with scene cross attention.
@@ -711,12 +727,20 @@ class DiT_PointCloud_Cross(nn.Module):
         # Timestep embedding.
         t_emb = self.t_embedder(t)
 
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            assert rel_pos is not None, "Relative position embedding requires rel_pos tensor."
+            rel_pos_emb = self.rel_pos_embedder(rel_pos.squeeze(1))
+            c = t_emb + rel_pos_emb
+        else:
+            c = t_emb
+
         # Forward pass through DiT blocks.
         for block in self.blocks:
-            x_enc = block(x_enc, y_enc, t_emb)
+            x_enc = block(x_enc, y_enc, c)
 
         # Final layer.
-        out = self.final_layer(x_enc, t_emb)
+        out = self.final_layer(x_enc, c)
         out = out.permute(0, 2, 1)
         return out
 
@@ -758,6 +782,16 @@ class TAX3Dv2_MuFrame_DiT(nn.Module):
         # Timestamp embedding.
         self.t_embedder = TimestepEmbedder(hidden_size)
 
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            self.rel_pos_embedder = nn.Sequential(
+                nn.Linear(in_channels, hidden_size, bias=True),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size, bias=True),
+            )
+        else:
+            self.rel_pos_embedder = None
+
         # DiT blocks.
         self.blocks = nn.ModuleList(
             [
@@ -785,6 +819,11 @@ class TAX3Dv2_MuFrame_DiT(nn.Module):
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
 
+        # Initialize relative position embedding MLP, if enabled:
+        if self.rel_pos_embedder is not None:
+            nn.init.normal_(self.rel_pos_embedder[0].weight, std=0.02)
+            nn.init.normal_(self.rel_pos_embedder[2].weight, std=0.02)
+
         # Zero-out adaLN modulation layers in DiT blocks:
         for block in self.blocks:
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
@@ -807,7 +846,8 @@ class TAX3Dv2_MuFrame_DiT(nn.Module):
             xs_t: torch.Tensor,
             t: torch.Tensor,
             y: torch.Tensor,
-            x0: Optional[torch.Tensor] = None,
+            x0: torch.Tensor,
+            rel_pos: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass of DiT with scene cross attention.
@@ -831,15 +871,23 @@ class TAX3Dv2_MuFrame_DiT(nn.Module):
         # Timestep embedding.
         t_emb = self.t_embedder(t)
 
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            assert rel_pos is not None, "Relative position embedding requires rel_pos tensor."
+            rel_pos_emb = self.rel_pos_embedder(rel_pos.squeeze(1))
+            c = t_emb + rel_pos_emb
+        else:
+            c = t_emb
+
         # Forward pass through DiT blocks.
         for block in self.blocks:
-            x_enc = block(x_enc, y_enc, t_emb)
+            x_enc = block(x_enc, y_enc, c)
 
         # Final layers.
         xr_out = x_enc[:, -1:, :]
         xs_out = x_enc[:, :-1, :]
-        xr_out = self.final_layer_r(xr_out, t_emb).permute(0, 2, 1)
-        xs_out = self.final_layer_s(xs_out, t_emb).permute(0, 2, 1)
+        xr_out = self.final_layer_r(xr_out, c).permute(0, 2, 1)
+        xs_out = self.final_layer_s(xs_out, c).permute(0, 2, 1)
 
         return xr_out, xs_out
 
@@ -878,6 +926,16 @@ class TAX3Dv2_FixedFrame_Token_DiT(nn.Module):
         # Timestamp embedding.
         self.t_embedder = TimestepEmbedder(hidden_size)
 
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            self.rel_pos_embedder = nn.Sequential(
+                nn.Linear(in_channels, hidden_size, bias=True),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size, bias=True),
+            )
+        else:
+            self.rel_pos_embedder = None
+
         # DiT blocks.
         self.blocks = nn.ModuleList(
             [
@@ -905,6 +963,11 @@ class TAX3Dv2_FixedFrame_Token_DiT(nn.Module):
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
 
+        # Initialize relative position embedding MLP, if enabled:
+        if self.rel_pos_embedder is not None:
+            nn.init.normal_(self.rel_pos_embedder[0].weight, std=0.02)
+            nn.init.normal_(self.rel_pos_embedder[2].weight, std=0.02)
+
         # Zero-out adaLN modulation layers in DiT blocks:
         for block in self.blocks:
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
@@ -927,7 +990,8 @@ class TAX3Dv2_FixedFrame_Token_DiT(nn.Module):
             xs_t: torch.Tensor,
             t: torch.Tensor,
             y: torch.Tensor,
-            x0: Optional[torch.Tensor] = None,
+            x0: torch.Tensor,
+            rel_pos: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass of DiT with scene cross attention.
@@ -950,15 +1014,23 @@ class TAX3Dv2_FixedFrame_Token_DiT(nn.Module):
         # Timestep embedding.
         t_emb = self.t_embedder(t)
 
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            assert rel_pos is not None, "Relative position embedding requires rel_pos tensor."
+            rel_pos_emb = self.rel_pos_embedder(rel_pos.squeeze(1))
+            c = t_emb + rel_pos_emb
+        else:
+            c = t_emb
+
         # Forward pass through DiT blocks.
         for block in self.blocks:
-            x_enc = block(x_enc, y_enc, t_emb)
+            x_enc = block(x_enc, y_enc, c)
 
         # Final layers.
         xr_out = x_enc[:, -1:, :]
         xs_out = x_enc[:, :-1, :]
-        xr_out = self.final_layer_r(xr_out, t_emb).permute(0, 2, 1)        
-        xs_out = self.final_layer_s(xs_out, t_emb).permute(0, 2, 1)
+        xr_out = self.final_layer_r(xr_out, c).permute(0, 2, 1)        
+        xs_out = self.final_layer_s(xs_out, c).permute(0, 2, 1)
 
         return xr_out, xs_out
 
