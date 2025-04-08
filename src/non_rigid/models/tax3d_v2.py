@@ -343,13 +343,13 @@ class TAX3Dv2BaseModule(L.LightningModule):
         pred_point_world = pred_dict["point"]["pred_world"]
 
         # TODO: this should happen inside get model kwargs
-        # pred_scaled = pred / scaling_factor
-        # ground_truth_scaled = ground_truth / scaling_factor
+        pred_point_world_scaled = pred_point_world / scaling_factor
+        ground_truth_point_world_scaled = ground_truth_point_world / scaling_factor
 
         # computing error metrics
-        if self.dataset_cfg.material == "deform":
-            seg = seg == 0
-        rmse = flow_rmse(pred_point_world, ground_truth_point_world, mask=True, seg=seg).reshape(bs, num_samples)
+        seg = seg == 0
+
+        rmse = flow_rmse(pred_point_world_scaled, ground_truth_point_world_scaled, mask=True, seg=seg).reshape(bs, num_samples)
         pred_point_world = pred_point_world.reshape(bs, num_samples, -1, 3)
 
         # computing winner-take-all metrics
@@ -358,22 +358,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         pred_point_world_wta = pred_point_world[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            raise NotImplementedError("Rigid metrics not fixed yet!")
-            T_goalUnAug = Transform3d(
-                matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
-            )
-            pred_ref = expand_pcd(pred_ref, num_samples)
-            if self.model_name == "tax3dv2_muframe":
-                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
-                goal_point_world = T_goalUnAug.transform_points(goal_pc)
-            else:
-                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
-                goal_point_world = T_goalUnAug.transform_points(goal_pc + pred_ref)
-
-            pred_point_world = pred_point_world / scaling_factor
-            goal_point_world = goal_point_world / scaling_factor
-
-            translation_errs, rotation_errs = svd_estimation(pred_point_world, goal_point_world, return_magnitude=True)
+            translation_errs, rotation_errs = svd_estimation(pred_point_world_scaled.reshape(bs * num_samples, -1, 3), ground_truth_point_world_scaled, return_magnitude=True)
 
             translation_errs = translation_errs.reshape(bs, num_samples)
             rotation_errs = rotation_errs.reshape(bs, num_samples)
@@ -385,8 +370,8 @@ class TAX3Dv2BaseModule(L.LightningModule):
             rotation_err_wta = rotation_errs[torch.arange(bs), rot_winner]
             
             return {
-                "pred": pred,
-                "pred_wta": pred_wta,
+                "pred_point_world": pred_point_world,
+                "pred_point_world_wta": pred_point_world_wta,
                 "rmse": rmse,
                 "rmse_wta": rmse_wta,
                 "trans": translation_errs,
@@ -414,7 +399,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         """
         # pick a random sample in the batch to visualize
         viz_idx = np.random.randint(0, batch["pc"].shape[0])
-        pred_action_viz = pred_wta_dict["pred_point_world"][viz_idx, :, :3]
+        pred_action_viz = pred_wta_dict["pred_point_world"][viz_idx, 0, :, :3]
         pred_action_wta_viz = pred_wta_dict["pred_point_world_wta"][viz_idx, :, :3]
         viz_args = self.get_viz_args(batch, viz_idx)
 

@@ -41,37 +41,30 @@
 
 GPU_INDEX=$1
 MODEL_TYPE=$2
-DATASET_NAME=$3
-WANDB_MODE=$4
+WANDB_MODE=$3
+DATASET_NAME=$4
 shift
 shift
 shift
 shift
 COMMAND=$@
+DATASET_PARAMS="dataset=$DATASET_NAME"
 
-
-if [ $MODEL_TYPE == "cross_flow_relative" ]; then
-  echo "Training cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
+if [ $MODEL_TYPE == "cross_flow" ]; then
+  echo "Training cross flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow"
 
-elif [ $MODEL_TYPE == "cross_point_relative" ]; then
-  echo "Training cross relative point model on dataset $DATASET_NAME with command: $COMMAND."
+elif [ $MODEL_TYPE == "cross_point" ]; then
+  echo "Training cross point model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=point"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
 
-elif [ $MODEL_TYPE == "tax3dv2_muframe" ]; then
-  echo "Training TAX3Dv2 Mu-Frame point model on dataset $DATASET_NAME with command: $COMMAND."
+elif [ $MODEL_TYPE == "tax3dv2" ]; then
+  echo "Training tax3dv2 model on dataset $DATASET_NAME with command: $COMMAND."
 
-  MODEL_PARAMS="model=tax3dv2_muframe model.type=point"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
-elif [ $MODEL_TYPE == "tax3dv2_fixedframe" ]; then
-  echo "Training TAX3Dv2 Fixed-Frame point model on dataset $DATASET_NAME with command: $COMMAND."
+  MODEL_PARAMS="model=tax3dv2 model.type=point"
 
-  MODEL_PARAMS="model=tax3dv2_fixedframe model.type=point"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point"
 fi
 
 

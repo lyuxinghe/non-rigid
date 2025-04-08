@@ -4,73 +4,53 @@
 # 1. the index of which GPU to use
 # 2. model type
 # 3. WANDB mode
-# 4. the rest of the arguments for the train.py script
+# 4. dataset name
+# 5. the rest of the arguments for the train.py script
 
 # Example usage:
-# ./train_rigid.sh 0 cross_flow_relative ndf offline
-# ./train_rigid.sh 0 cross_flow_relative rpdiff offline
+# ./train_rigid.sh 0 cross_flow offline rpdiff
+# ./train_rigid.sh 0 tax3dv2 offline rpdiff frame_type=fixed pred_frame=noisy_goal noisy_goal_scale=1.0 diff_rotation_noise_scale=45
+# ./train_rigid.sh 0 tax3dv2 offline rpdiff frame_type=mu pred_frame=noisy_goal noisy_goal_scale=1.0 diff_rotation_noise_scale=45
 
 # Resuming from a crashed run:
 #./train_rigid.sh 0 ddrd_flow_separate rpdiff_fit online checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-03-02/17-41-55/checkpoints/last.ckpt'
 
-
 GPU_INDEX=$1
 MODEL_TYPE=$2
-DATASET_NAME=$3
-WANDB_MODE=$4
+WANDB_MODE=$3
+DATASET_NAME=$4
 shift
 shift
 shift
 shift
 COMMAND=$@
+DATASET_PARAMS="dataset=$DATASET_NAME"
 
-if [ $MODEL_TYPE == "cross_flow_relative" ]; then
-  echo "Training cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
+if [ $MODEL_TYPE == "cross_flow" ]; then
+  echo "Training cross flow model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
 
-elif [ $MODEL_TYPE == "cross_point_relative" ]; then
-  echo "Training cross relative point model on dataset $DATASET_NAME with command: $COMMAND."
+elif [ $MODEL_TYPE == "cross_point" ]; then
+  echo "Training cross point model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=df_cross model.type=point"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
 
-elif [ $MODEL_TYPE == "feature_df_cross" ]; then
-  echo "Training feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=feature_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
-elif [ $MODEL_TYPE == "pn2_df_cross" ]; then
-  echo "Training pointnet++ w/ cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=pn2_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
-elif [ $MODEL_TYPE == "pn2_feature_df_cross" ]; then
-  echo "Training pointnet++ w/ feature cross relative flow model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=pn2_feature_df_cross model.type=flow"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
-elif [ $MODEL_TYPE == "ddrd_point_joint" ]; then
-  echo "Training DDRD point joint model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=ddrd model.type=point model.model_take=joint"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
-elif [ $MODEL_TYPE == "ddrd_flow_joint" ]; then
-  echo "Training DDRD flow joint model on dataset $DATASET_NAME with command: $COMMAND."
-
-  MODEL_PARAMS="model=ddrd model.type=flow model.model_take=joint"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
-elif [ $MODEL_TYPE == "ddrd_point_separate" ]; then
-  echo "Training DDRD point separate model on dataset $DATASET_NAME with command: $COMMAND."
+elif [ $MODEL_TYPE == "ddrd" ]; then
+  echo "Training shape-frame model on dataset $DATASET_NAME with command: $COMMAND."
 
   MODEL_PARAMS="model=ddrd model.type=point model.model_take=separate"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=point dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
-elif [ $MODEL_TYPE == "ddrd_flow_separate" ]; then
-  echo "Training DDRD flow separate model on dataset $DATASET_NAME with command: $COMMAND."
 
-  MODEL_PARAMS="model=ddrd model.type=flow model.model_take=separate"
-  DATASET_PARAMS="dataset=$DATASET_NAME dataset.type=flow dataset.scene=False dataset.world_frame=False dataset.noisy_goal=False"
+elif [ $MODEL_TYPE == "ddrd_test" ]; then
+  echo "Training shape-frame model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=ddrd model.type=point model.model_take=joint"
+
+elif [ $MODEL_TYPE == "tax3dv2" ]; then
+  echo "Training tax3dv2 model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=tax3dv2 model.type=point"
+
 fi
 
 WANDB_MODE=$WANDB_MODE python train.py \
