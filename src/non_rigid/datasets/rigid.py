@@ -22,20 +22,24 @@ class RPDiffDataset(data.Dataset):
         self.dataset_cfg = dataset_cfg
         self.rpdiff_task_name = dataset_cfg.rpdiff_task_name
         self.rpdiff_task_type = dataset_cfg.rpdiff_task_type
-
+        
         # if eval_mode = True, we turn off occlusion
         self.eval_mode = False if self.type == "train" else True
-
+            
         # data loading
         self.dataset_dir = self.root / self.rpdiff_task_name / self.rpdiff_task_type
         self.split_dir = self.dataset_dir / "split_info"
         self.split_file = f"{self.type}_split.txt" if self.type != "val" else "train_val_split.txt"
 
+        if 'preprocess' in dataset_cfg and dataset_cfg.preprocess:
+            self.dataset_dir = self.dataset_dir / "preprocessed"
+            print(f"Loading RPDiff Preprocessed Dataset from {self.dataset_dir}")
+        else:
+            print(f"Loading RPDiff Dataset from {self.dataset_dir}")
+
         # setting sample sizes
         self.sample_size_action = self.dataset_cfg.sample_size_action
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
-
-        print(f"Loading RPDiff dataset from {self.dataset_dir}")
 
         with open(os.path.join(self.split_dir, self.split_file), "r") as file:
             self.demo_files = [f"{self.dataset_dir}/{line.strip()}" for line in file]
@@ -100,9 +104,6 @@ class RPDiffDataset(data.Dataset):
                 )
                 action_seg = action_seg[action_pc_indices.squeeze(0)]
                 goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
-                if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
-                    print("Encounter action points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
-                    print(self.demo_files[index % self.num_demos])
 
                 anchor_pc, anchor_pc_indices = maybe_apply_augmentations(
                     anchor_pc,
@@ -118,10 +119,6 @@ class RPDiffDataset(data.Dataset):
                         * self.dataset_cfg.pcd_scale_factor,
                     },
                 )
-
-                if anchor_pc.shape[0] < self.dataset_cfg.sample_size_anchor:
-                    print("Encounter anchor points of shape {} with less than min_num_points. No augmentations!".format(anchor_pc.shape[0]))
-                    print(self.demo_files[index % self.num_demos])
 
                 anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
 
@@ -250,6 +247,8 @@ class RigidDataModule(L.LightningModule):
             num_workers=self.num_workers,
             shuffle=True if self.stage == "fit" else False,
             drop_last=True,
+            persistent_workers=True, 
+            pin_memory=True
         )
 
     def val_dataloader(self):

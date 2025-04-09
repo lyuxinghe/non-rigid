@@ -44,7 +44,7 @@ def load_ndf(dir, num_demos = None):
 
     return loaded_action, loaded_anchor
 
-def load_rpdiff(dir, num_demos = None):
+def load_rpdiff(dir, num_demos=None):
     npz_files = [f for f in os.listdir(dir) if f.endswith('.npz')]
     loaded_action = []
     loaded_anchor = []
@@ -70,7 +70,20 @@ def load_rpdiff(dir, num_demos = None):
         loaded_action.append(points_action)
         loaded_anchor.append(points_anchor)
         loaded_goal_action.append(points_goal_action)
-    
+
+    # Compute average point counts
+    if loaded_action:
+        avg_action = np.mean([pc.shape[0] for pc in loaded_action])
+        avg_anchor = np.mean([pc.shape[0] for pc in loaded_anchor])
+        avg_goal = np.mean([pc.shape[0] for pc in loaded_goal_action])
+
+        print("\n[INFO] Average number of points:")
+        print(f"       Action PCD      : {avg_action:.2f}")
+        print(f"       Anchor PCD      : {avg_anchor:.2f}")
+        print(f"       Goal Action PCD : {avg_goal:.2f}")
+    else:
+        print("\n[INFO] No valid demos loaded.")
+
     return loaded_action, loaded_anchor, loaded_goal_action
 
 def calculate_mean_bounding_box_excluding_outliers(pcd_list, min_side_length=np.float32(1e-5), scaling_factor=1):
@@ -491,9 +504,9 @@ if __name__ == "__main__":
     print(f"NDF Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
     '''
     
-    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/can_in_cabinet_stack/task_name_stack_can_in_cabinet', num_demos=None)
+    rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/can_in_cabinet_stack/task_name_stack_can_in_cabinet', num_demos=None)
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf', num_demos=None)
-    rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single//task_name_mug_on_rack', num_demos=None)
+    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single//task_name_mug_on_rack', num_demos=None)
 
     '''
     mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_action, scaling_factor=10.0)
