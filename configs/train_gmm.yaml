@@ -24,6 +24,6 @@ var: 0.1
 uniform_loss: 1.0
 
 resources:
-  num_workers: 32
+  num_workers: 4
   gpus:
     - 0

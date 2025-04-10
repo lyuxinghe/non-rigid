@@ -96,6 +96,10 @@ class TAX3Dv2BaseModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid prediction type: {self.pred_frame}")
 
+        # For now, model cannot use relative position embedding and scene-as-anchor.
+        if self.model_cfg.rel_pos and self.model_cfg.scene_anchor:
+            raise ValueError("Relative position embedding and scene-as-anchor are not compatible.")
+
         # mode-specific processing
         if self.mode == "train":
             self.run_cfg = cfg.training
@@ -643,7 +647,13 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
             action_context_frame = batch["pc_action"].mean(axis=1, keepdim=True)
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
-                
+
+        # Update scene-as-anchor, if necessary.
+        if self.model_cfg.scene_anchor:
+            batch["pc_anchor"] = torch.cat(
+                [batch["pc_anchor"], batch["pc_action"]], dim=1
+            )
+       
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 
         # Updating labels, if necessary.
@@ -762,6 +772,12 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
         
+        # Update scene-as-anchor, if necessary.
+        if self.model_cfg.scene_anchor:
+            batch["pc_anchor"] = torch.cat(
+                [batch["pc_anchor"], batch["pc_action"]], dim=1
+            )
+
         batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 

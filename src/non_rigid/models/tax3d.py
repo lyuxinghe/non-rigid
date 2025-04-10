@@ -632,6 +632,12 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
         
+        # Update scene-as-anchor, if necessary.
+        if self.model_cfg.scene_anchor:
+            batch["pc_anchor"] = torch.cat(
+                [batch["pc_anchor"], batch["pc_action"]], dim=1
+            )
+            
         batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 

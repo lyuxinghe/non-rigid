@@ -1,25 +1,16 @@
-from non_rigid.datasets.dedo import DedoDataset, DedoDataModule
-from non_rigid.models.dit.models import DiT_PointCloud_Cross
 import numpy as np
 import torch
 import omegaconf
 import json
 import os
-from pathlib import Path
+import shutil
 import hydra
 
-import torch_geometric.data as tgd
-import torch_geometric.loader as tgl
-
-import rpad.visualize_3d.plots as vpl
 from plotly import graph_objects as go
-from plotly.subplots import make_subplots
 
 from tqdm import tqdm
 
-from argparse import ArgumentParser
-
-from non_rigid.utils.script_utils import create_model, create_datamodule
+from non_rigid.utils.script_utils import create_datamodule
 from non_rigid.models.gmm_predictor import FrameGMMPredictor, GMMLoss, viz_gmm
 
 
@@ -85,7 +76,10 @@ def main(cfg):
     total_probs50 = []
 
     # Creating experiment directory.
-    exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), cfg.job_type)
+    exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.job_type}_{cfg.epochs}")
+    if os.path.exists(exp_name):
+        print(f"Experiment directory {exp_name} already exists. Removing it.")
+        shutil.rmtree(exp_name)
     os.makedirs(exp_name, exist_ok=True)
     os.makedirs(os.path.join(exp_name, "checkpoints"), exist_ok=True)
     os.makedirs(os.path.join(exp_name, "logs"), exist_ok=True)
@@ -165,7 +159,6 @@ def main(cfg):
     fig.add_trace(go.Scatter(x=np.arange(1, len(total_losses) + 1), y=total_losses, name="Train Loss"))
     fig.add_trace(go.Scatter(x=np.arange(val_every, (len(total_val_losses) + 1) * val_every, val_every), y=total_val_losses, name="Val Loss"))
     fig.update_layout(title="Losses", xaxis_title="Epoch", yaxis_title="Loss")
-    fig.show()
     fig.write_html(os.path.join(exp_name, "logs", "losses.html"))
 
     # AFter training, plot probability statistics.
@@ -174,7 +167,6 @@ def main(cfg):
     fig.add_trace(go.Scatter(x=np.arange(val_every, (len(total_val_losses) + 1) * val_every, val_every), y=total_probs90, name="Top-0.90"))
     fig.add_trace(go.Scatter(x=np.arange(val_every, (len(total_val_losses) + 1) * val_every, val_every), y=total_probs50, name="Top-0.50"))
     fig.update_layout(title="Top-K Probabilities", xaxis_title="Epoch", yaxis_title="Number of Points")
-    fig.show()
     fig.write_html(os.path.join(exp_name, "logs", "top_probs.html"))
 
     breakpoint()
