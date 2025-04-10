@@ -1,0 +1,32 @@
+mode: eval
+
+# This is somewhat arbitrary.
+job_type: gmm_${dataset.name}
+
+defaults:
+  # Each of these have their own configuration parameters.
+  - dataset: dedo
+  - model: df_cross
+
+  # A set of inference settings for the model. Note that these may be different
+  # from / or a subset of the training settings. This is that we don't have to
+  # provide, like, a learning rater or something to eval.
+  - inference: ${dataset}_${model}
+
+  # Simple shared imports.
+  - _logging
+
+  # Override.
+  - _self_
+
+seed: 42
+
+# GMM-specific training parameters; some of these will override inference config file.
+gmm_log_dir: "~/data/gmm_outputs/"
+epochs: 1000
+num_samples: 50
+
+resources:
+  num_workers: 4
+  gpus:
+    - 0

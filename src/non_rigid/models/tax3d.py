@@ -340,10 +340,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         ground_truth_point_world_scaled = ground_truth_point_world / scaling_factor
 
         # computing error metrics
-        '''
-        if self.dataset_cfg.material == "deform":
-            seg = seg == 0
-        '''
         seg = seg == 0
 
         rmse = flow_rmse(pred_point_world_scaled, ground_truth_point_world_scaled, mask=True, seg=seg).reshape(bs, num_samples)
@@ -581,14 +577,22 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         pc_action = batch["pc_action"].to(self.device)
         pc_anchor = batch["pc_anchor"].to(self.device)
 
+        # Expand point clouds, if necessary; used for WTA predictions.
         if num_samples is not None:
-            # expand point clouds if num_samples is provided; used for WTA predictions
             pc_action = expand_pcd(pc_action, num_samples)
             pc_anchor = expand_pcd(pc_anchor, num_samples)
-        
+            
         pc_action = pc_action.permute(0, 2, 1) # channel first
         pc_anchor = pc_anchor.permute(0, 2, 1) # channel first
         model_kwargs = dict(x0=pc_action, y=pc_anchor)
+
+        # Extract relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            rel_pos = batch["rel_pos"].to(self.device)
+            if num_samples is not None:
+                rel_pos = expand_pcd(rel_pos, num_samples)
+            model_kwargs["rel_pos"] = rel_pos
+            
         return model_kwargs
     
     def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
@@ -628,6 +632,12 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
         
+        # Update scene-as-anchor, if necessary.
+        if self.model_cfg.scene_anchor:
+            batch["pc_anchor"] = torch.cat(
+                [batch["pc_anchor"], batch["pc_action"]], dim=1
+            )
+            
         batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 
@@ -642,6 +652,10 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
             # Put point and flow labels in prediction frame.
             batch["pc"] = batch["pc"] - pred_frame
             batch["flow"] = batch["flow"] - pred_frame + action_context_frame
+        
+        # Compute relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            batch["rel_pos"] = action_context_frame - pred_frame
         
         batch["pred_frame"] = pred_frame
         batch["action_context_frame"] = action_context_frame

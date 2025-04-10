@@ -96,6 +96,10 @@ class TAX3Dv2BaseModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid prediction type: {self.pred_frame}")
 
+        # For now, model cannot use relative position embedding and scene-as-anchor.
+        if self.model_cfg.rel_pos and self.model_cfg.scene_anchor:
+            raise ValueError("Relative position embedding and scene-as-anchor are not compatible.")
+
         # mode-specific processing
         if self.mode == "train":
             self.run_cfg = cfg.training
@@ -141,7 +145,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
             print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
             print("Initializing TAX3Dv2 Mu-Frame Dense Displacement Diffusion Module")
             print(f"### Prediction Reference Frame: {self.pred_frame}")
-            print(f"### Referemce Noise Scale: {self.noisy_goal_scale}")
+            print(f"### Reference Noise Scale: {self.noisy_goal_scale}")
 
         elif self.model_cfg.frame_type == "fixed":
             # TODO: rename this diffusion code to create_diffusion_fixed
@@ -157,7 +161,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
             print(f"### Rotation Noise Scale: {self.diff_rotation_noise_scale}")
             print("Initializing TAX3Dv2 Fixed-Frame Dense Displacement Diffusion Module")
             print(f"### Prediction Reference Frame: {self.pred_frame}")
-            print(f"### Referemce Noise Scale: {self.noisy_goal_scale}")
+            print(f"### Reference Noise Scale: {self.noisy_goal_scale}")
 
         else:
             raise ValueError("Choose model_take from [\"tax3dv2_muframe\", \"tax3dv2_fixedframe\"]")
@@ -347,10 +351,6 @@ class TAX3Dv2BaseModule(L.LightningModule):
         ground_truth_point_world_scaled = ground_truth_point_world / scaling_factor
 
         # computing error metrics
-        '''
-        if self.dataset_cfg.material == "deform":
-            seg = seg == 0
-        '''
         seg = seg == 0
 
         rmse = flow_rmse(pred_point_world_scaled, ground_truth_point_world_scaled, mask=True, seg=seg).reshape(bs, num_samples)
@@ -601,6 +601,14 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
         pc_action = pc_action.permute(0, 2, 1) # channel first
         pc_anchor = pc_anchor.permute(0, 2, 1) # channel first
         model_kwargs = dict(x0=pc_action, y=pc_anchor)
+
+        # Extract relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            rel_pos = batch["rel_pos"].to(self.device)
+            if num_samples is not None:
+                rel_pos = expand_pcd(rel_pos, num_samples)
+            model_kwargs["rel_pos"] = rel_pos
+
         return model_kwargs
     
     def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
@@ -639,7 +647,13 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
             action_context_frame = batch["pc_action"].mean(axis=1, keepdim=True)
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
-                
+
+        # Update scene-as-anchor, if necessary.
+        if self.model_cfg.scene_anchor:
+            batch["pc_anchor"] = torch.cat(
+                [batch["pc_anchor"], batch["pc_action"]], dim=1
+            )
+       
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 
         # Updating labels, if necessary.
@@ -652,6 +666,10 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
 
             # Put flow labels in prediction frame.
             batch["flow"] = batch["flow"] + action_context_frame
+        
+        # Compute relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            batch["rel_pos"] = action_context_frame - pred_frame
 
         batch["pred_frame"] = pred_frame
         batch["action_context_frame"] = action_context_frame
@@ -707,6 +725,14 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         pc_action = pc_action.permute(0, 2, 1) # channel first
         pc_anchor = pc_anchor.permute(0, 2, 1) # channel first
         model_kwargs = dict(x0=pc_action, y=pc_anchor)
+
+        # Extract relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            rel_pos = batch["rel_pos"].to(self.device)
+            if num_samples is not None:
+                rel_pos = expand_pcd(rel_pos, num_samples)
+            model_kwargs["rel_pos"] = rel_pos
+            
         return model_kwargs
     
     def get_world_preds(self, batch, num_samples, pc_action, pred_dict):
@@ -746,6 +772,12 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
         
+        # Update scene-as-anchor, if necessary.
+        if self.model_cfg.scene_anchor:
+            batch["pc_anchor"] = torch.cat(
+                [batch["pc_anchor"], batch["pc_action"]], dim=1
+            )
+
         batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 
@@ -760,6 +792,10 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             # Put point and flow labels in prediction frame.
             batch["pc"] = batch["pc"] - pred_frame
             batch["flow"] = batch["flow"] - pred_frame + action_context_frame
+        
+        # Compute relative position, if necessary.
+        if self.model_cfg.rel_pos:
+            batch["rel_pos"] = action_context_frame - pred_frame
         
         batch["pred_frame"] = pred_frame
         batch["action_context_frame"] = action_context_frame

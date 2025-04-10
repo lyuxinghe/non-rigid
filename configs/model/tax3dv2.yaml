@@ -10,6 +10,8 @@ learn_sigma: True # Learn sigma for diffusion
 point_encoder: mlp # (mlp, pn2) Point cloud encoder architecture
 feature: True # If True, encode additional features
 joint_encode: True # If True, use joint encoding for point cloud feature
+rel_pos: False # If True, encode relative position
+scene_anchor: False # If True, use scene as the anchor
 frame_type: fixed # (fixed, mu) Type of frame-prediction for the model
 
 #####################################################
