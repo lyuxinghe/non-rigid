@@ -275,6 +275,27 @@ class MuFrameDenseDisplacementDiffusionModule(L.LightningModule):
         pred_s = final_dict["sample_s"]
         pred = pred_s + pred_r        
         results = [res["sample_r"] + res["sample_s"] for res in results]
+
+        finetune_frame = pred_r
+        z_r = torch.zeros_like(z_r)
+        z_s = pred_s
+        final_dict, results = self.diffusion.p_sample_loop_finetune(
+            self.network,
+            z_r.shape,
+            z_s.shape,
+            z_r,
+            z_s,
+            finetune_frame=finetune_frame,
+            clip_denoised=False,
+            model_kwargs=model_kwargs,
+            progress=progress,
+            device=self.device,   
+        )
+        pred_r = final_dict["sample_r"]
+        pred_s = final_dict["sample_s"]
+        pred = pred_s + pred_r        
+        results = [res["sample_r"] + res["sample_s"] for res in results]
+
         pred = pred.permute(0, 2, 1)
 
         if not full_prediction:

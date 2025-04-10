@@ -849,6 +849,7 @@ class TAX3Dv2_MuFrame_DiT(nn.Module):
             y: torch.Tensor,
             x0: torch.Tensor,
             rel_pos: Optional[torch.Tensor] = None,
+            finetune_frame: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Forward pass of DiT with scene cross attention.
@@ -860,9 +861,15 @@ class TAX3Dv2_MuFrame_DiT(nn.Module):
             x0 (torch.Tensor): (B, D, N) tensor of un-noised x (e.g. action) features
         """        
         # Dynamically center anchor in mu-frame.
-        y = y - xr_t
-        # Encode action and anchor features.
-        x_enc, y_enc = self.feature_encoder(x=xs_t, y=y, x0=x0)
+        if finetune_frame is None:
+            y = y - xr_t
+            # Encode action and anchor features.
+            x_enc, y_enc = self.feature_encoder(x=xs_t, y=y, x0=x0)
+        else:
+            y = y - finetune_frame
+            x = xr_t + xs_t
+            # Encode action and anchor features.
+            x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0)
 
         # Concatenating reference frame token to the action features.
         x_enc = torch.cat(

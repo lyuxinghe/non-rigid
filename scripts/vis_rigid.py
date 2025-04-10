@@ -100,7 +100,7 @@ def rpdiff_visualize_point_cloud(file_path, save_dir, views="all", num_vis=100):
     
     else:
         # Process a single NPZ file
-        visualize_point_cloud(file_path, save_dir, views)
+        visualize_point_cloud(file_path, save_dir, views_to_render)
 
 
 def visualize_point_cloud(file_path, save_dir, views_to_render):
@@ -317,8 +317,8 @@ def are_anchor_pcds_identical_rpdiff(file_path):
 
 if __name__ == "__main__":
     
-    file_path = "/data/lyuxing/tax3d/rpdiff/data/task_demos/can_in_cabinet_stack/task_name_stack_can_in_cabinet/preprocessed/"  # Replace with actual file path
-    save_dir = "./vis/cancabnet"  # Directory to save the visualizations
+    file_path = "/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf/preprocessed/"  # Replace with actual file path
+    save_dir = "./vis/bookbookshelf"  # Directory to save the visualizations
     views = "all"  # Use "all" or any single view like "default", "top", "side", "diagonal"
     rpdiff_visualize_point_cloud(file_path, save_dir, views, num_vis=5)
     
