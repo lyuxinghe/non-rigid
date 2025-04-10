@@ -747,6 +747,7 @@ class DiT_PointCloud_Cross(nn.Module):
 #################################################################################
 #                                TAX3Dv2 Models                                 #
 #################################################################################
+
 class TAX3Dv2_MuFrame_DiT(nn.Module):
     """
     Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention, 

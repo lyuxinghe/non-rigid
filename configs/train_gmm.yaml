@@ -1,0 +1,29 @@
+mode: train
+
+job_type: gmm_${dataset.name}
+
+defaults:
+  # Each of these have their own configuration parameters.
+  - dataset: dedo
+  - model: df_cross
+
+  # We assume a different training config for each dataset/model pair.
+  - training: ${dataset}_${model}
+
+  # Simple shared imports.
+  - _logging
+
+seed: 42
+
+# GMM-specific training parameters; some of these will override training config file.
+gmm_log_dir: "~/data/gmm_outputs/"
+epochs: 1000
+lr: 1e-4
+weight_decay: 1e-5
+var: 0.1
+uniform_loss: 1.0
+
+resources:
+  num_workers: 32
+  gpus:
+    - 0

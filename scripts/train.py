@@ -9,18 +9,6 @@ import wandb
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 
-# from non_rigid.datasets.microwave_flow import MicrowaveFlowDataModule
-# from non_rigid.datasets.proc_cloth_flow import ProcClothFlowDataModule
-# from non_rigid.datasets.rigid import RigidDataModule
-# from non_rigid.models.df_base import (
-#     DiffusionFlowBase,
-#     FlowPredictionTrainingModule,
-#     PointPredictionTrainingModule,
-# )
-# from non_rigid.models.regression import (
-#     LinearRegression,
-#     LinearRegressionTrainingModule,
-# )
 from non_rigid.utils.script_utils import (
     PROJECT_ROOT,
     create_datamodule,
