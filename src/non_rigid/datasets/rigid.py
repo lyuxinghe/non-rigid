@@ -248,7 +248,7 @@ class RigidDataModule(L.LightningModule):
             shuffle=True if self.stage == "fit" else False,
             drop_last=True,
             persistent_workers=True, 
-            pin_memory=True
+            pin_memory=False
         )
 
     def val_dataloader(self):
