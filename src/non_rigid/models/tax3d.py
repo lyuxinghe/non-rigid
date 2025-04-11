@@ -622,9 +622,11 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         if gmm_model is not None:
             assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
             gmm_pred = gmm_model(batch)
-            gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
+            gmm_probs, gmm_means, gmm_anchor_frame = gmm_pred["probs"], gmm_pred["means"], gmm_pred["anchor_frame"]
             idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
-            sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
+            sampled_noisy_goals = (
+                gmm_means[torch.arange(gmm_means.shape[0]), idxs] + gmm_anchor_frame.squeeze(1)
+            ).cpu()
             batch["noisy_goal"] = sampled_noisy_goals
 
         # Processing prediction frame.

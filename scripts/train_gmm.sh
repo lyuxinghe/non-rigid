@@ -17,8 +17,6 @@ GPU_INDEX=$1
 DATASET_NAME=$2
 shift
 shift
-shift
-shift
 COMMAND=$@
 
 WANDB_MODE=$WANDB_MODE python train_gmm.py \

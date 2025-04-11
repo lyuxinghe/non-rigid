@@ -21,13 +21,13 @@ warnings.filterwarnings("ignore", message="TypedStorage is deprecated", category
 
 @hydra.main(config_path="../configs", config_name="train_gmm", version_base="1.3")
 def main(cfg):
-    print(
-        json.dumps(
-            omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
-            sort_keys=True,
-            indent=4,
-        )
-    )
+    # print(
+    #     json.dumps(
+    #         omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
+    #         sort_keys=True,
+    #         indent=4,
+    #     )
+    # )
 
     ######################################################################
     # Torch settings.
@@ -168,8 +168,6 @@ def main(cfg):
     fig.add_trace(go.Scatter(x=np.arange(val_every, (len(total_val_losses) + 1) * val_every, val_every), y=total_probs50, name="Top-0.50"))
     fig.update_layout(title="Top-K Probabilities", xaxis_title="Epoch", yaxis_title="Number of Points")
     fig.write_html(os.path.join(exp_name, "logs", "top_probs.html"))
-
-    breakpoint()
 
 if __name__ == "__main__":
     main()
