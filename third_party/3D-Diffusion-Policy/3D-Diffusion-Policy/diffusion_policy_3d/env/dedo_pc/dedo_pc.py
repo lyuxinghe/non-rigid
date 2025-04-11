@@ -36,21 +36,16 @@ class DedoEnv:
         # TODO: can move some of this stuff to task config
 
         if task_name == "proccloth":
-            args.env = 'HangProcCloth-v0'
+            args.env = 'HangProcClothRobot-v0'
             args.max_episode_len = 300
         elif task_name == "hangbag":
             args.env = 'HangBag-v0'
             args.max_episode_len = 300
         else:
             raise ValueError(f"Unknown task name: {task_name}")
-        # TODO": this is the error
-        
-        # args.env = 'HangProcCloth-v0'
+
         args.tax3d = True
         args.rollout_vid = True
-        args.pcd = True
-        args.logdir = 'rendered'
-        args.cam_config_path = f"{CAM_CONFIG_DIR}/camview_0.json"
         args.viz = viz
         args_postprocess(args)
 
@@ -82,23 +77,35 @@ class DedoEnv:
                     shape=(self.num_anchor_points, 3),
                     dtype=np.float32
                 ),
-                'seg': spaces.Box(
-                    low=-np.inf,
-                    high=np.inf,
-                    shape=(self.num_action_points,),
-                    dtype=np.float32
-                ),
-                'seg_anchor': spaces.Box(
-                    low=-np.inf,
-                    high=np.inf,
-                    shape=(self.num_anchor_points,),
-                    dtype=np.float32
-                ),
+                # 'seg': spaces.Box(
+                #     low=-np.inf,
+                #     high=np.inf,
+                #     shape=(self.num_action_points,),
+                #     dtype=np.float32
+                # ),
+                # 'seg_anchor': spaces.Box(
+                #     low=-np.inf,
+                #     high=np.inf,
+                #     shape=(self.num_anchor_points,),
+                #     dtype=np.float32
+                # ),
             })
         else:
             self.num_points = 1024
             self.observation_space = spaces.Dict({
-                'point_cloud': spaces.Box(
+                # 'point_cloud': spaces.Box(
+                #     low=-np.inf,
+                #     high=np.inf,
+                #     shape=(self.num_points, 3),
+                #     dtype=np.float32
+                # ),
+                'action_pcd': spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(self.num_points, 3),
+                    dtype=np.float32
+                ),
+                'anchor_pcd': spaces.Box(
                     low=-np.inf,
                     high=np.inf,
                     shape=(self.num_points, 3),
@@ -117,38 +124,42 @@ class DedoEnv:
         next_obs = self.get_obs()
         return next_obs, reward, done, info
 
-    def reset(self, 
-              cloth_rot=None, 
-              rigid_trans=None, 
-              rigid_rot=None, 
-              deform_params={}):
-        self.env.reset(cloth_rot=cloth_rot,
-                       rigid_trans=rigid_trans,
-                       rigid_rot=rigid_rot,
-                       deform_params=deform_params)
+    def reset(self, deform_data={}, rigid_data={}):
+        self.env.reset(
+            deform_data=deform_data,
+            rigid_data=rigid_data,
+        )
         return self.get_obs()
 
     def get_obs(self):
         obs = self.env.get_obs()
-
         action_pcd = obs['action_pcd']
+        action_seg = obs['action_seg']
         anchor_pcd = obs['anchor_pcd']
+        anchor_seg = obs['anchor_seg']
+        # TODO: since we can have multiple anchors, this should get a seg from the actual env
 
         if self.tax3d:
             # tax3d-specific observation; action/anchor segmentation, and full action point cloud
             obs_dict = {
                 'pc_action': action_pcd,
                 'pc_anchor': anchor_pcd,
-                'seg': np.ones(action_pcd.shape[0]),
-                'seg_anchor': np.zeros(anchor_pcd.shape[0]),
+                # 'seg': np.ones(action_pcd.shape[0]),
+                # 'seg_anchor': np.zeros(anchor_pcd.shape[0]),
             }
         else:
-            point_cloud = np.concatenate([action_pcd, anchor_pcd], axis=0)
+            # anchor_pcd = downsample_with_fps(anchor_pcd, 1024)
+            # point_cloud = np.concatenate([action_pcd, anchor_pcd], axis=0)
+            # point_cloud = np.concatenate([action_pcd, anchor_pcd], axis=0)
 
-            if point_cloud.shape[0] > self.num_points:
-                point_cloud = downsample_with_fps(point_cloud, self.num_points)
+            # if point_cloud.shape[0] > self.num_points:
+            #     point_cloud = downsample_with_fps(point_cloud, self.num_points)
             obs_dict = {
-                'point_cloud': point_cloud,
+                # 'point_cloud': point_cloud,
+                'action_pcd': action_pcd,
+                'action_seg': action_seg,
+                'anchor_pcd': anchor_pcd,
+                'anchor_seg': anchor_seg,
                 'agent_pos': obs['gripper_state'],
             }
         return obs_dict
