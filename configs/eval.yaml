@@ -20,8 +20,9 @@ defaults:
   - _self_
 
 seed: 42
-task_type: None # Set during eval loop based on dataset.
-use_gmm: False
+# task_type: null # Set during eval loop based on dataset.
+gmm: null # (None, num_epochs) If not None, use GMM for eval.
+gmm_log_dir: "~/data/gmm_outputs/"
 
 # This is the checkpoint that we're evaluating. You can change this to whatever you need,
 # like if you want multiple checkpoints simultaneously, etc.

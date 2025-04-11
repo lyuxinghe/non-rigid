@@ -77,8 +77,8 @@ class RPDiffDataset(data.Dataset):
         anchor_pc *= self.dataset_cfg.pcd_scale_factor
         goal_action_pc *= self.dataset_cfg.pcd_scale_factor
 
-        action_seg = torch.ones(action_pc.shape[0], dtype=torch.bool)
-        anchor_seg = torch.ones(anchor_pc.shape[0], dtype=torch.bool)
+        action_seg = torch.zeros_like(action_pc[:, 0]).int()
+        anchor_seg = torch.ones_like(anchor_pc[:, 0]).int()
         
         # Apply augmentations
         if self.type == "train" or self.dataset_cfg.val_use_defaults:
@@ -145,84 +145,47 @@ class RPDiffDataset(data.Dataset):
             anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
 
 
-        # Extract rotation and translation from relative_trans
-        # TODO: adjust them with the scaling factor
-        #T_init = relative_trans
-        #R_action_to_goal = relative_trans[:3, :3]  # Rotation matrix
-        #t_action_to_goal = relative_trans[:3, 3]   # Translation vector
-
-        '''
-        if self.centroid_frame:
-            if self.centroid_frame == "anchor":
-                center = anchor_pc.mean(axis=0)
-            elif self.centroid_frame == "noisy_goal":
-                center = goal_action_pc.mean(axis=0)
-                goal_noise = self.ref_error_scale * torch.randn_like(center)
-                center = center + goal_noise
-            elif self.centroid_frame == "goal":
-                center = goal_action_pc.mean(axis=0)
-            elif self.centroid_frame == "scene":
-                # TODO: implement scene centroid
-                raise NotImplementedError(f"Not implemented: centroid_frame = scene")
-            else:
-                raise ValueError(f"Invalid centroid_frame: {self.centroid_frame}. Choose centroid frame from [anchor, noisy_goal, goal, scene]")
-            action_center = action_pc.mean(axis=0)
-        else:
-            # TODO: implement world frame
-            raise NotImplementedError(f"Not implemented: no centroid frame, i.e. world frame")
-        '''
-
-        # center scene (goal_action_pc + anchor_pc) on the centroid of the scene
-        scene_pc = torch.cat([goal_action_pc, anchor_pc], dim=0)
-        scene_center = scene_pc.mean(axis=0)
-        s_goal_action_pc = goal_action_pc - scene_center
-        s_anchor_pc = anchor_pc - scene_center
-
-        # center action in its own frame
-        action_center = action_pc.mean(axis=0)
-        a_action_pc = action_pc - action_center
-
-        # transform the point clouds
-        T0 = random_se3(
+       # Apply scene-level augmentation.
+        T = random_se3(
             N=1,
-            rot_var=self.dataset_cfg.action_rotation_variance,
-            trans_var=self.dataset_cfg.action_translation_variance,
-            rot_sample_method=self.dataset_cfg.action_transform_type,
+            rot_var=self.dataset_cfg.rotation_variance,
+            trans_var=self.dataset_cfg.translation_variance,
+            rot_sample_method=self.dataset_cfg.scene_transform_type,
         )
-        T1 = random_se3(
-            N=1,
-            rot_var=self.dataset_cfg.anchor_rotation_variance,
-            trans_var=self.dataset_cfg.anchor_translation_variance,
-            rot_sample_method=self.dataset_cfg.anchor_transform_type,
-        )
+        action_pc = T.transform_points(action_pc)
+        anchor_pc = T.transform_points(anchor_pc)
+        goal_action_pc = T.transform_points(goal_action_pc)
 
-        s_goal_action_pc_ = T1.transform_points(s_goal_action_pc)
-        s_anchor_pc_ = T1.transform_points(s_anchor_pc)
-        a_action_pc_ = T0.transform_points(a_action_pc)
+        # Center point clouds in scene frame.
+        scene_center = torch.cat([action_pc, anchor_pc], dim=0).mean(axis=0)
+        goal_action_pc = goal_action_pc - scene_center
+        anchor_pc = anchor_pc - scene_center
+        action_pc = action_pc - scene_center
 
-        T_goalUnAug = Translate(-scene_center.unsqueeze(0)).compose(T1.inverse().compose(Translate(scene_center.unsqueeze(0))))
-        T_actionUnAug = Translate(-action_center.unsqueeze(0)).compose(T0.inverse().compose(Translate(action_center.unsqueeze(0))))
+        # Update item.
+        T_goal2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
+        T_action2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
 
-        goal_action_pc_ = s_goal_action_pc_ + scene_center
-        anchor_pc_ = s_anchor_pc_ + scene_center
-        action_pc_ = a_action_pc_ + action_center
-        
-        goal_flow_ = goal_action_pc_ - action_pc_
+        goal_flow = goal_action_pc - action_pc
 
         item = {}
-        # NOTE: below are all in world frame now, and T_goalUnAug and T_actionUnAug transform point clouds in world frame to world frame,
-        #       with the purpose of removing augmentations
-        
-        # Training ONLY (we should never access them during inference, if not evaluating)
-        item["pc"] = goal_action_pc_ # Goal action points, centered at the centroid frame
-        item["flow"] = goal_flow_ # pc - action_pc
-        # Training & Inference
-        item["pc_action"] = action_pc_ # Action points in action centroid frame (if no world frame)
-        item["pc_anchor"] = anchor_pc_ # Anchor points, centered at the centroid frame (if no world frame)
+        item["pc_action"] = action_pc # Action points in the action frame
+        item["pc_anchor"] = anchor_pc # Anchor points in the scene frame
         item["seg"] = action_seg
         item["seg_anchor"] = anchor_seg
-        item["T_goalUnAug"] = T_goalUnAug.get_matrix().squeeze(0)
-        item["T_actionUnAug"] = T_actionUnAug.get_matrix().squeeze(0)
+        item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0) # Transform from goal action frame to world frame
+        item["T_action2world"] = T_action2world.get_matrix().squeeze(0) # Transform from action frame to world frame
+
+        # Training-specific labels.
+        # TODO: eventually, rename this key to "point"
+        item["pc"] = goal_action_pc # Ground-truth goal action points in the scene frame
+        item["flow"] = goal_flow # Ground-truth flow (cross-frame) to action points
+        
+        if self.dataset_cfg.pred_frame == "noisy_goal":
+            # "Simulate" the GMM prediction as noisy goal.
+            goal_center = goal_action_pc.mean(axis=0)
+            item["noisy_goal"] = goal_center + self.dataset_cfg.noisy_goal_scale * torch.normal(mean=torch.zeros(3), std=torch.ones(3))
+
         return item
 
     def set_eval_mode(self, eval_mode: bool):

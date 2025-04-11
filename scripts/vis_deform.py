@@ -264,7 +264,7 @@ def main(cfg):
     # Run the model on the train/val/test sets.
     ######################################################################
     train_indices = []
-    val_indices = [0, 2]
+    val_indices = [0, 2, 6]
     val_ood_indices = []
     model.to(device)
     run_vis(datamodule.train_dataset, model, train_indices)

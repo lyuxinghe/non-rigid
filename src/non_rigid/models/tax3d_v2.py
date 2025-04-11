@@ -96,6 +96,10 @@ class TAX3Dv2BaseModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid prediction type: {self.pred_frame}")
 
+        # For now, model cannot use relative position embedding and scene-as-anchor.
+        if self.model_cfg.rel_pos and self.model_cfg.scene_anchor:
+            raise ValueError("Relative position embedding and scene-as-anchor are not compatible.")
+
         # mode-specific processing
         if self.mode == "train":
             self.run_cfg = cfg.training
@@ -181,7 +185,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         """
         raise NotImplementedError("This should be implemented in the derived class.")
     
-    def update_batch_frames(self, batch, update_labels=False):
+    def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
         """
         Convert data batch from world frame to prediction frame.
         """
@@ -343,13 +347,13 @@ class TAX3Dv2BaseModule(L.LightningModule):
         pred_point_world = pred_dict["point"]["pred_world"]
 
         # TODO: this should happen inside get model kwargs
-        # pred_scaled = pred / scaling_factor
-        # ground_truth_scaled = ground_truth / scaling_factor
+        pred_point_world_scaled = pred_point_world / scaling_factor
+        ground_truth_point_world_scaled = ground_truth_point_world / scaling_factor
 
         # computing error metrics
-        if self.dataset_cfg.material == "deform":
-            seg = seg == 0
-        rmse = flow_rmse(pred_point_world, ground_truth_point_world, mask=True, seg=seg).reshape(bs, num_samples)
+        seg = seg == 0
+
+        rmse = flow_rmse(pred_point_world_scaled, ground_truth_point_world_scaled, mask=True, seg=seg).reshape(bs, num_samples)
         pred_point_world = pred_point_world.reshape(bs, num_samples, -1, 3)
 
         # computing winner-take-all metrics
@@ -358,22 +362,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         pred_point_world_wta = pred_point_world[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            raise NotImplementedError("Rigid metrics not fixed yet!")
-            T_goalUnAug = Transform3d(
-                matrix=expand_pcd(batch["T_goalUnAug"].to(self.device), num_samples)
-            )
-            pred_ref = expand_pcd(pred_ref, num_samples)
-            if self.model_name == "tax3dv2_muframe":
-                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"])
-                goal_point_world = T_goalUnAug.transform_points(goal_pc)
-            else:
-                pred_point_world = T_goalUnAug.transform_points(pred_dict["point"]["pred"] + pred_ref)
-                goal_point_world = T_goalUnAug.transform_points(goal_pc + pred_ref)
-
-            pred_point_world = pred_point_world / scaling_factor
-            goal_point_world = goal_point_world / scaling_factor
-
-            translation_errs, rotation_errs = svd_estimation(pred_point_world, goal_point_world, return_magnitude=True)
+            translation_errs, rotation_errs = svd_estimation(pred_point_world_scaled.reshape(bs * num_samples, -1, 3), ground_truth_point_world_scaled, return_magnitude=True)
 
             translation_errs = translation_errs.reshape(bs, num_samples)
             rotation_errs = rotation_errs.reshape(bs, num_samples)
@@ -385,8 +374,8 @@ class TAX3Dv2BaseModule(L.LightningModule):
             rotation_err_wta = rotation_errs[torch.arange(bs), rot_winner]
             
             return {
-                "pred": pred,
-                "pred_wta": pred_wta,
+                "pred_point_world": pred_point_world,
+                "pred_point_world_wta": pred_point_world_wta,
                 "rmse": rmse,
                 "rmse_wta": rmse_wta,
                 "trans": translation_errs,
@@ -414,7 +403,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         """
         # pick a random sample in the batch to visualize
         viz_idx = np.random.randint(0, batch["pc"].shape[0])
-        pred_action_viz = pred_wta_dict["pred_point_world"][viz_idx, :, :3]
+        pred_action_viz = pred_wta_dict["pred_point_world"][viz_idx, 0, :, :3]
         pred_action_wta_viz = pred_wta_dict["pred_point_world_wta"][viz_idx, :, :3]
         viz_args = self.get_viz_args(batch, viz_idx)
 
@@ -644,7 +633,16 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
         ]
         return pred_flow_world, pred_point_world, results_world
 
-    def update_batch_frames(self, batch, update_labels=False):
+    def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
+        # Using GMM model, if provided.
+        if gmm_model is not None:
+            assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
+            gmm_pred = gmm_model(batch)
+            gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
+            idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
+            sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
+            batch["noisy_goal"] = sampled_noisy_goals
+
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":
             raise NotImplementedError("Mu-frame not implemented for anchor centroid prediction!")
@@ -658,7 +656,13 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
             action_context_frame = batch["pc_action"].mean(axis=1, keepdim=True)
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
-                
+
+        # Update scene-as-anchor, if necessary.
+        if self.model_cfg.scene_anchor:
+            batch["pc_anchor"] = torch.cat(
+                [batch["pc_anchor"], batch["pc_action"]], dim=1
+            )
+       
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 
         # Updating labels, if necessary.
@@ -762,7 +766,16 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         ]
         return pred_flow_world, pred_point_world, results_world
 
-    def update_batch_frames(self, batch, update_labels=False):
+    def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
+        # Using GMM model, if provided.
+        if gmm_model is not None:
+            assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
+            gmm_pred = gmm_model(batch)
+            gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
+            idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
+            sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
+            batch["noisy_goal"] = sampled_noisy_goals
+
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":
             pred_frame = batch["pc_anchor"].mean(axis=1, keepdim=True)
@@ -777,6 +790,12 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
         
+        # Update scene-as-anchor, if necessary.
+        if self.model_cfg.scene_anchor:
+            batch["pc_anchor"] = torch.cat(
+                [batch["pc_anchor"], batch["pc_action"]], dim=1
+            )
+
         batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 
