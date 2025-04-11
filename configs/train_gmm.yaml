@@ -17,7 +17,7 @@ seed: 42
 
 # GMM-specific training parameters; some of these will override training config file.
 gmm_log_dir: "/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/gmm_outputs/"
-epochs: 1000
+epochs: 5000
 lr: 1e-4
 weight_decay: 1e-5
 var: 0.1

@@ -156,7 +156,7 @@ def viz_gmm(model, dataset):
         targets = batch["pc"] - anchor_frame
         targets = targets.mean(dim=1)[0].cpu().numpy()
         pc_anchor = (batch["pc_anchor"] - anchor_frame)[0].numpy()
-
+        pc_goal = (batch["pc"] - anchor_frame)[0].numpy()
         # Extracting prediction weights and means.
         probs = pred["probs"][0].cpu().numpy().reshape((-1,))
         means = pred["means"][0].cpu().numpy()
@@ -179,6 +179,15 @@ def viz_gmm(model, dataset):
                 x=pc_anchor[:, 0],
                 y=pc_anchor[:, 1],
                 z=pc_anchor[:, 2],
+            ), row=i+1, col=1
+        )
+        fig.add_trace(
+            go.Scatter3d(
+                mode="markers",
+                marker=dict(size=2, color="green"),
+                x=pc_goal[:, 0],
+                y=pc_goal[:, 1],
+                z=pc_goal[:, 2],
             ), row=i+1, col=1
         )
         fig.add_trace(
@@ -217,6 +226,15 @@ def viz_gmm(model, dataset):
         fig.add_trace(
             go.Scatter3d(
                 mode="markers",
+                marker=dict(size=2, color="green"),
+                x=pc_goal[:, 0],
+                y=pc_goal[:, 1],
+                z=pc_goal[:, 2],
+            ), row=i+1, col=2
+        )
+        fig.add_trace(
+            go.Scatter3d(
+                mode="markers",
                 marker=dict(size=4, color=probs99, colorscale="Viridis", cmin=0),
                 x=means99[:, 0],
                 y=means99[:, 1],
@@ -250,6 +268,15 @@ def viz_gmm(model, dataset):
         fig.add_trace(
             go.Scatter3d(
                 mode="markers",
+                marker=dict(size=2, color="green"),
+                x=pc_goal[:, 0],
+                y=pc_goal[:, 1],
+                z=pc_goal[:, 2],
+            ), row=i+1, col=3
+        )
+        fig.add_trace(
+            go.Scatter3d(
+                mode="markers",
                 marker=dict(size=4, color=probs90, colorscale="Viridis", cmin=0),
                 x=means90[:, 0],
                 y=means90[:, 1],
@@ -278,6 +305,15 @@ def viz_gmm(model, dataset):
                 x=pc_anchor[:, 0],
                 y=pc_anchor[:, 1],
                 z=pc_anchor[:, 2],
+            ), row=i+1, col=4
+        )
+        fig.add_trace(
+            go.Scatter3d(
+                mode="markers",
+                marker=dict(size=2, color="green"),
+                x=pc_goal[:, 0],
+                y=pc_goal[:, 1],
+                z=pc_goal[:, 2],
             ), row=i+1, col=4
         )
         fig.add_trace(

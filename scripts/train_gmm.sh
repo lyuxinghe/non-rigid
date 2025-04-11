@@ -8,7 +8,7 @@
 # 5. the rest of the arguments for the train.py script
 
 # Example usage:
-# ./train_deform.sh 0 cross_flow offline dedo
+#./train_gmm.sh 0 rpdiff dataset.rpdiff_task_name=mug_rack_med_single dataset.train_dataset_size=1600 dataset.val_dataset_size=200 dataset.test_dataset_size=200 resources.num_workers=8
 
 # Resuming from a crashed run:
 #./train_rigid.sh 0 ddrd_flow_separate rpdiff_fit online checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-03-02/17-41-55/checkpoints/last.ckpt'
