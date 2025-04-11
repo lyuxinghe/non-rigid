@@ -20,6 +20,8 @@ from non_rigid.models.dit.models import (
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
 
+import rpad.visualize_3d.plots as vpl
+
 
 def TAX3Dv2_MuFrame_DiT_xS(**kwargs):
     return TAX3Dv2_MuFrame_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
@@ -638,9 +640,11 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
         if gmm_model is not None:
             assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
             gmm_pred = gmm_model(batch)
-            gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
+            gmm_probs, gmm_means, gmm_anchor_frame = gmm_pred["probs"], gmm_pred["means"], gmm_pred["anchor_frame"]
             idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
-            sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
+            sampled_noisy_goals = (
+                gmm_means[torch.arange(gmm_means.shape[0]), idxs] + gmm_anchor_frame.squeeze(1)
+            ).cpu()
             batch["noisy_goal"] = sampled_noisy_goals
 
         # Processing prediction frame.
@@ -771,9 +775,11 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         if gmm_model is not None:
             assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
             gmm_pred = gmm_model(batch)
-            gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
+            gmm_probs, gmm_means, gmm_anchor_frame = gmm_pred["probs"], gmm_pred["means"], gmm_pred["anchor_frame"]
             idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
-            sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
+            sampled_noisy_goals = (
+                gmm_means[torch.arange(gmm_means.shape[0]), idxs] + gmm_anchor_frame.squeeze(1)
+            ).cpu()
             batch["noisy_goal"] = sampled_noisy_goals
 
         # Processing prediction frame.

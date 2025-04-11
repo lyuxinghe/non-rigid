@@ -169,7 +169,5 @@ def main(cfg):
     fig.update_layout(title="Top-K Probabilities", xaxis_title="Epoch", yaxis_title="Number of Points")
     fig.write_html(os.path.join(exp_name, "logs", "top_probs.html"))
 
-    breakpoint()
-
 if __name__ == "__main__":
     main()
