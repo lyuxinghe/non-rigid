@@ -5,15 +5,16 @@ import json
 import omegaconf
 import torch
 import wandb
+import os
 
 from non_rigid.utils.script_utils import (
     create_model,
     create_datamodule,
     load_checkpoint_config_from_wandb,
 )
-
 from non_rigid.metrics.flow_metrics import flow_rmse
 from non_rigid.utils.pointcloud_utils import expand_pcd
+from non_rigid.models.gmm_predictor import FrameGMMPredictor
 from tqdm import tqdm
 import numpy as np
 
@@ -71,34 +72,29 @@ def main(cfg):
     cfg.inference.val_batch_size = bs
 
     ######################################################################
-    # Load the reference frame predictor, if necessary.
+    # Load the GMM frame predictor, if necessary.
     ######################################################################
-    
-    if cfg.use_gmm:
-        # gmm can only be used with oracle models
-        if not cfg.model.oracle and not cfg.model.tax3dv2:
-            raise ValueError("GMM can only be used with oracle models or TAX3Dv2 models.")
+    if cfg.gmm is not None:
+        # GMM can only be used with noisy goal models.
+        if cfg.model.pred_frame != "noisy_goal":
+            raise ValueError("GMM can only be used with noisy goal models.")
         
-        # cannot predict and diffuse reference frame together
-        if cfg.model.diffuse_ref_frame and not cfg.model.tax3dv2:
-            raise ValueError("Can only predict and diffuse reference frame together for TAX3Dv2.")
-
-        import torch_geometric.data as tgd
-        import os
-
-        # ref_frame_predictor = FramePredictorMLPTransformer()
-        ref_frame_predictor = None
-        checkpoint_dir = os.path.expanduser("~/non-rigid-robot/notebooks/mlp_transformer_epochs=5000_var=1.0_uniform_loss=0.1/checkpoints/")
-        gmm_ckpt = torch.load(checkpoint_dir + "model_5000.pt", map_location=device)
-
-        ref_frame_predictor.load_state_dict(gmm_ckpt)
-        ref_frame_predictor.eval()
-        ref_frame_predictor.to(device)
-
-        # update the dataset_cfg if needed
-        cfg.dataset.oracle = False
-        cfg.model.oracle = False
-
+        # Checking for GMM model directory.
+        gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"gmm_{cfg.dataset.name}_{cfg.gmm}")
+        if not os.path.exists(gmm_exp_name):
+            raise ValueError(f"GMM experiment directory {gmm_exp_name} does not exist - train this model first.")
+        
+        # Loading GMM frame predictor.
+        gmm_model_cfg = omegaconf.OmegaConf.load(os.path.join(hydra.utils.get_original_cwd(), "../configs/model/df_cross.yaml"))
+        gmm_model_cfg.rel_pos = True
+        gmm_model = FrameGMMPredictor(gmm_model_cfg, device)
+        gmm_model.load_state_dict(
+            torch.load(
+                os.path.join(gmm_exp_name, "checkpoints", f"epoch_{cfg.gmm}.pt")
+            )
+        )
+    else:
+        gmm_model = None
 
     ######################################################################
     # Create the datamodule. This is just to initialize the datasets - we are
@@ -190,41 +186,17 @@ def main(cfg):
 
             # convert to batch
             batch = {key: torch.stack([item[key] for item in batch_list]) for key in eval_keys}
-            # generate predictions
-            if cfg.use_gmm:
-                # expand action and anchor point clouds
-                gmm_action = expand_pcd(batch["pc_action"], num_samples)
-                gmm_anchor = expand_pcd(batch["pc_anchor"], num_samples)
 
-                if "rel_pose" in batch:
-                    gmm_rel_pose = expand_pcd(batch["rel_pose"], num_samples)
-                    gmm_batch = tgd.Batch.from_data_list([
-                        tgd.Data(
-                            x=gmm_anchor[i],
-                            pos=gmm_anchor[i],
-                            action=gmm_action[i],
-                            rel_pose=gmm_rel_pose[i],
-                        ) for i in range(bs * num_samples)
-                    ]).to(device)
-                else:
-                    gmm_batch = tgd.Batch.from_data_list([
-                        tgd.Data(
-                            x=gmm_anchor[i],
-                            pos=gmm_anchor[i],
-                            action=gmm_action[i],
-                        ) for i in range(bs * num_samples)
-                    ]).to(device)
-
-                # sample reference frames for WTA
-                gmm_pred = ref_frame_predictor(gmm_batch)
-                gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
-                idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
-                sampled_ref_frames = gmm_means[torch.arange(bs * num_samples), idxs].unsqueeze(-2)
-                sampled_ref_frames = sampled_ref_frames.cpu()
-                batch["ref_frame"] = sampled_ref_frames
-
-            batch = model.update_batch_frames(batch, update_labels=True)
-            pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
+            # Generate predictions.
+            if gmm_model is not None:
+                # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
+                gmm_batch = {key: expand_pcd(value, num_samples) for key, value in batch.items()}
+                gmm_batch = model.update_batch_frames(gmm_batch, update_labels=True, gmm_model=gmm_model)
+                batch = model.update_batch_frames(batch, update_labels=True)
+                pred_dict = model.predict(gmm_batch, 1, progress=False, full_prediction=True)
+            else:
+                batch = model.update_batch_frames(batch, update_labels=True)
+                pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
             pred_point_world = pred_dict["point"]["pred_world"]
 
 
@@ -237,9 +209,9 @@ def main(cfg):
                 gt_pc_world = expand_pcd(gt_pc_world, num_samples * bs)
                 seg = expand_pcd(seg, num_samples * bs)
 
-                # if predicting reference frame, update ground truth
-                if cfg.use_gmm and not cfg.model.tax3dv2:
-                    gt_pc = gt_pc - sampled_ref_frames.to(device)
+                # # if predicting reference frame, update ground truth
+                # if cfg.use_gmm and not cfg.model.tax3dv2:
+                #     gt_pc = gt_pc - sampled_ref_frames.to(device)
 
                 seg = seg == 0
                 batch_rmse[j] = flow_rmse(pred_point_world, gt_pc_world, mask=True, seg=seg)

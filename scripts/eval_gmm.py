@@ -11,7 +11,7 @@ from plotly import graph_objects as go
 from tqdm import tqdm
 
 from non_rigid.utils.script_utils import create_datamodule
-from non_rigid.models.gmm_predictor import FrameGMMPredictor, GMMLoss, viz_gmm
+from non_rigid.models.gmm_predictor import FrameGMMPredictor
 
 # ignore TypedStorage warnings
 import warnings
