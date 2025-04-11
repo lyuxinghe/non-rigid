@@ -149,7 +149,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         """
         raise NotImplementedError("This should be implemented in the derived class.")
     
-    def update_batch_frames(self, batch, update_labels=False):
+    def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
         """
         Convert data batch from world frame to prediction frame.
         """
@@ -617,7 +617,16 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         ]
         return pred_flow_world, pred_point_world, results_world
 
-    def update_batch_frames(self, batch, update_labels=False):
+    def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
+        # Using GMM model, if provided.
+        if gmm_model is not None:
+            assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
+            gmm_pred = gmm_model(batch)
+            gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
+            idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
+            sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
+            batch["noisy_goal"] = sampled_noisy_goals
+
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":
             pred_frame = batch["pc_anchor"].mean(axis=1, keepdim=True)

@@ -638,6 +638,10 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
         if gmm_model is not None:
             assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
             gmm_pred = gmm_model(batch)
+            gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
+            idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
+            sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
+            batch["noisy_goal"] = sampled_noisy_goals
 
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":
