@@ -9,12 +9,13 @@
 # MAE: https://github.com/facebookresearch/mae/blob/main/models_mae.py
 # --------------------------------------------------------
 
-import omegaconf
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
+from timm.layers import use_fused_attn
 from typing import Optional
 from functools import partial
 
@@ -123,6 +124,7 @@ class CrossAttention(nn.Module):
         assert dim_x % num_heads == 0, "dim x must be divisible by num_heads"
         head_dim = dim_x // num_heads
         self.scale = head_dim**-0.5
+        self.fused_attn = use_fused_attn()
 
         self.wq = nn.Linear(dim_x, dim_x, bias=qkv_bias)
         self.wk = nn.Linear(dim_y, dim_x, bias=qkv_bias)
@@ -151,11 +153,27 @@ class CrossAttention(nn.Module):
             .transpose(1, 2)
         )
 
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
+        if self.fused_attn:
+            x = (
+                F.scaled_dot_product_attention(
+                    q,
+                    k,
+                    v,
+                    dropout_p=self.attn_drop.p if self.training else 0.0,
+                )
+                .transpose(1, 2)
+                .reshape(B, N, Cx)
+            )
+        else:
+            q = q * self.scale
+            attn = (q @ k.transpose(-2, -1)).softmax(dim=-1)
+            attn = self.attn_drop(attn)
+            x = (attn @ v).transpose(1, 2).reshape(B, N, Cx)
 
-        x = (attn @ v).transpose(1, 2).reshape(B, N, Cx)
+        # attn = (q @ k.transpose(-2, -1)) * self.scale
+        # attn = attn.softmax(dim=-1)
+        # attn = self.attn_drop(attn)
+        # x = (attn @ v).transpose(1, 2).reshape(B, N, Cx)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
