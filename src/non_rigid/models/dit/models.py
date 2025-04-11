@@ -19,7 +19,7 @@ from timm.layers import use_fused_attn
 from typing import Optional
 from functools import partial
 
-from non_rigid.models.encoders import DisjointFeatureEncoder, JointFeatureEncoder
+from non_rigid.models.encoders import DisjointFeatureEncoder, JointFeatureEncoder, mlp_encoder, pn2_encoder
 
 torch.set_printoptions(precision=8, sci_mode=True)
 

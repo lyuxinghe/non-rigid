@@ -27,10 +27,13 @@ def TAX3Dv2_MuFrame_DiT_xS(**kwargs):
 def TAX3Dv2_FixedFrame_DiT_xS(**kwargs):
     return TAX3Dv2_FixedFrame_Token_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
+def TAX3Dv2_FixedFrame_Dual_DiT_xS(**kwargs):
+    return TAX3Dv2_FixedFrame_Token_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
 DiT_models = {
     "TAX3Dv2_MuFrame_DiT_xS": TAX3Dv2_MuFrame_DiT_xS,
     "TAX3Dv2_FixedFrame_DiT_xS": TAX3Dv2_FixedFrame_DiT_xS,
+    "TAX3Dv2_FixedFrame_Dual_DiT_xS": TAX3Dv2_FixedFrame_Dual_DiT_xS,
 }
 
 

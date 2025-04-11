@@ -46,14 +46,14 @@
 # ./train.sh 0 tax3dv2 online rpdiff model.frame_type=mu model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.diff_rotation_noise_scale=45 dataset.rpdiff_task_name=mug_on_rack_multi_large_proc_gen_demos dataset.rpdiff_task_type=task_name_mug_on_rack_multi dataset.sample_size_anchor=1024 dataset.train_dataset_size=3200 dataset.val_dataset_size=400 dataset.test_dataset_size=400 training.batch_size=32 training.val_batch_size=16 resources.num_workers=32
 # ./train.sh 0 tax3dv2 online rpdiff model.frame_type=fixed model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.diff_rotation_noise_scale=45 dataset.rpdiff_task_name=mug_on_rack_multi_large_proc_gen_demos dataset.rpdiff_task_type=task_name_mug_on_rack_multi dataset.sample_size_anchor=1024 dataset.train_dataset_size=3200 dataset.val_dataset_size=400 dataset.test_dataset_size=400 training.batch_size=32 training.val_batch_size=16 resources.num_workers=32
 
-### Can_Cabnet ### *PCD_Scale=55, Sample_Size_Anchor=1024*
+### Can_Cabnet ### *PCD_Scale=55, Sample_Size_Anchor=1024, Sample_Size_Acton=256*
 ## Anchor Centroid ##
 # TAX3D Models #
-# ./train.sh 0 cross_flow online rpdiff dataset.rpdiff_task_name=can_in_cabinet_stack dataset.rpdiff_task_type=task_name_stack_can_in_cabinet dataset.pcd_scale_factor=55 dataset.sample_size_anchor=1024 dataset.train_dataset_size=3200 dataset.val_dataset_size=400 dataset.test_dataset_size=400 training.batch_size=32 training.val_batch_size=16 resources.num_workers=32
+# ./train.sh 0 cross_flow online rpdiff dataset.rpdiff_task_name=can_in_cabinet_stack dataset.rpdiff_task_type=task_name_stack_can_in_cabinet dataset.pcd_scale_factor=55 dataset.sample_size_anchor=1024 dataset.sample_size_action=256 dataset.train_dataset_size=3200 dataset.val_dataset_size=400 dataset.test_dataset_size=400 training.batch_size=32 training.val_batch_size=16 resources.num_workers=32
 
 ## Noisy Goal Centroid ##
 # TAX3Dv2 Models
-# ./train.sh 0 tax3dv2 online rpdiff model.frame_type=mu model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.diff_rotation_noise_scale=45 dataset.rpdiff_task_name=can_in_cabinet_stack dataset.rpdiff_task_type=task_name_stack_can_in_cabinet dataset.pcd_scale_factor=55 dataset.sample_size_anchor=1024 dataset.train_dataset_size=3200 dataset.val_dataset_size=400 dataset.test_dataset_size=400 training.batch_size=32 training.val_batch_size=16 resources.num_workers=32
+# ./train.sh 0 tax3dv2 online rpdiff model.frame_type=mu model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.diff_rotation_noise_scale=45 dataset.rpdiff_task_name=can_in_cabinet_stack dataset.rpdiff_task_type=task_name_stack_can_in_cabinet dataset.pcd_scale_factor=55 dataset.sample_size_anchor=1024 dataset.sample_size_action=256 dataset.train_dataset_size=3200 dataset.val_dataset_size=400 dataset.test_dataset_size=400 training.batch_size=32 training.val_batch_size=16 resources.num_workers=32
 
 
 ### Book_Bookshelf ### *PCD_Scale=20, Sample_Size_Anchor=1024*
