@@ -145,7 +145,7 @@ class TrainDP3Workspace:
         if env_runner is not None:
             assert isinstance(env_runner, BaseRunner)
         
-        cfg.logging.name = str(cfg.logging.group)
+        # cfg.logging.name = str(cfg.logging.group)
         cprint("-----------------------------", "yellow")
         cprint(f"[WandB] group: {cfg.logging.group}", "yellow")
         cprint(f"[WandB] name: {cfg.logging.name}", "yellow")
@@ -336,6 +336,13 @@ class TrainDP3Workspace:
             self.epoch += 1
             del step_log
 
+        # also save the latest checkpoint to wandb, if needed.
+        self.save_checkpoint_to_wandb(
+            path=os.path.join(self.output_dir, 'checkpoints', f'latest.ckpt'),
+            tag='latest',
+            wandb_run=wandb_run
+        )
+
     def eval(self):
         # load the latest checkpoint
         
@@ -480,6 +487,24 @@ class TrainDP3Workspace:
         del payload
         torch.cuda.empty_cache()
         return str(path.absolute())
+    
+    def save_checkpoint_to_wandb(self, path=None, tag='latest', wandb_run=None):
+        # Save a lightweight checkpoint to wandb
+        if path is None:
+            path = pathlib.Path(self.output_dir).joinpath('checkpoints', f'model_{tag}.ckpt')
+        else:
+            path = pathlib.Path(path)
+        
+        # Only save model state dict.
+        torch.save(self.model.state_dict(), path.open('wb'), pickle_module=dill)
+
+        # Upload to wandb.
+        if wandb_run is not None:
+            model_artifact = wandb.Artifact(name=f"model_ckpts", type="model")
+            model_artifact.add_file(
+                str(path.absolute()),
+            )
+            wandb_run.log_artifact(model_artifact)
     
     def get_checkpoint_path(self, tag='latest'):
         if tag=='latest':

@@ -41,6 +41,7 @@ class DedoDataset(BaseDataset):
             anchor_geometry='single',
             anchor_pose='random',
             hole='single',
+            num_anchors='1',
             goal_conditioning='none',
             robot=True,
             action_size=512,
@@ -56,6 +57,7 @@ class DedoDataset(BaseDataset):
         self.anchor_geometry = anchor_geometry
         self.anchor_pose = anchor_pose
         self.hole = hole
+        self.num_anchors = num_anchors
         self.goal_conditioning = goal_conditioning
         self.robot = robot
         self.action_size = action_size
@@ -70,7 +72,8 @@ class DedoDataset(BaseDataset):
             f'cloth={self.cloth_geometry}-{self.cloth_pose} ' + \
             f'anchor={self.anchor_geometry}-{self.anchor_pose} ' + \
             f'hole={self.hole} ' + \
-            f'robot={self.robot}'
+            f'robot={self.robot} ' + \
+            f'num_anchors={self.num_anchors}'
         )
         self.zarr_dir = os.path.join(root_dir, dataset_dir)
         train_zarr_path = os.path.join(self.zarr_dir, 'train.zarr')
