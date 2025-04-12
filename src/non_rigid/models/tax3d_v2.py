@@ -28,7 +28,8 @@ def TAX3Dv2_FixedFrame_DiT_xS(**kwargs):
     return TAX3Dv2_FixedFrame_Token_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
 def TAX3Dv2_FixedFrame_Dual_DiT_xS(**kwargs):
-    return TAX3Dv2_FixedFrame_Token_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
+    print("WARNING: Initializing legacy Dual DiT Models !")
+    return TAX3Dv2_FixedFrame_Dual_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
 DiT_models = {
     "TAX3Dv2_MuFrame_DiT_xS": TAX3Dv2_MuFrame_DiT_xS,
@@ -40,7 +41,8 @@ DiT_models = {
 def get_model(model_cfg):
     # TODO: move fixed/mu frame to model config as a flag
     if model_cfg.frame_type == "fixed":
-        model_name = "TAX3Dv2_FixedFrame_DiT_xS"
+        #model_name = "TAX3Dv2_FixedFrame_DiT_xS"
+        model_name = "TAX3Dv2_FixedFrame_Dual_DiT_xS"
     elif model_cfg.frame_type == "mu":
         model_name = "TAX3Dv2_MuFrame_DiT_xS"
     else:
