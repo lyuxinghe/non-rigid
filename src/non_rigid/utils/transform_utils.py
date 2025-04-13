@@ -33,6 +33,7 @@ def random_se3(
             - "quat_uniform": Uniform SE(3) sampling
             - "random_flat_upright": Random rotation around z axis and xy translation (no z translation)
             - "random_upright": Random rotation around z axis and xyz translation
+            - "random_upright_uponly": Random rotation around z axis and xyz translation, with only positive z
         device: Device to put the transform on.
 
     Returns:
@@ -45,8 +46,9 @@ def random_se3(
         "quat_uniform",
         "random_flat_upright",
         "random_upright",
+        "random_upright_uponly",
         "identity",
-    ]
+    ], f"Invalid sample method {rot_sample_method}"
 
     if rot_sample_method == "axis_angle":
         # this is random axis angle sampling (rot_sample_method == "axis_angle")
@@ -97,12 +99,29 @@ def random_se3(
         )
         t = torch.rand(1).item() * translation_ratio * random_translation
     elif rot_sample_method == "random_upright":
-        # Random rotation around z axis and xy translation (no z translation)
+        # Random rotation around z axis and xyz translation
         theta = torch.rand(N, 1, device=device) * 2 * np.pi
         axis_angle_z = torch.cat([torch.zeros(N, 2, device=device), theta], dim=1)
         R = axis_angle_to_matrix(axis_angle_z)
 
         random_translation = torch.randn(N, 3, device=device)
+        translation_ratio = (
+            trans_var / torch.norm(random_translation, dim=1).max().item()
+        )
+        t = torch.rand(1).item() * translation_ratio * random_translation
+    elif rot_sample_method == "random_upright_uponly":
+        # Random rotation around z axis and xy translation (positive z translation)
+        theta = torch.rand(N, 1, device=device) * 2 * np.pi
+        axis_angle_z = torch.cat([torch.zeros(N, 2, device=device), theta], dim=1)
+        R = axis_angle_to_matrix(axis_angle_z)
+
+        # Generate random translation
+        random_translation = torch.randn(N, 3, device=device)
+
+        # Force positive z-direction only
+        random_translation[:, 2] = random_translation[:, 2].abs()
+
+        # Normalize and scale
         translation_ratio = (
             trans_var / torch.norm(random_translation, dim=1).max().item()
         )

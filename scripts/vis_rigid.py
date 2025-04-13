@@ -316,12 +316,12 @@ def are_anchor_pcds_identical_rpdiff(file_path):
     return True
 
 if __name__ == "__main__":
-    
+    '''
     file_path = "/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf/preprocessed/"  # Replace with actual file path
     save_dir = "./vis/bookbookshelf"  # Directory to save the visualizations
     views = "all"  # Use "all" or any single view like "default", "top", "side", "diagonal"
     rpdiff_visualize_point_cloud(file_path, save_dir, views, num_vis=5)
-    
+    '''
     '''
     file_list = [
         "/data/lyuxing/tax3d/ndf/mugplace/train_data/renders/0_init_obj_points.npz",
@@ -342,3 +342,40 @@ if __name__ == "__main__":
     file_path = '/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single/task_name_mug_on_rack/demo_aug_91_1.npz'
     are_anchor_pcds_identical_rpdiff(file_path)
     '''
+
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
+
+    # === Load file ===
+    npz_path = "/data/lyuxing/tax3d/insertion/demonstrations/12-15-ssd/learn_data/train/0_teleport_obj_points.npz"
+    data = np.load(npz_path, allow_pickle=True)
+
+    clouds = data['clouds']          # Shape: (N, 3)
+    classes = data['classes']        # Shape: (N,)
+
+    # === Plot ===
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    mask = (classes == 0)
+    pc = clouds[mask]
+
+    label = f"Class {int(0)}"
+    ax.scatter(pc[:, 0], pc[:, 1], pc[:, 2], c="red", s=1, label=label)
+
+    mask = (classes == 1)
+    pc = clouds[mask]
+
+    label = f"Class {int(1)}"
+    ax.scatter(pc[:, 0], pc[:, 1], pc[:, 2], c="blue", s=1, label=label)
+
+    ax.set_title("Scene PointCloud Visualization")
+    ax.legend()
+
+    # === Save instead of show ===
+    output_path = "scene_viz.png"
+    plt.savefig(output_path, dpi=300)
+    print(f"Saved visualization to: {output_path}")
+    plt.close()
