@@ -209,10 +209,6 @@ def main(cfg):
                 gt_pc_world = expand_pcd(gt_pc_world, num_samples * bs)
                 seg = expand_pcd(seg, num_samples * bs)
 
-                # # if predicting reference frame, update ground truth
-                # if cfg.use_gmm and not cfg.model.tax3dv2:
-                #     gt_pc = gt_pc - sampled_ref_frames.to(device)
-
                 seg = seg == 0
                 batch_rmse[j] = flow_rmse(pred_point_world, gt_pc_world, mask=True, seg=seg)
 
@@ -241,11 +237,11 @@ def main(cfg):
 
     train_rmse, train_coverage, train_precision = run_eval(datamodule.train_dataset, model)
     val_rmse, val_coverage, val_precision = run_eval(datamodule.val_dataset, model)
-    val_ood_rmse, val_ood_coverage, val_ood_precision = run_eval(datamodule.val_ood_dataset, model)
+    # val_ood_rmse, val_ood_coverage, val_ood_precision = run_eval(datamodule.val_ood_dataset, model)
 
     print(f"Train RMSE: {train_rmse}, Coverage: {train_coverage}, Precision: {train_precision}")
     print(f"Val RMSE: {val_rmse}, Coverage: {val_coverage}, Precision: {val_precision}")
-    print(f"Val OOD RMSE: {val_ood_rmse}, Coverage: {val_ood_coverage}, Precision: {val_ood_precision}")
+    # print(f"Val OOD RMSE: {val_ood_rmse}, Coverage: {val_ood_coverage}, Precision: {val_ood_precision}")
 
 if __name__ == "__main__":
     main()

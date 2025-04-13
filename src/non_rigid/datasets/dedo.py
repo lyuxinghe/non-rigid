@@ -209,14 +209,15 @@ class DedoDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             collate_fn=cloth_collate_fn,
         )
-        val_ood_dataloader = data.DataLoader(
-            self.val_ood_dataset,
-            batch_size=self.val_batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            collate_fn=cloth_collate_fn,
-        )
-        return val_dataloader, val_ood_dataloader
+        # val_ood_dataloader = data.DataLoader(
+        #     self.val_ood_dataset,
+        #     batch_size=self.val_batch_size,
+        #     shuffle=False,
+        #     num_workers=self.num_workers,
+        #     collate_fn=cloth_collate_fn,
+        # )
+        # return val_dataloader, val_ood_dataloader
+        return (val_dataloader)
     
 
 # custom collate function to handle deform params

@@ -12,6 +12,7 @@
 # Example usage:
 # ./train_policy.sh dp3 adroit_hammer 0322 0 0
 # ./train_policy.sh dp3 dedo_proccloth [GOAL_TYPE] 1 [GPU_ID]
+# ./train_policy.sh dp3 dedo_proccloth none 1 [GPU_ID] easy
 
 alg_name=${1}
 task_name=${2}
