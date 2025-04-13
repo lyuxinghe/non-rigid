@@ -3,7 +3,7 @@ import os
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from scipy.stats import norm
-
+import torch
 
 def load_proccloth(dir, num_demos = None):
     npz_files = [f for f in os.listdir(dir) if f.endswith('.npz')]
@@ -476,6 +476,44 @@ def compute_scaling_factor(goal_action_pcds, action_pcds, anchor_pcds, mode='anc
     return scalar_scaling, original_stats, scaled_stats, test_scaled_stats
 
 
+def compute_extent_and_scale_stats(pcd_list):
+    """
+    Compute mean x/y/z extent and mean scaling factor across a list of point clouds.
+    Supports both NumPy arrays and PyTorch tensors.
+
+    Args:
+        pcd_list: list of (N_i, 3) numpy arrays or torch tensors
+
+    Returns:
+        mean_extent: np.array of shape (3,) - mean x, y, z extent
+        mean_scale: float - mean 1 / average extent
+    """
+    extents = []
+    scales = []
+
+    for pc in pcd_list:
+        if isinstance(pc, torch.Tensor):
+            pc = pc.detach().cpu().numpy()
+
+        center = pc.mean(axis=0)
+        pc_centered = pc - center
+
+        min_xyz = pc_centered.min(axis=0)
+        max_xyz = pc_centered.max(axis=0)
+        extent = max_xyz - min_xyz  # shape (3,)
+        avg_extent = extent.mean()
+        scale = 1.0 / avg_extent
+
+        extents.append(extent)
+        scales.append(scale)
+
+    extents = np.stack(extents, axis=0)  # shape: (B, 3)
+    scales = np.array(scales)            # shape: (B,)
+
+    mean_extent = extents.mean(axis=0)
+    mean_scale = scales.mean()
+
+    return mean_extent, mean_scale
 
 # Example usage
 if __name__ == "__main__":
@@ -504,8 +542,8 @@ if __name__ == "__main__":
     print(f"NDF Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
     '''
     
-    rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/can_in_cabinet_stack/task_name_stack_can_in_cabinet/', num_demos=None)
-    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf/preprocessed/', num_demos=None)
+    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/can_in_cabinet_stack/task_name_stack_can_in_cabinet/', num_demos=None)
+    rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf/preprocessed/', num_demos=None)
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single//task_name_mug_on_rack/preprocessed/', num_demos=None)
 
     '''
@@ -519,4 +557,5 @@ if __name__ == "__main__":
 
     compute_and_plot_pcd_mean_distance(rpdiff_action, rpdiff_anchor, scaling_factor=10.0, overlay_std=1)
     '''
-    compute_scaling_factor(rpdiff_goal_action, rpdiff_action, rpdiff_anchor, 'anchor_centroid', test_scale=15)
+    #compute_scaling_factor(rpdiff_goal_action, rpdiff_action, rpdiff_anchor, 'anchor_centroid', test_scale=15)
+    print(compute_extent_and_scale_stats(rpdiff_goal_action))

@@ -15,7 +15,6 @@ from non_rigid.models.dit.diffusion import create_diffusion_mu, create_diffusion
 from non_rigid.models.dit.models import (
     TAX3Dv2_MuFrame_DiT,
     TAX3Dv2_FixedFrame_Token_DiT,
-    TAX3Dv2_FixedFrame_Dual_DiT,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -27,22 +26,16 @@ def TAX3Dv2_MuFrame_DiT_xS(**kwargs):
 def TAX3Dv2_FixedFrame_DiT_xS(**kwargs):
     return TAX3Dv2_FixedFrame_Token_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
 
-def TAX3Dv2_FixedFrame_Dual_DiT_xS(**kwargs):
-    print("WARNING: Initializing legacy Dual DiT Models !")
-    return TAX3Dv2_FixedFrame_Dual_DiT(depth=5, hidden_size=128, num_heads=4, **kwargs)
-
 DiT_models = {
     "TAX3Dv2_MuFrame_DiT_xS": TAX3Dv2_MuFrame_DiT_xS,
     "TAX3Dv2_FixedFrame_DiT_xS": TAX3Dv2_FixedFrame_DiT_xS,
-    "TAX3Dv2_FixedFrame_Dual_DiT_xS": TAX3Dv2_FixedFrame_Dual_DiT_xS,
 }
 
 
 def get_model(model_cfg):
     # TODO: move fixed/mu frame to model config as a flag
     if model_cfg.frame_type == "fixed":
-        #model_name = "TAX3Dv2_FixedFrame_DiT_xS"
-        model_name = "TAX3Dv2_FixedFrame_Dual_DiT_xS"
+        model_name = "TAX3Dv2_FixedFrame_DiT_xS"
     elif model_cfg.frame_type == "mu":
         model_name = "TAX3Dv2_MuFrame_DiT_xS"
     else:
