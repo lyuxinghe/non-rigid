@@ -94,31 +94,7 @@ def main(cfg):
     # Load the reference frame predictor, if necessary.
     ######################################################################
 
-
-    if cfg.use_gmm:
-        # gmm can only be used with oracle models
-        if not cfg.model.oracle and not cfg.model.tax3dv2:
-            raise ValueError("GMM can only be used with oracle models or TAX3Dv2 models.")
-
-        # cannot predict and diffuse reference frame together
-        if cfg.model.diffuse_ref_frame and not cfg.model.tax3dv2:
-            raise ValueError("Can only predict and diffuse reference frame together for TAX3Dv2.")
-
-        import torch_geometric.data as tgd
-        import os
-
-        # ref_frame_predictor = FramePredictorDGCNN(5)
-        ref_frame_predictor = None
-        checkpoint_dir = os.path.expanduser("~/non-rigid-robot/notebooks/gmm_init/checkpoints/")
-        gmm_ckpt = torch.load(checkpoint_dir + "model_1000.pt", map_location=device)
-
-        ref_frame_predictor.load_state_dict(gmm_ckpt)
-        ref_frame_predictor.eval()
-        ref_frame_predictor.to(device)
-
-        # update the dataset_cfg if needed
-        cfg.dataset.oracle = False
-        cfg.model.oracle = False
+    # TODO: IMPLEMENT THIS
 
     ######################################################################
     # Create the datamodule. This is just to initialize the datasets - we are
@@ -195,25 +171,6 @@ def main(cfg):
             batch = {key: torch.stack([item[key] for item in batch]) for key in eval_keys}
 
             # Generate predictions.
-            if cfg.use_gmm:
-                raise NotImplementedError("GMM not implemented yet.")
-                # expand action and anchor point clouds
-                gmm_pc = expand_pcd(batch["pc"], num_samples)
-                gmm_action = expand_pcd(batch["pc_action"], num_samples)
-                gmm_anchor = expand_pcd(batch["pc_anchor"], num_samples)
-                gmm_batch = tgd.Batch.from_data_list([
-                    tgd.Data(pos=gmm_anchor[i]) for i in range(num_samples)
-                ]).to(device)
-
-                # sample reference frames
-                gmm_pred = ref_frame_predictor(gmm_batch)
-                gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
-                idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
-                sampled_ref_frames = gmm_means[torch.arange(num_samples), idxs].unsqueeze(-2)
-                sampled_ref_frames = sampled_ref_frames.cpu()                
-            else:
-                pass
-
             batch = model.update_batch_frames(batch, update_labels=True)
             pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
             viz_args = model.get_viz_args(batch, 0)
@@ -264,7 +221,7 @@ def main(cfg):
     # Run the model on the train/val/test sets.
     ######################################################################
     train_indices = []
-    val_indices = [0, 2, 6]
+    val_indices = [0, 1, 2, 3]
     val_ood_indices = []
     model.to(device)
     run_vis(datamodule.train_dataset, model, train_indices)

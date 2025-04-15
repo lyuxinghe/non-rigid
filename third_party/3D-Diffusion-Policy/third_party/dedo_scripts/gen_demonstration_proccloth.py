@@ -94,7 +94,7 @@ if __name__ == '__main__':
         f'robot={use_robot_env} ' + \
         # f'num_anchors={num_anchors}'
         f'num_anchors={num_anchors} ' + \
-        'debug'
+        'dp3'
     )
 
     # creating directories
@@ -239,6 +239,7 @@ if __name__ == '__main__':
             state_arrays_sub_list = []
             action_arrays_sub_list = []
             cloth_size_arrays_sub_list = []
+            ground_truth_arrays_sub_list = []
 
             total_count_sub_list = []
             success_sub_list = []
@@ -281,6 +282,7 @@ if __name__ == '__main__':
                     state_arrays_sub = []
                     action_arrays_sub = []
                     cloth_size_arrays_sub = []
+                    ground_truth_arrays_sub = []
 
                     success = False
                     total_count_sub = 0
@@ -332,6 +334,15 @@ if __name__ == '__main__':
                         cloth_size_arrays_sub_list.extend(cloth_size_arrays_sub)
                         reward_sum_list.append(reward_sum)
 
+                        # compute ground_truth_arrays_sub
+                        len_episode = len(action_pcd_arrays_sub)
+                        ground_truth_arrays_sub = np.tile(np.expand_dims(obs["action_pcd"], axis=0), (len_episode, 1, 1))
+                        if obs_action_pcd.shape[0] == 625 and random_cloth_geometry:
+                            # print('Padding ground truth with zeroes')
+                            pad_gt = np.tile(ground_truth_arrays_sub[:, 0].reshape(-1, 1, 3), (1, action_num_points - ground_truth_arrays_sub.shape[1], 1))
+                            ground_truth_arrays_sub = np.concatenate([ground_truth_arrays_sub, pad_gt], axis=1)
+                        ground_truth_arrays_sub_list.extend(ground_truth_arrays_sub)
+
                         # updating successful tax3d demo
                         tax3d_demo["flow"] = obs["action_pcd"] - tax3d_demo["action_pc"]
                         tax3d_demo_list.append(tax3d_demo)
@@ -362,16 +373,17 @@ if __name__ == '__main__':
                 state_arrays.extend(state_arrays_sub_list)
                 action_arrays.extend(action_arrays_sub_list)
                 cloth_size_arrays.extend(cloth_size_arrays_sub_list)
+                ground_truth_arrays.extend(ground_truth_arrays_sub_list)
 
-                len_episode = len(action_pcd_arrays_sub)
-                ground_truth_subarray = np.tile(np.expand_dims(obs["action_pcd"], axis=0), (len_episode, 1, 1))
+                # len_episode = len(action_pcd_arrays_sub)
+                # ground_truth_subarray = np.tile(np.expand_dims(obs["action_pcd"], axis=0), (len_episode, 1, 1))
 
-                if obs_action_pcd.shape[0] == 625 and random_cloth_geometry:
-                    # print('Padding ground truth with zeroes')
-                    pad_gt = np.tile(ground_truth_subarray[:, 0].reshape(-1, 1, 3), (1, action_num_points - ground_truth_subarray.shape[1], 1))
-                    ground_truth_subarray = np.concatenate([ground_truth_subarray, pad_gt], axis=1)
+                # if obs_action_pcd.shape[0] == 625 and random_cloth_geometry:
+                #     # print('Padding ground truth with zeroes')
+                #     pad_gt = np.tile(ground_truth_subarray[:, 0].reshape(-1, 1, 3), (1, action_num_points - ground_truth_subarray.shape[1], 1))
+                #     ground_truth_subarray = np.concatenate([ground_truth_subarray, pad_gt], axis=1)
 
-                ground_truth_arrays.extend(ground_truth_subarray)
+                # ground_truth_arrays.extend(ground_truth_subarray)
 
                 # save tax3d demos and rollout vids
                 for i in range(len(tax3d_demo_list)):

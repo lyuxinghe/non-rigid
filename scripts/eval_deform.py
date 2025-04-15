@@ -232,9 +232,6 @@ def main(cfg):
     ######################################################################
     model.to(device)
 
-    # simple_eval(datamodule, model)
-    # quit()
-
     train_rmse, train_coverage, train_precision = run_eval(datamodule.train_dataset, model)
     val_rmse, val_coverage, val_precision = run_eval(datamodule.val_dataset, model)
     # val_ood_rmse, val_ood_coverage, val_ood_precision = run_eval(datamodule.val_ood_dataset, model)
