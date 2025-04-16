@@ -24,6 +24,7 @@ from non_rigid.models.tax3d_v2 import (
 
 from non_rigid.datasets.dedo import DedoDataModule
 from non_rigid.datasets.rigid import RigidDataModule
+from non_rigid.datasets.real_world import RealWorldDataModule
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
 
@@ -66,6 +67,10 @@ def create_datamodule(cfg):
         datamodule_fn = DedoDataModule
     elif cfg.dataset.material == "rigid":
         datamodule_fn = RigidDataModule
+    
+    # if we are workingb with insertion data, overwrite the datamodule
+    if cfg.dataset.name == "insertion":
+        datamodule_fn = RealWorldDataModule
 
     # job-specific datamodule pre-processing
     if cfg.mode == "eval":

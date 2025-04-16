@@ -87,7 +87,7 @@ def random_se3(
             trans_var / torch.norm(random_translation, dim=1).max().item()
         )
         t = torch.rand(1).item() * translation_ratio * random_translation
-    if rot_sample_method == "quat_uniform":
+    elif rot_sample_method == "quat_uniform":
         # This true uniform SE(3) sampling tends to make it hard to train the models
         # In contrast, the axis angle sampling tends to leave the objects close to upright
         quat = torch.randn(N, 4, device=device)
