@@ -123,7 +123,7 @@ logging:
   name: ${exp_name}
   # name: ${training.seed}
   # project: dp3
-  resume: true
+  resume: False
   tags:
   - dp3
 

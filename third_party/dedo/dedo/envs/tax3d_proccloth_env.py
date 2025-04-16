@@ -389,7 +389,7 @@ class Tax3dProcClothEnv(Tax3dEnv):
             for i in range(num_rigids):
                 goal_pos = self.goal_pos[i]
                 dist = np.linalg.norm(cent_pos - goal_pos)
-                centroid_checks[i, j] = dist < 1.5
+                centroid_checks[i, j] = dist < 2.5
                 centroid_dists[i, j] = dist
         
         return centroid_checks, centroid_dists

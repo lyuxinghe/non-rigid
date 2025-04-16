@@ -380,12 +380,15 @@ class TrainDP3Workspace:
         anchor_geometry = dataset_cfg.anchor_geometry
         anchor_pose = dataset_cfg.anchor_pose
         hole = dataset_cfg.hole
+        num_anchors = dataset_cfg.num_anchors
         robot = dataset_cfg.robot
         dataset_name = (
             f'cloth={cloth_geometry}-{cloth_pose} ' + \
             f'anchor={anchor_geometry}-{anchor_pose} ' + \
             f'hole={hole} ' + \
-            f'robot={robot}'
+            f'robot={robot} ' + \
+            f'num_anchors={num_anchors} ' + \
+            'dp3'
         )
         dataset_dir = os.path.join(
             os.path.expanduser(dataset_cfg.root_dir),
@@ -400,10 +403,11 @@ class TrainDP3Workspace:
         np.random.seed(seed)
         random.seed(seed)
 
-        lastest_ckpt_path = self.get_checkpoint_path(tag="latest")
+        lastest_ckpt_path = self.get_checkpoint_path(tag="best")
         if lastest_ckpt_path.is_file():
             cprint(f"Resuming from checkpoint {lastest_ckpt_path}", 'magenta')
             self.load_checkpoint(path=lastest_ckpt_path)
+            # self.load_wandb_checkpoint(path=lastest_ckpt_path, tag="latest")
 
         # configure env
         env_runner: BaseRunner
@@ -431,12 +435,12 @@ class TrainDP3Workspace:
             if isinstance(value, float):
                 cprint(f"{key}: {value:.4f}", 'magenta')
             
-        runner_log = env_runner.run_dataset(policy, dataset_dir, 'val_ood')
+        # runner_log = env_runner.run_dataset(policy, dataset_dir, 'val_ood')
 
-        cprint(f"---------------- Eval Results for Val. OOD --------------", 'magenta')
-        for key, value in runner_log.items():
-            if isinstance(value, float):
-                cprint(f"{key}: {value:.4f}", 'magenta')
+        # cprint(f"---------------- Eval Results for Val. OOD --------------", 'magenta')
+        # for key, value in runner_log.items():
+        #     if isinstance(value, float):
+        #         cprint(f"{key}: {value:.4f}", 'magenta')
 
 
     @property
@@ -555,6 +559,14 @@ class TrainDP3Workspace:
             exclude_keys=exclude_keys, 
             include_keys=include_keys)
         return payload
+    
+    def load_wandb_checkpoint(self, path=None, tag='latest'):
+        if path is None:
+            path = self.get_checkpoint_path(tag=tag)
+        else:
+            path = pathlib.Path(path)
+        payload = torch.load(path.open('rb'), pickle_module=dill, map_location='cpu')
+        self.model.load_state_dict(payload)
     
     @classmethod
     def create_from_checkpoint(cls, path, 
