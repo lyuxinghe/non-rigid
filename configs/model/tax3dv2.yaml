@@ -26,7 +26,7 @@ action_context_frame: action_center # [action_center] frame for action context
 # Dataset-specific Model Parameters
 #####################################################
 # These are shared and overriden by the dataset config.
-pcd_scale: 1.0 # Scale range for the point clouds
+pcd_scale: 3.0 # Scale range for the point clouds
 
 #####################################################
 # Model Diffusion Parameters

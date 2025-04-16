@@ -330,12 +330,23 @@ class TAX3Dv2BaseModule(L.LightningModule):
             }
 
             # compute world frame predictions
-            pred_flow_world, pred_point_world, results_world = self.get_world_preds(
+            pred_flow_world, pred_point_world, pc_action_world, results_world = self.get_world_preds(
                 batch, num_samples, pc_action, pred_dict
             )
             pred_dict["flow"]["pred_world"] = pred_flow_world
             pred_dict["point"]["pred_world"] = pred_point_world
             pred_dict["results_world"] = results_world
+
+            # if the material is rigid, we also output estimated translation and rotation
+            if self.dataset_cfg.material == "rigid":
+                scaling_factor = self.dataset_cfg.pcd_scale_factor
+
+                action_world_scaled = pc_action_world / scaling_factor
+                pred_world_scaled = pred_point_world / scaling_factor
+
+                T = svd_estimation(source=action_world_scaled, target=pred_world_scaled, return_magnitude=False)
+                pred_dict["pred_T"] = T
+
             return pred_dict
 
     def predict_wta(self, batch, num_samples):
@@ -381,7 +392,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         pred_point_world_wta = pred_point_world[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            translation_errs, rotation_errs = svd_estimation(pred_point_world_scaled.reshape(bs * num_samples, -1, 3), ground_truth_point_world_scaled, return_magnitude=True)
+            translation_errs, rotation_errs = svd_estimation(source=pred_point_world_scaled.reshape(bs * num_samples, -1, 3), target=ground_truth_point_world_scaled, return_magnitude=True)
 
             translation_errs = translation_errs.reshape(bs, num_samples)
             rotation_errs = rotation_errs.reshape(bs, num_samples)
@@ -650,7 +661,7 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
         results_world = [
             T_goal2world.transform_points(res) for res in pred_dict["results"]
         ]
-        return pred_flow_world, pred_point_world, results_world
+        return pred_flow_world, pred_point_world, pc_action_world, results_world
 
     def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
         # Using GMM model, if provided.
@@ -783,7 +794,7 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         results_world = [
             T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results"]
         ]
-        return pred_flow_world, pred_point_world, results_world
+        return pred_flow_world, pred_point_world, pc_action_world, results_world
 
     def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
         # Using GMM model, if provided.
