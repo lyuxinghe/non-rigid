@@ -9,7 +9,7 @@
 ########## Insertion ##########
 ### 12-15-ssd ### *PCD_Scale=50*
 ## Anchor Centroid ##
-# ./train_realworld.sh 0 tax3dv2 online insertion model.frame_type=fixed model.pred_frame=anchor_center model.diff_rotation_noise_scale=45 resources.num_workers=32
+# ./train_realworld.sh 0 tax3dv2 online insertion model.frame_type=fixed model.pred_frame=anchor_center model.point_encoder=pn2 model.diff_rotation_noise_scale=45 resources.num_workers=32
 
 
 #------ Run On AutoBot with Singularity ------#
