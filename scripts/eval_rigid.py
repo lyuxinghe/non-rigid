@@ -264,6 +264,12 @@ def main(cfg):
     # quit()
     train_dataloader = datamodule.train_dataloader()
     val_dataloader, test_dataloader = datamodule.val_dataloader()
+
+    train_dataloader.dataset.set_eval_mode(True)
+    val_dataloader.dataset.set_eval_mode(True)
+    test_dataloader.dataset.set_eval_mode(True)
+
+
     train_rmse, train_rmse_wta, train_t_err, train_t_err_wta, train_r_err, train_r_err_wta = run_eval(train_dataloader, model)
     val_rmse, val_rmse_wta, val_t_err, val_t_err_wta, val_r_err, val_r_err_wta = run_eval(val_dataloader, model)
     test_rmse, test_rmse_wta, test_t_err, test_t_err_wta, test_r_err, test_r_err_wta = run_eval(test_dataloader, model)

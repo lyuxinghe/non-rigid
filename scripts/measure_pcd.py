@@ -543,9 +543,10 @@ if __name__ == "__main__":
     '''
     
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/can_in_cabinet_stack/task_name_stack_can_in_cabinet/', num_demos=None)
-    rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf/preprocessed/', num_demos=None)
+    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf/preprocessed/', num_demos=None)
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single//task_name_mug_on_rack/preprocessed/', num_demos=None)
-
+    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_on_rack_multi_large_proc_gen_demos/task_name_mug_on_rack_multi/preprocessed/', num_demos=None)
+    dedo_action, dedo_anchor = load_proccloth('/home/lyuxing/Desktop/tax3d_upgrade/datasets/ProcCloth/cloth=single-fixed anchor=single-random hole=single/train_tax3d')
     '''
     mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(rpdiff_action, scaling_factor=10.0)
     print(f"RPDiff Action Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
@@ -558,4 +559,5 @@ if __name__ == "__main__":
     compute_and_plot_pcd_mean_distance(rpdiff_action, rpdiff_anchor, scaling_factor=10.0, overlay_std=1)
     '''
     #compute_scaling_factor(rpdiff_goal_action, rpdiff_action, rpdiff_anchor, 'anchor_centroid', test_scale=15)
-    print(compute_extent_and_scale_stats(rpdiff_goal_action))
+    print(compute_extent_and_scale_stats(dedo_action))
+    print(compute_extent_and_scale_stats(dedo_anchor))

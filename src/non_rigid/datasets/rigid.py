@@ -31,13 +31,13 @@ class RPDiffDataset(data.Dataset):
         self.split_dir = self.dataset_dir / "split_info"
         self.split_file = f"{self.type}_split.txt" if self.type != "val" else "train_val_split.txt"
 
-        '''
+        
         if 'preprocess' in dataset_cfg and dataset_cfg.preprocess:
             self.dataset_dir = self.dataset_dir / "preprocessed"
             print(f"Loading RPDiff Preprocessed Dataset from {self.dataset_dir}")
         else:
             print(f"Loading RPDiff Dataset from {self.dataset_dir}")
-        '''
+        
         # setting sample sizes
         self.sample_size_action = self.dataset_cfg.sample_size_action
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
