@@ -46,7 +46,16 @@ overrides+="task.dataset.robot=True "
 # Concatenate addition_info and dedo_type for more informative run name.
 addition_info="${addition_info}_${dedo_type}"
 
-# TODO: IF TAX3D CHECKPOINT IS GIVEN, UPDATE TASK.ENV_RUNNER.GOAL_CONDITIONING
+# If goal model is not an empty string, add model id to overrides.
+if [[ -n $goal_model ]]; then
+    overrides+="task.env_runner.goal_conditioning=tax3d_pcd "
+    overrides+="task.env_runner.goal_model=${goal_model} "
+fi
+
+# Kind of hacky for now - if evaluating TAX3D, set addition_info to checkpoint name.
+if [[ $alg_name == "tax3d" ]]; then
+    addition_info=$goal_model
+fi
 
 cd ../third_party/3D-Diffusion-Policy
 bash scripts/eval_policy.sh $alg_name $task_name $addition_info $seed $gpu_id $overrides

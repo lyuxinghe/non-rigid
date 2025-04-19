@@ -337,11 +337,11 @@ class TrainDP3Workspace:
             del step_log
 
         # also save the latest checkpoint to wandb, if needed.
-        self.save_checkpoint_to_wandb(
-            path=os.path.join(self.output_dir, 'checkpoints', f'latest.ckpt'),
-            tag='latest',
-            wandb_run=wandb_run
-        )
+        # self.save_checkpoint_to_wandb(
+        #     path=os.path.join(self.output_dir, 'checkpoints', f'latest.ckpt'),
+        #     tag='latest',
+        #     wandb_run=wandb_run
+        # )
 
     def eval(self):
         # load the latest checkpoint
@@ -407,7 +407,6 @@ class TrainDP3Workspace:
         if lastest_ckpt_path.is_file():
             cprint(f"Resuming from checkpoint {lastest_ckpt_path}", 'magenta')
             self.load_checkpoint(path=lastest_ckpt_path)
-            # self.load_wandb_checkpoint(path=lastest_ckpt_path, tag="latest")
 
         # configure env
         env_runner: BaseRunner
@@ -616,53 +615,66 @@ class EvalTAX3DWorkspace:
         np.random.seed(seed)
         random.seed(seed)
 
-        # load default model and dataset config from TAX3D - this ensures config structure is up-to-date
-        checkpoint_run_id = cfg.exp_name.split("-")[-1]
-        tax3d_cfg_dir = pathlib.Path(__file__).parent.parent.parent.parent.resolve() / 'configs'
-        dataset_cfg = OmegaConf.load(tax3d_cfg_dir / 'dataset' / 'dedo.yaml')
-        model_cfg = OmegaConf.load(tax3d_cfg_dir / 'model' / 'df_cross.yaml')
-        base_cfg = OmegaConf.create({'mode': 'eval', 'dataset': dataset_cfg, 'model': model_cfg})
+        # # load default model and dataset config from TAX3D - this ensures config structure is up-to-date
+        # checkpoint_run_id = cfg.exp_name.split("-")[-1]
+        # tax3d_cfg_dir = pathlib.Path(__file__).parent.parent.parent.parent.resolve() / 'configs'
+        # dataset_cfg = OmegaConf.load(tax3d_cfg_dir / 'dataset' / 'dedo.yaml')
+        # model_cfg = OmegaConf.load(tax3d_cfg_dir / 'model' / 'df_cross.yaml')
+        # base_cfg = OmegaConf.create({'mode': 'eval', 'dataset': dataset_cfg, 'model': model_cfg})
 
-        # TODO: eventually, may need to read task overrides here? e.g. if we want to eval 
-        # on a different dataset than what we trained on
-        self.run_cfg = load_checkpoint_config_from_wandb(base_cfg, [], cfg.logging.entity, cfg.logging.project, checkpoint_run_id)
+        # # TODO: eventually, may need to read task overrides here? e.g. if we want to eval 
+        # # on a different dataset than what we trained on
+        # self.run_cfg = load_checkpoint_config_from_wandb(base_cfg, [], cfg.logging.entity, cfg.logging.project, checkpoint_run_id)
         
-        # also grabbing checkpoint file
-        project_dir = f"{cfg.logging.entity}/{cfg.logging.project}"
-        checkpoint_reference = f"{project_dir}/model-{checkpoint_run_id}:v0"
-        artifact = wandb.Api().artifact(checkpoint_reference, type='model')
-        ckpt_file = artifact.get_path("model.ckpt").download(root=cfg.checkpoint.artifact_dir)
-        self.model: TAX3D = TAX3D(ckpt_file, device, cfg, self.run_cfg)
+        # # also grabbing checkpoint file
+        # project_dir = f"{cfg.logging.entity}/{cfg.logging.project}"
+        # checkpoint_reference = f"{project_dir}/model-{checkpoint_run_id}:v0"
+        # artifact = wandb.Api().artifact(checkpoint_reference, type='model')
+        # ckpt_file = artifact.get_path("model.ckpt").download(root=cfg.checkpoint.artifact_dir)
+        # self.model: TAX3D = TAX3D(ckpt_file, device, cfg, self.run_cfg)
+
+        # Don't need to load checkpoint anymore, predictions are saved beforehand
+        self.model: TAX3D = TAX3D(cfg.task.env_runner.task_name)
 
     def eval_datasets(self):
-        # extract dataset params from training config
-        cloth_geometry = self.run_cfg.dataset.cloth_geometry
-        cloth_pose = self.run_cfg.dataset.cloth_pose
-        anchor_geometry = self.run_cfg.dataset.anchor_geometry
-        anchor_pose = self.run_cfg.dataset.anchor_pose
-        hole = self.run_cfg.dataset.hole
-        num_anchors = self.run_cfg.dataset.num_anchors
-        robot = self.run_cfg.dataset.robot
-        dataset_dir = self.run_cfg.dataset.data_dir + self.run_cfg.dataset.task
+        # # extract dataset params from training config
+        # cloth_geometry = self.run_cfg.dataset.cloth_geometry
+        # cloth_pose = self.run_cfg.dataset.cloth_pose
+        # anchor_geometry = self.run_cfg.dataset.anchor_geometry
+        # anchor_pose = self.run_cfg.dataset.anchor_pose
+        # hole = self.run_cfg.dataset.hole
+        # num_anchors = self.run_cfg.dataset.num_anchors
+        # robot = self.run_cfg.dataset.robot
+        # dataset_dir = self.run_cfg.dataset.data_dir + self.run_cfg.dataset.task
 
-        if self.cfg.inference.override_dataset:
-            cprint(f"Overriding dataset params from task config.", 'red')
-            cloth_geometry = self.cfg.task.dataset.cloth_geometry
-            cloth_pose = self.cfg.task.dataset.cloth_pose
-            anchor_geometry = self.cfg.task.dataset.anchor_geometry
-            anchor_pose = self.cfg.task.dataset.anchor_pose
-            hole = self.cfg.task.dataset.hole
-            dataset_dir = self.cfg.task.dataset.root_dir
+        # if self.cfg.inference.override_dataset:
+        #     cprint(f"Overriding dataset params from task config.", 'red')
+        #     cloth_geometry = self.cfg.task.dataset.cloth_geometry
+        #     cloth_pose = self.cfg.task.dataset.cloth_pose
+        #     anchor_geometry = self.cfg.task.dataset.anchor_geometry
+        #     anchor_pose = self.cfg.task.dataset.anchor_pose
+        #     hole = self.cfg.task.dataset.hole
+        #     dataset_dir = self.cfg.task.dataset.root_dir
+
+        dataset_cfg = self.cfg.task.dataset
+        cloth_geometry = dataset_cfg.cloth_geometry
+        cloth_pose = dataset_cfg.cloth_pose
+        anchor_geometry = dataset_cfg.anchor_geometry
+        anchor_pose = dataset_cfg.anchor_pose
+        hole = dataset_cfg.hole
+        num_anchors = dataset_cfg.num_anchors
+        robot = dataset_cfg.robot
 
         dataset_name = (
             f'cloth={cloth_geometry}-{cloth_pose} ' + \
             f'anchor={anchor_geometry}-{anchor_pose} ' + \
             f'hole={hole} ' + \
             f'robot={robot} ' + \
-            f'num_anchors={num_anchors}'
+            f'num_anchors={num_anchors} ' + \
+            'dp3'
         )
         dataset_dir = os.path.join(
-            os.path.expanduser(dataset_dir),
+            os.path.expanduser(dataset_cfg.root_dir),
             dataset_name
         )        
 
@@ -678,8 +690,8 @@ class EvalTAX3DWorkspace:
             tax3d=True, viz=True)
         assert isinstance(env_runner, BaseRunner)
         policy = self.model
-        policy.eval()
-        policy.cuda()
+        # policy.eval()
+        # policy.cuda()
 
         runner_log = env_runner.run_dataset(policy, dataset_dir, 'train')
 
@@ -695,12 +707,12 @@ class EvalTAX3DWorkspace:
             if isinstance(value, float):
                 cprint(f"{key}: {value:.4f}", 'magenta')
             
-        runner_log = env_runner.run_dataset(policy, dataset_dir, 'val_ood')
+        # runner_log = env_runner.run_dataset(policy, dataset_dir, 'val_ood')
 
-        cprint(f"---------------- Eval Results for Val. OOD --------------", 'magenta')
-        for key, value in runner_log.items():
-            if isinstance(value, float):
-                cprint(f"{key}: {value:.4f}", 'magenta')
+        # cprint(f"---------------- Eval Results for Val. OOD --------------", 'magenta')
+        # for key, value in runner_log.items():
+        #     if isinstance(value, float):
+        #         cprint(f"{key}: {value:.4f}", 'magenta')
 
     @property
     def output_dir(self):

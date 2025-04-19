@@ -54,6 +54,7 @@ class DedoRunner(BaseRunner):
                  goal_conditioning='none',
                  action_size=512,
                  anchor_size=512,
+                 goal_model=None,
                  ):
         super().__init__(output_dir)
         self.task_name = task_name
@@ -100,6 +101,13 @@ class DedoRunner(BaseRunner):
                 'h': 1.0,
                 'holes': [{'x0': 8, 'x1': 16, 'y0': 9, 'y1': 13}]
             }
+        
+        if goal_model is not None:
+            if not self.goal_conditioning.startswith('tax3d'):
+                raise ValueError("Goal model can only be provided for TAX3D-conditioned environments.")
+            if not self.tax3d:
+                self.output_dir = os.path.join(output_dir, goal_model)
+            self.goal_model = goal_model
 
     def downsample_obs(self, action_pc, anchor_pc, goal_pc=None):
             """
@@ -112,8 +120,8 @@ class DedoRunner(BaseRunner):
 
             action_ds = action_pc[:, action_indices, :]
             anchor_ds = anchor_pc[:, anchor_indices, :]
-            goal_ds = goal_pc[action_indices, :] if goal_pc is not None else None
-            return action_ds, anchor_ds, goal_ds
+            # goal_ds = goal_pc[action_indices, :] if goal_pc is not None else None
+            return action_ds, anchor_ds, goal_pc
 
     def run(self, policy: BasePolicy):
         # TODO: this can also take as input the specific environment settings to run on
@@ -193,7 +201,6 @@ class DedoRunner(BaseRunner):
         output_save_dir = os.path.join(self.output_dir, dataset_name)
         dataset = DedoDataset(dataset_dir + f"/{dataset_name}_tax3d")
 
-
         # creating directory for outputs
         if os.path.exists(output_save_dir):
             cprint(f"Output directory {output_save_dir} already exists. Overwriting...", 'red')
@@ -202,7 +209,9 @@ class DedoRunner(BaseRunner):
 
         # for tax3d goal conditioning, load tax3d predictions from zarr file
         if self.goal_conditioning.startswith('tax3d'):
-            group = zarr.open(dataset_dir + f"/{dataset_name}.zarr", mode='r')
+            dataset_dir = dataset_dir.replace(' dp3', '')
+            goal_pred_dir = os.path.join(dataset_dir, "tax3d_preds", self.goal_model)
+            # roup = zarr.open(dataset_dir + f"/{dataset_name}.zarr", mode='r')
 
         all_successes = []
         centroid_dists = []
@@ -226,12 +235,19 @@ class DedoRunner(BaseRunner):
                 goal_pc = demo['action_pc'] + demo['flow']
                 goal_pc = torch.from_numpy(goal_pc).to(device=device)
             elif self.goal_conditioning.startswith('tax3d'):
-                # grab tax3d prediction from the zarr dataset
-                tax3d_id = group['meta']['episode_ends'][id] - 1
-                goal_pc = group['data']['tax3d_pred'][tax3d_id]
-                # randomly pick one of the tax3d predictions
-                goal_pc = goal_pc[np.random.randint(0, goal_pc.shape[0])]
+                # grab tax3d prediction from pre-computed dataset
+                tax3d_pred = np.load(
+                    os.path.join(goal_pred_dir, dataset_name, f"pred_{id}.npz"), 
+                    allow_pickle=True)
+                goal_pc = tax3d_pred["pred_point_world"]
+                index = np.random.randint(0, goal_pc.shape[0])
+                goal_pc = goal_pc[index]
                 goal_pc = torch.from_numpy(goal_pc).to(device=device)
+                if self.tax3d:
+                    # also grab results for visualization
+                    results = tax3d_pred["results_world"][:, index, ...]
+                    action_pc_indices = tax3d_pred["action_indices"]
+                    
             else:
                 goal_pc = None
 
@@ -263,8 +279,14 @@ class DedoRunner(BaseRunner):
                         obs_dict_input['pc_anchor'] = anchor_ds.float()
                         obs_dict_input['seg'] = torch.ones((action_ds.shape[0], self.action_size), device=device).int()
                         obs_dict_input['seg_anchor'] = torch.zeros((anchor_ds.shape[0], self.anchor_size), device=device).int()
+                        
+                        # action_dict = policy.predict_action(obs_dict_input, deform_data['deform_params'], self.control_type)
 
-                        action_dict = policy.predict_action(obs_dict_input, deform_data['deform_params'], self.control_type)
+
+                        # just directly pass goal pc
+                        action_dict = policy.predict_action(
+                            goal_pc, results, obs_dict_input, deform_data['deform_params'], self.control_type
+                        )
                     else:
                         # first, downsample action, anchor and goal point cloud
                         action_ds, anchor_ds, goal_ds = self.downsample_obs(obs_dict['action_pcd'], obs_dict['anchor_pcd'], goal_pc)
@@ -330,7 +352,7 @@ class DedoRunner(BaseRunner):
                     # if tax3d, also save the diffusion visualization
                     # grab the first frame, and then plot the time series of results
                     if self.tax3d:
-                        color_key = info["color_key"].squeeze(0)
+                        color_key = info["color_key"].squeeze(0)[action_pc_indices]
                         viewmat = info["viewmat"].squeeze(0)
 
                         # get img from vid_frames

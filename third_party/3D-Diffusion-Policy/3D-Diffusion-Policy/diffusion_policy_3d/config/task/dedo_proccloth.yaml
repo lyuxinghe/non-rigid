@@ -30,6 +30,7 @@ env_runner:
   goal_conditioning: ${policy.goal_conditioning}
   action_size: ${task.action_size}
   anchor_size: ${task.anchor_size}
+  goal_model: null
 
 inference:
   seed: 1

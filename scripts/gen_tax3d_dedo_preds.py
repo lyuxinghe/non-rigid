@@ -13,12 +13,14 @@ from non_rigid.utils.script_utils import (
     load_checkpoint_config_from_wandb,
 )
 from non_rigid.metrics.flow_metrics import flow_rmse
-from non_rigid.utils.pointcloud_utils import expand_pcd
+from non_rigid.utils.pointcloud_utils import expand_pcd, downsample_pcd
 from non_rigid.models.gmm_predictor import FrameGMMPredictor
 from tqdm import tqdm
 import numpy as np
 
 import rpad.visualize_3d.plots as vpl
+from pytorch3d.transforms import Transform3d
+
 
 
 @torch.no_grad()
@@ -58,18 +60,23 @@ def main(cfg):
     ######################################################################
     # Manually setting eval-specific configs.
     ######################################################################
-    # Using a custom cloth-specific batch size, to allow for simultaneous evaluation 
-    # of RMSE, coverage, and precision.
-    if cfg.dataset.hole == "single":
-        bs = 1
-    elif cfg.dataset.hole == "double":
-        bs = 2
-    else:
-        raise ValueError(f"Unknown hole type: {cfg.dataset.hole}.")
-    bs *= cfg.dataset.num_anchors
+    # # Using a custom cloth-specific batch size, to allow for simultaneous evaluation 
+    # # of RMSE, coverage, and precision.
+    # if cfg.dataset.hole == "single":
+    #     bs = 1
+    # elif cfg.dataset.hole == "double":
+    #     bs = 2
+    # else:
+    #     raise ValueError(f"Unknown hole type: {cfg.dataset.hole}.")
+    # bs *= cfg.dataset.num_anchors
 
-    cfg.inference.batch_size = bs
-    cfg.inference.val_batch_size = bs
+    # cfg.inference.batch_size = bs
+    # cfg.inference.val_batch_size = bs
+    # We're not computing evals, only generating and saving predictions, so 
+    # one-by-one is fine.
+    cfg.inference.batch_size = 1
+    cfg.inference.val_batch_size = 1
+    cfg.dataset.sample_size_action = -1
 
     ######################################################################
     # Load the GMM frame predictor, if necessary.
@@ -114,7 +121,7 @@ def main(cfg):
 
     # Model architecture is dataset-dependent, so we have a helper
     # function to create the model (while separating out relevant vals).
-    network, model = create_model(cfg)    
+    network, model = create_model(cfg)
 
     # get checkpoint file (for now, this does not log a run)
     checkpoint_reference = cfg.checkpoint.reference
@@ -156,90 +163,75 @@ def main(cfg):
     model.eval()
 
     ######################################################################
-    # Helper function to run evals for a given dataset.
+    # Helper function to sample and save predictions for goal-
+    # conditioned policy evaluations.
     ######################################################################
-    def run_eval(dataset, model):
-        num_samples = cfg.inference.num_wta_trials # // bs
-        num_batches = len(dataset) // bs
-        eval_keys = ["pc_action", "pc_anchor", "pc", "flow", "seg", "seg_anchor", "T_action2world", "T_goal2world"]
-        if cfg.model.pred_frame == "noisy_goal":
-            eval_keys.append("noisy_goal")
-            
-        rmse = []
-        coverage = []
-        precision = []
+    def generate_preds(dataset, save_path):
+        # batch_keys = ["pc_action", "pc_anchor", "pc", "flow", "seg", "seg_anchor", "T_action2world", "T_goal2world"]
+        batch_keys = ["pc_action", "pc_anchor", "pc", "T_action2world", "T_goal2world"]
+        for i in tqdm(range(len(dataset))):
+            item = dataset.__getitem__(i)
+            batch = {key: item[key].unsqueeze(0) for key in batch_keys}
 
-        for i in tqdm(range(num_batches)):
-            batch_list = []
+            # getting cloth-specific gripper points, and remaining action points
+            deform_data = item["deform_data"]
+            pc_action = batch["pc_action"]
+            gripper_indices = [0, deform_data["deform_params"]["node_density"] - 1]
+            gripper_points = pc_action[:, gripper_indices, :]
+            non_gripper_points = torch.cat([
+                pc_action[:, 1:gripper_indices[1], :],
+                pc_action[:, gripper_indices[1]+1:, :]
+            ], dim=1)
 
-            # get first item in batch, and keep downsampling indices
-            item = dataset.__getitem__(i * bs, return_indices=True)
-            downsample_indices = {
-                "action_pc_indices": item["action_pc_indices"],
-                "anchor_pc_indices": item["anchor_pc_indices"],
-            }
-            batch_list.append({key: item[key] for key in eval_keys})
+            # fps downsampling on non-gripper points
+            non_gripper_points, non_gripper_indices = downsample_pcd(non_gripper_points, 510, type="fps")
 
-            # get the rest of the batch
-            for j in range(1, bs):
-                item = dataset.__getitem__(i * bs + j, use_indices=downsample_indices)
-                batch_list.append({key: item[key] for key in eval_keys})
+            # concatenating gripper points with downsampled non-gripper points
+            batch["pc_action"] = torch.cat([gripper_points, non_gripper_points], dim=1)
 
-            # convert to batch
-            batch = {key: torch.stack([item[key] for item in batch_list]) for key in eval_keys}
-
-            # Generate predictions.
+            # sampling model predictions
             if gmm_model is not None:
-                # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                gmm_batch = {key: expand_pcd(value, num_samples) for key, value in batch.items()}
-                gmm_batch = model.update_batch_frames(gmm_batch, update_labels=True, gmm_model=gmm_model)
-                batch = model.update_batch_frames(batch, update_labels=True)
+                gmm_batch = {key: expand_pcd(value, 10) for key, value in batch.items()}
+                gmm_batch = model.update_batch_frames(gmm_batch, update_labels=False, gmm_model=gmm_model)
                 pred_dict = model.predict(gmm_batch, 1, progress=False, full_prediction=True)
             else:
-                batch = model.update_batch_frames(batch, update_labels=True)
-                pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
+                batch = model.update_batch_frames(batch, update_labels=False)
+                pred_dict = model.predict(batch, 10, progress=False, full_prediction=True)
             pred_point_world = pred_dict["point"]["pred_world"]
+            results_world = pred_dict["results_world"]
 
+            # updating indices for visualization
+            non_gripper_indices += 1
+            non_gripper_indices[non_gripper_indices >= gripper_indices[1]] += 1
 
-            batch_rmse = torch.zeros(bs, cfg.inference.num_wta_trials * bs)
-
-            for j in range(bs):
-                # expand ground truth pc to compute RMSE for cloth-specific sample
-                gt_pc_world = batch["pc_world"][j].unsqueeze(0).to(device)
-                seg = batch["seg"][j].unsqueeze(0).to(device)
-                gt_pc_world = expand_pcd(gt_pc_world, num_samples * bs)
-                seg = expand_pcd(seg, num_samples * bs)
-
-                seg = seg == 0
-                batch_rmse[j] = flow_rmse(pred_point_world, gt_pc_world, mask=True, seg=seg)
-
-            # computing precision and coverage
-            batch_precision = torch.min(batch_rmse, dim=0).values
-            batch_coverage = torch.min(batch_rmse, dim=1).values
-
-            # update dataset-wide metrics
-            rmse.append(batch_rmse.mean().item())
-            coverage.append(batch_coverage.mean().item())
-            precision.append(batch_precision.mean().item())
-            
-        rmse = np.mean(rmse)
-        coverage = np.mean(coverage)
-        precision = np.mean(precision)
-        return rmse, coverage, precision
-    
+            action_indices = np.concatenate(
+                [np.array(gripper_indices), non_gripper_indices.squeeze().cpu().numpy()]
+            )
+            save_dict = {
+                "pred_point_world": pred_point_world.cpu().numpy(),
+                "results_world": torch.stack(results_world).cpu().numpy(),
+                "action_indices": action_indices,
+            }
+            np.savez(
+                save_path / f"pred_{i}.npz",
+                **save_dict,
+            )
 
     ######################################################################
-    # Run the model on the train/val/test sets.
+    # Generate predictions on the train/val sets.
     ######################################################################
+    # Creating directory for model predictions.
+    pred_dir = datamodule.root / "tax3d_preds" / cfg.checkpoint.run_id
+    if os.path.exists(pred_dir):
+        print(f"Prediction directory {pred_dir} already exists. Delete first.")
+        quit()
+    os.makedirs(pred_dir, exist_ok=True)
+    os.makedirs(pred_dir / "train", exist_ok=True)
+    os.makedirs(pred_dir / "val", exist_ok=True)
+
     model.to(device)
-
-    train_rmse, train_coverage, train_precision = run_eval(datamodule.train_dataset, model)
-    val_rmse, val_coverage, val_precision = run_eval(datamodule.val_dataset, model)
-    # val_ood_rmse, val_ood_coverage, val_ood_precision = run_eval(datamodule.val_ood_dataset, model)
-
-    print(f"Train RMSE: {train_rmse}, Coverage: {train_coverage}, Precision: {train_precision}")
-    print(f"Val RMSE: {val_rmse}, Coverage: {val_coverage}, Precision: {val_precision}")
-    # print(f"Val OOD RMSE: {val_ood_rmse}, Coverage: {val_ood_coverage}, Precision: {val_ood_precision}")
+    generate_preds(datamodule.train_dataset, pred_dir / "train")
+    generate_preds(datamodule.val_dataset, pred_dir / "val")
 
 if __name__ == "__main__":
     main()

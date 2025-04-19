@@ -11,37 +11,39 @@ class TAX3D(BasePolicy):
     """
     def __init__(
             self,
-            ckpt_file,
-            device,
-            eval_cfg,
-            run_cfg,
+            task_name,
+            # ckpt_file=None,
+            # device=None,
+            # eval_cfg=None,
+            # run_cfg=None,
     ):
         super().__init__()
-        self.run_cfg = run_cfg
-        self.eval_cfg = eval_cfg
+        # self.run_cfg = run_cfg
+        # self.eval_cfg = eval_cfg
 
-        # switch mode to eval
-        self.run_cfg.mode = "eval"
-        self.run_cfg.inference = self.eval_cfg.inference
+        # # switch mode to eval
+        # self.run_cfg.mode = "eval"
+        # self.run_cfg.inference = self.eval_cfg.inference
 
-        network, model = create_model(self.run_cfg)
-        self.network = network
-        self.model = model
+        # network, model = create_model(self.run_cfg)
+        # self.network = network
+        # self.model = model
 
-        # load network weights from checkpoint
-        checkpoint = torch.load(ckpt_file, map_location=device)
-        self.network.load_state_dict(
-            {k.partition(".")[2]: v for k, v, in checkpoint["state_dict"].items() if k.startswith("network.")}
-        )
-        if self.run_cfg.model.predict_ref_frame:
-            self.model.ref_frame_predictor.load_state_dict(
-                {k.partition(".")[2]: v for k, v, in checkpoint["state_dict"].items() if k.startswith("ref_frame_predictor.")}
-            )
-        self.network.eval()
-        self.model.eval()
-        self.model.to(device)
-        self.to(device)
+        # # load network weights from checkpoint
+        # checkpoint = torch.load(ckpt_file, map_location=device)
+        # self.network.load_state_dict(
+        #     {k.partition(".")[2]: v for k, v, in checkpoint["state_dict"].items() if k.startswith("network.")}
+        # )
+        # if self.run_cfg.model.predict_ref_frame:
+        #     self.model.ref_frame_predictor.load_state_dict(
+        #         {k.partition(".")[2]: v for k, v, in checkpoint["state_dict"].items() if k.startswith("ref_frame_predictor.")}
+        #     )
+        # self.network.eval()
+        # self.model.eval()
+        # self.model.to(device)
+        # self.to(device)
 
+        self.task_name = task_name
         # Initializing current goal position. This is set during policy reset.
         self.goal_position = None
         self.results_world = None
@@ -59,36 +61,30 @@ class TAX3D(BasePolicy):
         else:
             return vec / vec_norm * torch.clamp(vec_norm, max=mag)
 
-    def predict_action(self, obs_dict, deform_params, control_type='position'):
+    def predict_action(self, goal_pc, results, obs_dict, deform_params, control_type='position'):
         """
         Predict the action.
         """
         # if goal_position is unset (after policy reset), predict the goal position.
         if self.goal_position == None:
-            pred_action, results_world = self.model.predict_obs(obs_dict, self.run_cfg)
+            # pred_action, results_world = self.model.predict_obs(obs_dict, self.run_cfg)
 
-            if self.eval_cfg.task.env_runner.task_name == "proccloth":
+            if self.task_name == "proccloth":
                 # TODO: this is is missing segmentation logic for SD models
-                goal1 = pred_action[:, deform_params['node_density'] - 1, :]# + torch.tensor([0, -0.5, 1.0], device=self.device)
-                goal2 = pred_action[:, 0, :]# + torch.tensor([0, -0.5, 1.0], device=self.device)
-            elif self.eval_cfg.task.env_runner.task_name == "hangbag":
-                goal1 = pred_action[:, 209, :] + torch.tensor([0, -0.5, 1.0], device=self.device)
-                goal2 = pred_action[:, 297, :] + torch.tensor([0, -0.5, 1.0], device=self.device)
-
-                # adding hard-coded offset
-                # flow1 = pred_flow[:, 209, :]
-                # flow2 = pred_flow[:, 297, :]
-                # flow1 = flow1 / torch.norm(flow1, dim=1, keepdim=True) * 1.18
-                # flow2 = flow2 / torch.norm(flow2, dim=1, keepdim=True) * 1.18
-
-                # goal1 = goal1 + flow1
-                # goal2 = goal2 + flow2
-
+                # goal1 = pred_action[:, deform_params['node_density'] - 1, :]# + torch.tensor([0, -0.5, 1.0], device=self.device)
+                # goal2 = pred_action[:, 0, :]# + torch.tensor([0, -0.5, 1.0], device=self.device)
+                goal1 = torch.as_tensor(goal_pc[[1], :], device=self.device)
+                goal2 = torch.as_tensor(goal_pc[[0], :], device=self.device)
+            elif self.task_name == "hangbag":
+                # goal1 = pred_action[:, 209, :] + torch.tensor([0, -0.5, 1.0], device=self.device)
+                # goal2 = pred_action[:, 297, :] + torch.tensor([0, -0.5, 1.0], device=self.device)
+                raise NotImplementedError("Hangbag task is not implemented yet.")
             else:
                 raise ValueError(f"Unknown task name: {self.eval_cfg.env_runner.task_name}")
             self.goal_position = torch.cat([goal1, goal2], dim=1)#.unsqueeze(0)
             # self.results_world = [res.squeeze().cpu().numpy() for res in pred_dict["results_world"]]
-            self.results_world = [res.squeeze().cpu().numpy() for res in results_world]
+            # self.results_world = [res.squeeze().cpu().numpy() for res in results_world]
+            self.results_world = [res for res in results]
 
 
         # TODO: for ee_position, goal_position should be converted to a noramlized delta position
