@@ -40,6 +40,7 @@ class DP3(BasePolicy):
             use_pc_color=False,
             pointnet_type="pointnet",
             pointcloud_encoder_cfg=None,
+            goal_conditioning='none',
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -81,6 +82,7 @@ class DP3(BasePolicy):
 
         self.use_pc_color = use_pc_color
         self.pointnet_type = pointnet_type
+        self.goal_conditioning = goal_conditioning
         cprint(f"[DiffusionUnetHybridPointcloudPolicy] use_pc_color: {self.use_pc_color}", "yellow")
         cprint(f"[DiffusionUnetHybridPointcloudPolicy] pointnet_type: {self.pointnet_type}", "yellow")
 
@@ -173,14 +175,18 @@ class DP3(BasePolicy):
         return trajectory
 
 
-    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor], evaluation=False) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
         result: must include "action" key
         """
         # normalize input
-        nobs = self.normalizer.normalize(obs_dict)
+        # nobs = self.normalizer.normalize(obs_dict)
         # this_n_point_cloud = nobs['imagin_robot'][..., :3] # only use coordinate
+
+        nobs = obs_dict        
+        nobs = {key: tensor.float() for key, tensor in nobs.items()}
+
         if not self.use_pc_color:
             nobs['point_cloud'] = nobs['point_cloud'][..., :3]
         this_n_point_cloud = nobs['point_cloud']
@@ -256,7 +262,9 @@ class DP3(BasePolicy):
 
     def compute_loss(self, batch):
         # normalize input
-        nobs = self.normalizer.normalize(batch['obs'])
+        # nobs = self.normalizer.normalize(batch['obs'])
+        nobs = batch['obs']
+        nobs = {key: tensor.float() for key, tensor in nobs.items()}
         nactions = self.normalizer['action'].normalize(batch['action'])
 
         if not self.use_pc_color:

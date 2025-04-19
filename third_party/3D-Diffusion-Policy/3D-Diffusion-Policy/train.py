@@ -34,7 +34,6 @@ from diffusion_policy_3d.model.common.lr_scheduler import get_scheduler
 
 from diffusion_policy_3d.policy.tax3d import TAX3D
 
-
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 class TrainDP3Workspace:
@@ -86,7 +85,7 @@ class TrainDP3Workspace:
             RUN_CKPT = False
             verbose = True
         else:
-            RUN_ROLLOUT = True
+            RUN_ROLLOUT = False
             RUN_CKPT = True
             verbose = False
         
@@ -144,7 +143,7 @@ class TrainDP3Workspace:
         if env_runner is not None:
             assert isinstance(env_runner, BaseRunner)
         
-        cfg.logging.name = str(cfg.logging.name)
+        # cfg.logging.name = str(cfg.logging.group)
         cprint("-----------------------------", "yellow")
         cprint(f"[WandB] group: {cfg.logging.group}", "yellow")
         cprint(f"[WandB] name: {cfg.logging.name}", "yellow")
@@ -257,11 +256,11 @@ class TrainDP3Workspace:
             if (self.epoch % cfg.training.rollout_every) == 0 and RUN_ROLLOUT and env_runner is not None:
                 t3 = time.time()
                 # runner_log = env_runner.run(policy, dataset=dataset)
-                runner_log = env_runner.run(policy)
+                # runner_log = env_runner.run(policy)
                 t4 = time.time()
                 # print(f"rollout time: {t4-t3:.3f}")
                 # log all
-                step_log.update(runner_log)
+                # step_log.update(runner_log)
 
                 
             # run validation
@@ -301,7 +300,7 @@ class TrainDP3Workspace:
                     del pred_action
                     del mse
 
-            if env_runner is None:
+            if env_runner is None or 'test_mean_score' not in step_log:
                 step_log['test_mean_score'] = - train_loss
 
             # checkpoint
@@ -334,6 +333,13 @@ class TrainDP3Workspace:
             self.global_step += 1
             self.epoch += 1
             del step_log
+
+        # also save the latest checkpoint to wandb, if needed.
+        # self.save_checkpoint_to_wandb(
+        #     path=os.path.join(self.output_dir, 'checkpoints', f'latest.ckpt'),
+        #     tag='latest',
+        #     wandb_run=wandb_run
+        # )
 
     def eval(self):
         # load the latest checkpoint
@@ -372,38 +378,20 @@ class TrainDP3Workspace:
         anchor_geometry = dataset_cfg.anchor_geometry
         anchor_pose = dataset_cfg.anchor_pose
         hole = dataset_cfg.hole
+        num_anchors = dataset_cfg.num_anchors
+        robot = dataset_cfg.robot
         dataset_name = (
             f'cloth={cloth_geometry}-{cloth_pose} ' + \
             f'anchor={anchor_geometry}-{anchor_pose} ' + \
-            f'hole={hole}'
+            f'hole={hole} ' + \
+            f'robot={robot} ' + \
+            f'num_anchors={num_anchors} ' + \
+            'dp3'
         )
         dataset_dir = os.path.join(
             os.path.expanduser(dataset_cfg.root_dir),
             dataset_name
         )
-
-        # based on the task name, load specific split of the dataset
-        # and evaluate the model on it
-        import torch.utils.data as data
-        # dataset_dir = os.path.expanduser("~/datasets/nrp/ProcCloth/multi_cloth_1")
-        # dataset_dir = os.path.expanduser("~/Documents/data/tax3d/multi_cloth_1")
-
-        class DedoDataset(data.Dataset):
-            def __init__(self, dir):
-                self.dir = dir
-                self.num_demos = int(len(os.listdir(self.dir)))
-
-            def __len__(self):
-                return self.num_demos
-            
-            def __getitem__(self, index):
-                demo = np.load(f"{self.dir}/demo_{index}.npz", allow_pickle=True)
-                return demo
-
-        train_dataset = DedoDataset(dataset_dir + "/train_tax3d")
-        val_dataset = DedoDataset(dataset_dir + "/val_tax3d")
-        val_ood_dataset = DedoDataset(dataset_dir + "/val_ood_tax3d")
-
 
         # load the latest checkpoint
 
@@ -412,11 +400,8 @@ class TrainDP3Workspace:
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
-        
-        split = cfg.task.inference.split
-        dataset = DedoDataset(dataset_dir + f"/{split}_tax3d")
 
-        lastest_ckpt_path = self.get_checkpoint_path(tag="latest")
+        lastest_ckpt_path = self.get_checkpoint_path(tag="best")
         if lastest_ckpt_path.is_file():
             cprint(f"Resuming from checkpoint {lastest_ckpt_path}", 'magenta')
             self.load_checkpoint(path=lastest_ckpt_path)
@@ -433,26 +418,26 @@ class TrainDP3Workspace:
         policy.eval()
         policy.cuda()
 
-        runner_log = env_runner.run_dataset(policy, train_dataset, 'train')
+        runner_log = env_runner.run_dataset(policy, dataset_dir, 'train')
 
         cprint(f"---------------- Eval Results for Train --------------", 'magenta')
         for key, value in runner_log.items():
             if isinstance(value, float):
                 cprint(f"{key}: {value:.4f}", 'magenta')
 
-        runner_log = env_runner.run_dataset(policy, val_dataset, 'val')
+        runner_log = env_runner.run_dataset(policy, dataset_dir, 'val')
 
         cprint(f"---------------- Eval Results for Val. --------------", 'magenta')
         for key, value in runner_log.items():
             if isinstance(value, float):
                 cprint(f"{key}: {value:.4f}", 'magenta')
             
-        runner_log = env_runner.run_dataset(policy, val_ood_dataset, 'val_ood')
+        # runner_log = env_runner.run_dataset(policy, dataset_dir, 'val_ood')
 
-        cprint(f"---------------- Eval Results for Val. OOD --------------", 'magenta')
-        for key, value in runner_log.items():
-            if isinstance(value, float):
-                cprint(f"{key}: {value:.4f}", 'magenta')
+        # cprint(f"---------------- Eval Results for Val. OOD --------------", 'magenta')
+        # for key, value in runner_log.items():
+        #     if isinstance(value, float):
+        #         cprint(f"{key}: {value:.4f}", 'magenta')
 
 
     @property
@@ -504,6 +489,24 @@ class TrainDP3Workspace:
         torch.cuda.empty_cache()
         return str(path.absolute())
     
+    def save_checkpoint_to_wandb(self, path=None, tag='latest', wandb_run=None):
+        # Save a lightweight checkpoint to wandb
+        if path is None:
+            path = pathlib.Path(self.output_dir).joinpath('checkpoints', f'model_{tag}.ckpt')
+        else:
+            path = pathlib.Path(path)
+        
+        # Only save model state dict.
+        torch.save(self.model.state_dict(), path.open('wb'), pickle_module=dill)
+
+        # Upload to wandb.
+        if wandb_run is not None:
+            model_artifact = wandb.Artifact(name=f"model_ckpts", type="model")
+            model_artifact.add_file(
+                str(path.absolute()),
+            )
+            wandb_run.log_artifact(model_artifact)
+    
     def get_checkpoint_path(self, tag='latest'):
         if tag=='latest':
             return pathlib.Path(self.output_dir).joinpath('checkpoints', f'{tag}.ckpt')
@@ -554,6 +557,14 @@ class TrainDP3Workspace:
             include_keys=include_keys)
         return payload
     
+    def load_wandb_checkpoint(self, path=None, tag='latest'):
+        if path is None:
+            path = self.get_checkpoint_path(tag=tag)
+        else:
+            path = pathlib.Path(path)
+        payload = torch.load(path.open('rb'), pickle_module=dill, map_location='cpu')
+        self.model.load_state_dict(payload)
+    
     @classmethod
     def create_from_checkpoint(cls, path, 
             exclude_keys=None, 
@@ -594,7 +605,7 @@ class EvalTAX3DWorkspace:
         self.cfg = cfg
         self._output_dir = output_dir
         self._saving_thread = None
-
+        # don't need to worry about ema, optimizer, global step, or epoch
         device = cfg.training.device
         # set seed
         seed = cfg.training.seed
@@ -602,77 +613,36 @@ class EvalTAX3DWorkspace:
         np.random.seed(seed)
         random.seed(seed)
 
-        # don't need to worry about ema, optimizer, global step, or epoch
-        checkpoint_run_id = cfg.exp_name.split("-")[-1]
-        project_dir = f"{cfg.logging.entity}/{cfg.logging.project}"
-        # grabbing config from wandb
-        api = wandb.Api()
-        run_config = api.run(f"{project_dir}/{checkpoint_run_id}").config
-        self.run_config = OmegaConf.create(run_config)
-
-        # grabbing checkpoint reference from exp_name
-        checkpoint_reference = f"{project_dir}/model-{checkpoint_run_id}:v0"
-        artifact_dir = cfg.checkpoint.artifact_dir
-        artifact = api.artifact(checkpoint_reference, type='model')
-        ckpt_file = artifact.get_path("model.ckpt").download(root=artifact_dir)
-        self.model: TAX3D = TAX3D(ckpt_file, device, cfg, self.run_config)
+        # Don't need to load checkpoint anymore, predictions are saved beforehand
+        self.model: TAX3D = TAX3D(cfg.task.env_runner.task_name)
 
     def eval_datasets(self):
-        # extract dataset params from training config
-        cloth_geometry = self.run_config.dataset.cloth_geometry
-        cloth_pose = self.run_config.dataset.cloth_pose
-        anchor_geometry = self.run_config.dataset.anchor_geometry
-        anchor_pose = self.run_config.dataset.anchor_pose
-        hole = self.run_config.dataset.hole
-        dataset_dir = self.run_config.dataset.data_dir
-
-        if self.cfg.inference.override_dataset:
-            cprint(f"Overriding dataset params from task config.", 'red')
-            cloth_geometry = self.cfg.task.dataset.cloth_geometry
-            cloth_pose = self.cfg.task.dataset.cloth_pose
-            anchor_geometry = self.cfg.task.dataset.anchor_geometry
-            anchor_pose = self.cfg.task.dataset.anchor_pose
-            hole = self.cfg.task.dataset.hole
-            dataset_dir = self.cfg.task.dataset.root_dir
+        dataset_cfg = self.cfg.task.dataset
+        cloth_geometry = dataset_cfg.cloth_geometry
+        cloth_pose = dataset_cfg.cloth_pose
+        anchor_geometry = dataset_cfg.anchor_geometry
+        anchor_pose = dataset_cfg.anchor_pose
+        hole = dataset_cfg.hole
+        num_anchors = dataset_cfg.num_anchors
+        robot = dataset_cfg.robot
 
         dataset_name = (
             f'cloth={cloth_geometry}-{cloth_pose} ' + \
             f'anchor={anchor_geometry}-{anchor_pose} ' + \
-            f'hole={hole}'
+            f'hole={hole} ' + \
+            f'robot={robot} ' + \
+            f'num_anchors={num_anchors} ' + \
+            'dp3'
         )
         dataset_dir = os.path.join(
-            os.path.expanduser(dataset_dir),
+            os.path.expanduser(dataset_cfg.root_dir),
             dataset_name
-        )
-
-        import torch.utils.data as data
-
-        class DedoDataset(data.Dataset):
-            def __init__(self, dir):
-                self.dir = dir
-                self.num_demos = int(len(os.listdir(self.dir)))
-
-            def __len__(self):
-                return self.num_demos
-            
-            def __getitem__(self, index):
-                demo = np.load(f"{self.dir}/demo_{index}.npz", allow_pickle=True)
-                return demo
-            
-        train_dataset = DedoDataset(dataset_dir + "/train_tax3d")
-        val_dataset = DedoDataset(dataset_dir + "/val_tax3d")
-        val_ood_dataset = DedoDataset(dataset_dir + "/val_ood_tax3d")
-
-        
+        )        
 
         cfg = copy.deepcopy(self.cfg)
-        split = cfg.task.inference.split
-        dataset = DedoDataset(dataset_dir + f"/{split}_tax3d")
-
-        # configure env
-        # for TAX3D, horizon is 1
-        cfg.task.env_runner.n_obs_steps = 1
-        cfg.task.env_runner.n_action_steps = 1
+        # configure env - for TAX3D, horizon is 1
+        if cfg.task.env_runner.n_obs_steps != 1:
+            raise ValueError("TAX3D only supports horizon=1")
 
         env_runner: BaseRunner
         env_runner = hydra.utils.instantiate(
@@ -681,29 +651,27 @@ class EvalTAX3DWorkspace:
             tax3d=True, viz=True)
         assert isinstance(env_runner, BaseRunner)
         policy = self.model
-        policy.eval()
-        policy.cuda()
 
-        runner_log = env_runner.run_dataset(policy, train_dataset, 'train')
+        runner_log = env_runner.run_dataset(policy, dataset_dir, 'train')
 
         cprint(f"---------------- Eval Results for Train --------------", 'magenta')
         for key, value in runner_log.items():
             if isinstance(value, float):
                 cprint(f"{key}: {value:.4f}", 'magenta')
 
-        runner_log = env_runner.run_dataset(policy, val_dataset, 'val')
+        runner_log = env_runner.run_dataset(policy, dataset_dir, 'val')
 
         cprint(f"---------------- Eval Results for Val. --------------", 'magenta')
         for key, value in runner_log.items():
             if isinstance(value, float):
                 cprint(f"{key}: {value:.4f}", 'magenta')
             
-        runner_log = env_runner.run_dataset(policy, val_ood_dataset, 'val_ood')
+        # runner_log = env_runner.run_dataset(policy, dataset_dir, 'val_ood')
 
-        cprint(f"---------------- Eval Results for Val. OOD --------------", 'magenta')
-        for key, value in runner_log.items():
-            if isinstance(value, float):
-                cprint(f"{key}: {value:.4f}", 'magenta')
+        # cprint(f"---------------- Eval Results for Val. OOD --------------", 'magenta')
+        # for key, value in runner_log.items():
+        #     if isinstance(value, float):
+        #         cprint(f"{key}: {value:.4f}", 'magenta')
 
     @property
     def output_dir(self):

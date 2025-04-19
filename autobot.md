@@ -57,7 +57,7 @@ nstructions for running code on AUTOBOT:
 
 Copying the data to the head node:
 ```
-rsync -anv --exclude='*archived*' --exclude='*.gif'  proccloth/ eycai@autobot.vision.cs.cmu.edu:/project_data/held/eycai/data/proccloth
+rsync -anv --exclude='*archive*' --exclude='*.gif'  proccloth/ eycai@autobot.vision.cs.cmu.edu:/project_data/held/eycai/data/proccloth
 ```
 
 Copying data from head node to GPU node:
@@ -67,13 +67,10 @@ rsync -anv data/ autobot-0-25:/scratch/eycai/data
 
 Copying the code to the head node:
 ```
-rsync -anv --exclude='*scripts/logs/*' --exclude='.git/*' --exclude='*scripts/wandb*' --exclude='*.ckpt' --exclude='*notebooks/*' non-rigid/ eycai@autobot.vision.cs.cmu.edu:code/non-rigid
+rsync -anv --exclude='*scripts/logs/*' --exclude='.git/*' --exclude='*scripts/wandb*' --exclude='*.ckpt' --exclude='*notebooks/*' --exclude='third_party/*' non-rigid/ eycai@autobot.vision.cs.cmu.edu:code/non-rigid
 ```
 
 
-RUNNING EVAL FROM GPU NODE:
-```
-singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/opt/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && ./eval.sh 1 gzc40qe1 dataset.data_dir='/opt/eycai/data/proccloth/' coverage=True"
 ```
 
 TRAINING TAX3D FROM GPU NODE:
