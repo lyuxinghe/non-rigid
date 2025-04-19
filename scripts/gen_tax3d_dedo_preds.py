@@ -18,11 +18,6 @@ from non_rigid.models.gmm_predictor import FrameGMMPredictor
 from tqdm import tqdm
 import numpy as np
 
-import rpad.visualize_3d.plots as vpl
-from pytorch3d.transforms import Transform3d
-
-
-
 @torch.no_grad()
 @hydra.main(config_path="../configs", config_name="eval", version_base="1.3")
 def main(cfg):
@@ -60,20 +55,8 @@ def main(cfg):
     ######################################################################
     # Manually setting eval-specific configs.
     ######################################################################
-    # # Using a custom cloth-specific batch size, to allow for simultaneous evaluation 
-    # # of RMSE, coverage, and precision.
-    # if cfg.dataset.hole == "single":
-    #     bs = 1
-    # elif cfg.dataset.hole == "double":
-    #     bs = 2
-    # else:
-    #     raise ValueError(f"Unknown hole type: {cfg.dataset.hole}.")
-    # bs *= cfg.dataset.num_anchors
-
-    # cfg.inference.batch_size = bs
-    # cfg.inference.val_batch_size = bs
     # We're not computing evals, only generating and saving predictions, so 
-    # one-by-one is fine.
+    # one-by-one is fine for now.
     cfg.inference.batch_size = 1
     cfg.inference.val_batch_size = 1
     cfg.dataset.sample_size_action = -1
@@ -167,7 +150,6 @@ def main(cfg):
     # conditioned policy evaluations.
     ######################################################################
     def generate_preds(dataset, save_path):
-        # batch_keys = ["pc_action", "pc_anchor", "pc", "flow", "seg", "seg_anchor", "T_action2world", "T_goal2world"]
         batch_keys = ["pc_action", "pc_anchor", "pc", "T_action2world", "T_goal2world"]
         for i in tqdm(range(len(dataset))):
             item = dataset.__getitem__(i)
