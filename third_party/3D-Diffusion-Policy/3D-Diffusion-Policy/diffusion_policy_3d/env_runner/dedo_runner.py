@@ -195,6 +195,9 @@ class DedoRunner(BaseRunner):
     
     # def run_dataset(self, policy: BasePolicy, dataset: data.Dataset, dataset_name: str):
     def run_dataset(self, policy: BasePolicy, dataset_dir: str, dataset_name: str):
+        # TODO: this is a temporary hack to make evals work
+        dataset_dir = dataset_dir.replace(' dp3', '')
+
         device = policy.device
         dtype = policy.dtype
         env = self.env
@@ -209,7 +212,7 @@ class DedoRunner(BaseRunner):
 
         # for tax3d goal conditioning, load tax3d predictions from zarr file
         if self.goal_conditioning.startswith('tax3d'):
-            dataset_dir = dataset_dir.replace(' dp3', '')
+            # dataset_dir = dataset_dir.replace(' dp3', '')
             goal_pred_dir = os.path.join(dataset_dir, "tax3d_preds", self.goal_model)
             # roup = zarr.open(dataset_dir + f"/{dataset_name}.zarr", mode='r')
 
