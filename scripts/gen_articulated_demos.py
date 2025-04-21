@@ -1,22 +1,11 @@
 import numpy as np
 from pathlib import Path
 import os
-import time
-import copy
 
 import torch 
-import torch_geometric.data as tgd
-import torch_geometric.loader as tgl
-import torch_geometric.transforms as tgt
-from torch_geometric.nn import fps
 
-import rpad.visualize_3d.plots as vpl
-
-from rpad.pybullet_envs.pm_suction import PMObjectEnv
 from rpad.partnet_mobility_utils.data import PMObject
 from rpad.partnet_mobility_utils.dataset import (
-    read_ids, 
-    get_ids_by_class,
     UMPNET_TRAIN_TRAIN_OBJS as train_objs,
     UMPNET_TRAIN_TEST_OBJS as val_objs,
     UMPNET_TEST_OBJS as val_ood_objs,
