@@ -1,6 +1,7 @@
+from typing import Tuple, Union
+
 import numpy as np
 import torch
-from typing import Union, Tuple
 
 
 def svd_estimation(
@@ -73,7 +74,6 @@ def svd_estimation(
         T[:, :3, 3] = t
 
         return T
-
 
 
 

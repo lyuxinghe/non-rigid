@@ -1,6 +1,6 @@
 import os
-from functools import partial
 import pathlib
+from functools import partial
 from typing import Dict, List, Sequence, Union, cast
 
 import torch
@@ -8,23 +8,18 @@ import torch.utils._pytree as pytree
 import torchvision as tv
 import wandb
 from lightning.pytorch import Callback
-from pytorch_lightning.loggers import WandbLogger
 from omegaconf import OmegaConf
-
-
-from non_rigid.models.tax3d import (
-    DiffusionTransformerNetwork,
-    CrossDisplacementModule,
-)
-from non_rigid.models.tax3d_v2 import (
-    TAX3Dv2Network,
-    TAX3Dv2MuFrameModule,
-    TAX3Dv2FixedFrameModule
-)
+from pytorch_lightning.loggers import WandbLogger
 
 from non_rigid.datasets.dedo import DedoDataModule
-from non_rigid.datasets.rigid import RigidDataModule
 from non_rigid.datasets.real_world import RealWorldDataModule
+from non_rigid.datasets.rigid import RigidDataModule
+from non_rigid.models.tax3d import CrossDisplacementModule, DiffusionTransformerNetwork
+from non_rigid.models.tax3d_v2 import (
+    TAX3Dv2FixedFrameModule,
+    TAX3Dv2MuFrameModule,
+    TAX3Dv2Network,
+)
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
 
@@ -135,18 +130,20 @@ def load_checkpoint_config_from_wandb(current_cfg, task_overrides, entity, proje
     
     # small edge case - if 'eval', ignore 'train_size'/'val_size'
     if current_cfg.mode == "eval":
+        # TODO: unify the following
         # For DEDO
         if "train_size" in current_cfg.dataset.keys():
             current_cfg.dataset.train_size = None
         if "val_size" in current_cfg.dataset.keys():
             current_cfg.dataset.val_size = None
-        # For RPDiff/ Insertion
+        # For RPDiff
         if "train_dataset_size" in current_cfg.dataset.keys():
             current_cfg.dataset.train_dataset_size = None
         if "val_dataset_size" in current_cfg.dataset.keys():
             current_cfg.dataset.val_dataset_size = None
         if "test_dataset_size" in current_cfg.dataset.keys():
             current_cfg.dataset.test_dataset_size = None
+
     current_cfg.dataset.data_dir = current_data_dir
 
     return current_cfg

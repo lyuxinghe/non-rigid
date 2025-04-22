@@ -10,11 +10,18 @@ from torch import nn, optim
 
 from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
-from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
-from non_rigid.models.dit.diffusion import create_diffusion_mu, create_diffusion_ddrd_separate
+from non_rigid.metrics.rigid_metrics import (
+    rotation_err,
+    svd_estimation,
+    translation_err,
+)
+from non_rigid.models.dit.diffusion import (
+    create_diffusion_ddrd_separate,
+    create_diffusion_mu,
+)
 from non_rigid.models.dit.models import (
-    TAX3Dv2_MuFrame_DiT,
     TAX3Dv2_FixedFrame_Token_DiT,
+    TAX3Dv2_MuFrame_DiT,
 )
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -330,12 +337,13 @@ class TAX3Dv2BaseModule(L.LightningModule):
             }
 
             # compute world frame predictions
-            pred_flow_world, pred_point_world, pc_action_world, results_world = self.get_world_preds(
+            pred_flow_world, pred_point_world, pc_action_world, pred_frame_world, results_world = self.get_world_preds(
                 batch, num_samples, pc_action, pred_dict
             )
             pred_dict["flow"]["pred_world"] = pred_flow_world
             pred_dict["point"]["pred_world"] = pred_point_world
             pred_dict["results_world"] = results_world
+            pred_dict["pred_frame_world"] = pred_frame_world
 
             # if the material is rigid, we also output estimated translation and rotation
             if self.dataset_cfg.material == "rigid":
@@ -788,13 +796,14 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         pred_frame = expand_pcd(batch["pred_frame"].to(self.device), num_samples)
         action_context_frame = expand_pcd(batch["action_context_frame"].to(self.device), num_samples)
 
+        pred_frame_world = T_goal2world.transform_points(pred_frame)
         pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"] + pred_frame)
         pc_action_world = T_action2world.transform_points(pc_action + action_context_frame)
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
             T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results"]
         ]
-        return pred_flow_world, pred_point_world, pc_action_world, results_world
+        return pred_flow_world, pred_point_world, pc_action_world, pred_frame_world, results_world
 
     def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
         # Using GMM model, if provided.

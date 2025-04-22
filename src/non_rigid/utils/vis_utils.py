@@ -11,70 +11,169 @@ from matplotlib import rcParams
 from PIL import Image
 
 
-def visualize_sampled_predictions(ground_truth, context, predictions):
+def interpolate_colors(hex1, hex2, n):
+    """Linearly interpolate between two hex colors (inclusive)."""
+    # strip '#' and convert to RGB ints
+    h1, h2 = hex1.lstrip('#'), hex2.lstrip('#')
+    rgb1 = np.array([int(h1[i:i+2], 16) for i in (0, 2, 4)], dtype=float)
+    rgb2 = np.array([int(h2[i:i+2], 16) for i in (0, 2, 4)], dtype=float)
+    colors = []
+    for t in np.linspace(0, 1, n):
+        rgb = (1 - t) * rgb1 + t * rgb2
+        colors.append('#' + ''.join(f'{int(v):02X}' for v in rgb))
+    return colors
+
+def visualize_sampled_predictions(
+    ground_truth,
+    context,
+    predictions,
+    ref_predictions,
+):
     """
-    Helper function to visualize sampled point cloud predictions.
+    Helper function to visualize sampled point cloud predictions with custom colors
+    plus simulated diffusion noise traces.
+
     Args:
-        ground_truth: ndarray of shape (..., 3)
-        context: Dict of ndarrays of shape (:, 3). Key is name of context, value is context points.
-        predictions: ndarray of shape (:, :, 3)
+        ground_truth: ndarray of shape (G, 3)
+        context: Dict[str, ndarray] of shape (N_c, 3)
+        predictions: ndarray of shape (P, N_p, 3)
+        ref_predictions: ndarray of shape (R, 3) (we expect R=1)
+        noise_std: float, stddev of Gaussian noise to simulate
     """
     fig = go.Figure()
     traces = []
-    
-    # Colormap.
-    colors = np.array(pc.qualitative.Alphabet)
 
-    # Plot ground truth.
+    # Custom colors
+    gt_color       = "#B2F78B"
+    anchor_color   = "#5F7FBF"
+    action_color   = "#73C3DE"
+    pred_base1     = "#FFDA5F"
+    pred_base2     = "#FD7217"
+    red_color      = "#FF0000"
+    grey_light     = "#1A1A1A"
+    grey_dark      = "#0A0F47"
+
+    # 1) Ground truth
     if ground_truth is not None:
-        ground_truth_points = ground_truth.reshape(-1, 3)
-        traces.append(
-            go.Scatter3d(
-                mode="markers",
-                x=ground_truth_points[:, 0],
-                y=ground_truth_points[:, 1],
-                z=ground_truth_points[:, 2],
-                marker={"size": 5, "color": "black", "line": {"width": 0}, "symbol": "diamond"},
-                name="Ground Truth",
-            )
-        )
+        pts = ground_truth.reshape(-1, 3)
+        traces.append(go.Scatter3d(
+            x=pts[:,0], y=pts[:,1], z=pts[:,2],
+            mode="markers",
+            marker=dict(size=6, color=gt_color, symbol="circle"),
+            name="Ground Truth"
+        ))
 
-    # Plot context.
-    color_counter = 0
-    for context_name, context_points in context.items():
-        traces.append(
-            go.Scatter3d(
-                mode="markers",
-                x=context_points[:, 0],
-                y=context_points[:, 1],
-                z=context_points[:, 2],
-                marker={"size": 3, "color": colors[color_counter], "line": {"width": 0}},
-                name=context_name,
-            )
-        )
-        color_counter += 1
+    # 2) Context: anchor + action
+    action_pts = None
+    for name, pts in context.items():
+        pts = pts.reshape(-1, 3)
+        color = anchor_color if "anchor" in name.lower() else action_color
+        traces.append(go.Scatter3d(
+            x=pts[:,0], y=pts[:,1], z=pts[:,2],
+            mode="markers",
+            marker=dict(size=6, color=color, symbol="circle"),
+            name=name.capitalize()
+        ))
+        if "action" in name.lower():
+            action_pts = pts
 
-    # Plot predictions.
-    for i, prediction_points in enumerate(predictions):
-        traces.append(
-            go.Scatter3d(
-                mode="markers",
-                x=prediction_points[:, 0],
-                y=prediction_points[:, 1],
-                z=prediction_points[:, 2],
-                marker={"size": 3, "color": colors[i + color_counter], "line": {"width": 0}},
-                name=f"Prediction {i + 1}",
-            )
-        )
-    
+
+    # 3) Simulated Gaussian noise around initial action
+    gauss_noise = np.random.normal(scale=1.0, size=action_pts.shape) * 0.3
+    if action_pts is not None:
+        noise_action = action_pts + gauss_noise
+        traces.append(go.Scatter3d(
+            x=noise_action[:,0], y=noise_action[:,1], z=noise_action[:,2],
+            mode="markers",
+            marker=dict(size=6, color=grey_dark, symbol="circle"),
+            name="Action Noise"
+        ))
+        # 4) Lines showing flow from action -> noise
+        # Collect all flow line segments in bulk
+        x_lines, y_lines, z_lines = [], [], []
+
+        for a, npt in zip(action_pts, noise_action):
+            x_lines += [a[0], npt[0], None]
+            y_lines += [a[1], npt[1], None]
+            z_lines += [a[2], npt[2], None]
+
+        # Add a single trace for all flows
+        traces.append(go.Scatter3d(
+            x=x_lines, y=y_lines, z=z_lines,
+            mode="lines",
+            line=dict(color=grey_light, width=3),
+            name="Shape Vector"
+        ))
+
+    # 5) Predictions color‐interpolation
+    P = predictions.shape[0]
+    pred_colors = interpolate_colors(pred_base1, pred_base2, P)
+    for i in range(P):
+        pts = predictions[i]
+        
+        # Draw the prediction point cloud
+        traces.append(go.Scatter3d(
+            x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
+            mode="markers",
+            marker=dict(size=6, color=pred_colors[i], symbol="circle"),
+            name=f"Prediction {i + 1}"
+        ))
+        
+        # Compute and draw centroid
+        centroid = pts.mean(axis=0)
+        traces.append(go.Scatter3d(
+            x=[centroid[0]], y=[centroid[1]], z=[centroid[2]],
+            mode="markers",
+            marker=dict(size=5, color=pred_colors[i], symbol="x"),
+            name=f"Prediction Centroid {i + 1}"
+        ))
+
+    # 6) Reference prediction (red X’s)
+    ref_pts = np.atleast_2d(ref_predictions.reshape(-1, 3))
+    traces.append(go.Scatter3d(
+        x=ref_pts[:,0], y=ref_pts[:,1], z=ref_pts[:,2],
+        mode="markers",
+        marker=dict(size=5, color=red_color, symbol="x"),
+        name="Ref Prediction"
+    ))
+
+    # 7) Sampled vector noise for the reference
+    #    a single 3‐vector
+    ref_noise_vec = np.random.normal(scale=1.0, size=(3,))
+    ref_center = ref_pts[0]
+    dest = ref_center + ref_noise_vec
+    traces.append(go.Scatter3d(
+        x=[dest[0]], y=[dest[1]], z=[dest[2]],
+        mode="markers",
+        marker=dict(size=5, color=grey_dark, symbol="x"),
+        name="Ref Noise"
+    ))
+    # as a line
+    traces.append(go.Scatter3d(
+        x=[ref_center[0], dest[0]],
+        y=[ref_center[1], dest[1]],
+        z=[ref_center[2], dest[2]],
+        mode="lines",
+        line=dict(color=grey_light, width=3, dash="dash"),
+        name="Ref Noise Vec"
+    ))
+    # 8) Gaussian cloud around displaced reference
+    noise_ref_cloud = dest + (noise_action - noise_action.mean(axis=0))
+    traces.append(go.Scatter3d(
+        x=noise_ref_cloud[:,0], y=noise_ref_cloud[:,1], z=noise_ref_cloud[:,2],
+        mode="markers",
+        marker=dict(size=6, color=grey_light, symbol="circle"),
+        name="Ref Noise Cloud"
+    ))
+
+    # assemble
     fig.add_traces(traces)
     fig.update_layout(
-        scene=rvpl._3d_scene(np.concatenate([
-            ground_truth.reshape(-1, 3), *context.values(), predictions.reshape(-1, 3)])),
-        showlegend=True,
-    )
-    fig.update_scenes(
-        xaxis_visible=False, yaxis_visible=False, zaxis_visible=False
+        scene=dict(
+            xaxis_visible=False, yaxis_visible=False, zaxis_visible=False,
+            aspectmode='data'
+        ),
+        showlegend=True
     )
     return fig
 

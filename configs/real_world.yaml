@@ -22,6 +22,7 @@ inference:
 checkpoint:
   run_id: ???
   reference: ${wandb.entity}/${wandb.project}/model-${checkpoint.run_id}:best
+  #reference: /home/mfi/repos/shobhit-experiments/non-rigid/models/epoch19999-step500000.ckpt
 
 resources:
   num_workers: 4

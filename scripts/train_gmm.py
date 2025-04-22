@@ -76,7 +76,7 @@ def main(cfg):
     total_probs50 = []
 
     # Creating experiment directory.
-    exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.job_type}_{cfg.epochs}")
+    exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.gmm_exp_name}")
     if os.path.exists(exp_name):
         print(f"Experiment directory {exp_name} already exists. Removing it.")
         shutil.rmtree(exp_name)
@@ -85,12 +85,16 @@ def main(cfg):
     os.makedirs(os.path.join(exp_name, "logs"), exist_ok=True)
 
     # Visualizing initial model.
-    fig, num_probs99, num_probs90, num_probs50 = viz_gmm(model, train_dataset)
-    fig.update_layout(title_text="Epoch 0")
-    fig.write_html(os.path.join(exp_name, "logs", f"epoch_0.html"))
+    train_fig, num_probs99, num_probs90, num_probs50 = viz_gmm(model, train_dataset)
+    train_fig.update_layout(title_text="Epoch 0")
+    train_fig.write_html(os.path.join(exp_name, "logs", f"train_epoch_0.html"))
     total_probs99.append(num_probs99)
     total_probs90.append(num_probs90)
     total_probs50.append(num_probs50)
+
+    val_fig, num_probs99, num_probs90, num_probs50 = viz_gmm(model, val_dataset)
+    val_fig.update_layout(title_text="Epoch 0")
+    val_fig.write_html(os.path.join(exp_name, "logs", f"val_epoch_0.html"))
 
     # Training loop.
     with tqdm(total=num_epochs) as pbar:
@@ -134,14 +138,20 @@ def main(cfg):
                 torch.save(model.state_dict(), os.path.join(exp_name, "checkpoints", f"epoch_{epoch + 1}.pt"))
 
                 # Also log visualizations.
-                val_fig, num_probs99, num_probs90, num_probs50 = viz_gmm(model, train_dataset)
-                val_fig.update_layout(
+                train_fig, num_probs99, num_probs90, num_probs50 = viz_gmm(model, train_dataset)
+                train_fig.update_layout(
                     title_text=f"Epoch {epoch + 1}, Train Loss: {total_losses[-1]:.4f}, Val Loss: {total_val_losses[-1]:.4f}",
                 )
-                val_fig.write_html(os.path.join(exp_name, "logs", f"epoch_{epoch + 1}.html"))
+                train_fig.write_html(os.path.join(exp_name, "logs", f"train_epoch_{epoch + 1}.html"))
                 total_probs99.append(num_probs99)
                 total_probs90.append(num_probs90)
                 total_probs50.append(num_probs50)
+
+                val_fig, num_probs99, num_probs90, num_probs50 = viz_gmm(model, val_dataset)
+                val_fig.update_layout(
+                    title_text=f"Epoch {epoch + 1}, Train Loss: {total_losses[-1]:.4f}, Val Loss: {total_val_losses[-1]:.4f}",
+                )                
+                val_fig.write_html(os.path.join(exp_name, "logs", f"val_epoch_{epoch + 1}.html"))
 
                 # Update progress bar.
                 pbar.set_postfix(
@@ -149,9 +159,14 @@ def main(cfg):
                     val_loss=total_val_losses[-1],
                 )
             else:
-                pbar.set_postfix(
-                    train_loss=total_losses[-1],
-                )
+                if len(total_val_losses) == 0:
+                    pbar.set_postfix(
+                        train_loss=total_losses[-1],
+                    )
+                else:
+                    pbar.set_postfix(
+                        train_loss=total_losses[-1], val_loss=total_val_losses[-1],
+                    )
             pbar.update(1)
 
     # After training, plot the losses.

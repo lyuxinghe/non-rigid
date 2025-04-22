@@ -18,15 +18,15 @@ frame_type: fixed # (fixed, mu) Type of frame-prediction for the model
 # Model-specific Dataset/Data-processing Parameters
 #####################################################
 # These override the dataset config.
-pred_frame: anchor_center # [anchor_center, noisy_goal] frame for goal prediction
-noisy_goal_scale: 0.0 # scale for simulated noisy goal error
+pred_frame: noisy_goal # [anchor_center, noisy_goal] frame for goal prediction
+noisy_goal_scale: 1.0 # scale for simulated noisy goal error
 action_context_frame: action_center # [action_center] frame for action context
 
 #####################################################
 # Dataset-specific Model Parameters
 #####################################################
 # These are shared and overriden by the dataset config.
-pcd_scale: 1.0 # Scale range for the point clouds
+pcd_scale: 3.0 # Scale range for the point clouds
 
 #####################################################
 # Model Diffusion Parameters
@@ -37,5 +37,5 @@ diff_noise_schedule: linear # (linear, cosine) Noise schedule for diffusion
 diff_noise_scale: 1.0 # Scale of noise for diffusion
 diff_type: gaussian
 diff_translation_noise_scale: False # Scale of translation noise (in meter) for diffusion, or False for disable  
-diff_rotation_noise_scale: False # scale of rotation noise (in degreee) for diffusion, or False for disable
+diff_rotation_noise_scale: 45 # scale of rotation noise (in degreee) for diffusion, or False for disable
 time_based_weighting: even # (False, 'even', 'linear', 'sigmoid')

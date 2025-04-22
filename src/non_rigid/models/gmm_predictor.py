@@ -98,7 +98,8 @@ class GMMLoss(torch.nn.Module):
         super(GMMLoss, self).__init__()
         self.pcd_scale = cfg.dataset.pcd_scale
         self.eps = eps
-    
+        print(f"Training GMM Predictor with pcd_scale of {self.pcd_scale}")
+        
     def forward(self, batch, pred, var=0.00001, uniform_loss=0.0):
         # Computing ground truth action mean in anchor frame.
         anchor_frame = pred["anchor_frame"]
