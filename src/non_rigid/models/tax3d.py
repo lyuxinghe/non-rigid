@@ -411,8 +411,9 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         Training step for the module. Logs training metrics and visualizations to wandb.
         """
         self.train()
+        bs = batch[self.label_key].shape[0]
         t = torch.randint(
-            0, self.diff_steps, (self.batch_size,), device=self.device
+            0, self.diff_steps, (bs,), device=self.device
         ).long()
         
         batch = self.update_batch_frames(batch, update_labels=True)

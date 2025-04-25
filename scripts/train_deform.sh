@@ -54,6 +54,7 @@ fi
 WANDB_MODE=$WANDB_MODE python train.py \
   $MODEL_PARAMS \
   $DATASET_PARAMS \
-  wandb.group=tax3d_upgrade_rigid \
+  wandb.group=rigid \
+  wandb.project=corl2025_tax3dv2 \
   resources.gpus=[${GPU_INDEX}] \
   $COMMAND
