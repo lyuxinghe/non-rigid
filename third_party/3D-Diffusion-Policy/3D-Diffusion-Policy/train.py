@@ -135,10 +135,11 @@ class TrainDP3Workspace:
                 model=self.ema_model)
 
         # configure env
-        env_runner: BaseRunner
-        env_runner = hydra.utils.instantiate(
-            cfg.task.env_runner,
-            output_dir=self.output_dir)
+        # env_runner: BaseRunner
+        # env_runner = hydra.utils.instantiate(
+        #     cfg.task.env_runner,
+        #     output_dir=self.output_dir)
+        env_runner = None
         
         if env_runner is not None:
             assert isinstance(env_runner, BaseRunner)

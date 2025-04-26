@@ -87,3 +87,8 @@ TRAINING TAX3Dv2-mu-frame FROM GPU NODE:
 ```
 singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/opt/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && CUDA_VISIBLE_DEVICES=0 ./train_deform.sh 0 tax3dv2 online dedo dataset.data_dir=/opt/eycai/data/ dataset.train_size=400 model.frame_type=mu model.joint_encode=True model.feature=True model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.diff_rotation_noise_scale=45 resources.num_workers=16"
 ```
+
+TRAINING DP3:
+```
+singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/opt/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && CUDA_VISIBLE_DEVICES=0 ./train_dedo_policy.sh dp3 dedo_proccloth none 1 0 easy"
+```
