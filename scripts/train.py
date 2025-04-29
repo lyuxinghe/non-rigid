@@ -104,6 +104,17 @@ def main(cfg):
         resume = 'allow'
         id = None
 
+    wandb_run = wandb.init(
+        project=cfg.wandb.project,
+        entity=cfg.wandb.entity,
+        group=group,
+        job_type=cfg.job_type,
+        resume=resume,
+        id=id,
+        dir=cfg.wandb.save_dir,
+        config=omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
+    )
+
     logger = WandbLogger(
         entity=cfg.wandb.entity,
         project=cfg.wandb.project,

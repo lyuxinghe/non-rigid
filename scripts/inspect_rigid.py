@@ -1,7 +1,9 @@
 import os
+
 import numpy as np
 import open3d as o3d
 from tqdm import tqdm
+
 
 def visualize_point_cloud_with_ply(file_path, save_dir, views="all"):
     """
@@ -317,11 +319,12 @@ def are_anchor_pcds_identical_rpdiff(file_path):
 
 if __name__ == "__main__":
     
-    file_path = "/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf/preprocessed/"  # Replace with actual file path
-    save_dir = "./vis/bookbookshelf"  # Directory to save the visualizations
+    file_path = '/home/mfi/repos/rtc_vision_toolbox/data/tax3d-yk-creator/demonstrations/04-21-wp-2/execute_data/0427_111422/teleport_obj_points.npz'
+    save_dir = "./logs/vis"  # Directory to save the visualizations
     views = "all"  # Use "all" or any single view like "default", "top", "side", "diagonal"
-    rpdiff_visualize_point_cloud(file_path, save_dir, views, num_vis=5)
-    
+    #rpdiff_visualize_point_cloud(file_path, save_dir, views, num_vis=5)
+    ndf_visualize_point_cloud(file_path, save_dir, views)
+
     '''
     file_list = [
         "/data/lyuxing/tax3d/ndf/mugplace/train_data/renders/0_init_obj_points.npz",

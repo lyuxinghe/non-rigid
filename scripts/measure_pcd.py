@@ -106,55 +106,29 @@ def print_extent_stats(name, stats):
 # Example usage
 if __name__ == "__main__":
     # Create a list of example point clouds
-    '''
-    proccloth_action, proccloth_anchor = load_proccloth(dir='/data/lyuxing/tax3d/proccloth/cloth=multi-fixed anchor=single-random hole=single/train_tax3d/')
 
-    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(proccloth_action, scaling_factor=1)
-    print(f"ProcCloth Action Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
-    print(f"ProcCloth Action Mean Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
-
-    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(proccloth_anchor, scaling_factor=1)
-    print(f"ProcCloth Anchor Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
-    print(f"ProcCloth Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
-
-
-
-    ndf_action, ndf_anchor = load_ndf(dir='/data/lyuxing/tax3d/ndf/mugplace/train_data/renders/')
-
-    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(ndf_action, scaling_factor=15)
-    print(f"NDF Action Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
-    print(f"NDF Action Mean Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
-
-    mean_bbox_size, mean_bbox_volume, valid_mask = calculate_mean_bounding_box_excluding_outliers(ndf_anchor, scaling_factor=15)
-    print(f"NDF Anchor Mean Bounding Box Size (Excluding Outliers): {mean_bbox_size}")
-    print(f"NDF Anchor Bounding Box Volume (Excluding Outliers): {mean_bbox_volume:.2f}")
-    '''
     
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/can_in_cabinet_stack/task_name_stack_can_in_cabinet/', num_demos=None)
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf/preprocessed/', num_demos=None)
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single//task_name_mug_on_rack/preprocessed/', num_demos=None)
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_med_single/task_name_mug_on_rack/preprocessed/', num_demos=None)
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_on_rack_multi_large_proc_gen_demos/task_name_mug_on_rack_multi/preprocessed/', num_demos=None)
-    dedo_action, dedo_anchor = load_proccloth('/home/lyuxing/Desktop/tax3d_upgrade/datasets/ProcCloth/cloth=single-fixed anchor=single-random hole=single/train_tax3d')
-    
-    stats_action = compute_extent_and_scale_stats(dedo_action)
-    stats_anchor = compute_extent_and_scale_stats(dedo_anchor)
-    stats_combined = compute_extent_and_scale_stats(
-        [np.concatenate((pc1, pc2), axis=0) for pc1, pc2 in zip(dedo_action, dedo_anchor)]
-    )
-    '''
-    
-    test_scale = 15
-    rpdiff_action = [pc * test_scale for pc in rpdiff_action]
-    rpdiff_anchor = [pc * test_scale for pc in rpdiff_anchor]
+    #dedo_action, dedo_anchor = load_proccloth('/home/lyuxing/Desktop/tax3d_upgrade/datasets/ProcCloth/cloth=single-fixed anchor=single-random hole=single/train_tax3d')
 
-    stats_action = compute_extent_and_scale_stats(rpdiff_action)
-    stats_anchor = compute_extent_and_scale_stats(rpdiff_anchor)
+    insertion_anchor, insertion_action = load_insertion('/home/mfi/repos/rtc_vision_toolbox/data/tax3d-yk-creator/demonstrations/04-21-wp-2/learn_data/train')
+    #insertion_anchor, insertion_action = load_insertion('/home/mfi/repos/rtc_vision_toolbox/data/tax3d-yk-creator/demonstrations/04-21-dsub-1/learn_data/train')
+
+    test_scale = 1
+    insertion_action = [pc * test_scale for pc in insertion_action]
+    insertion_anchor = [pc * test_scale for pc in insertion_anchor]
+
+    stats_action = compute_extent_and_scale_stats(insertion_action)
+    stats_anchor = compute_extent_and_scale_stats(insertion_anchor)
     stats_combined = compute_extent_and_scale_stats(
-        [np.concatenate((pc1, pc2), axis=0) for pc1, pc2 in zip(rpdiff_action, rpdiff_anchor)]
+        [np.concatenate((pc1, pc2), axis=0) for pc1, pc2 in zip(insertion_action, insertion_anchor)]
     )
     
-    '''
+    
     print_extent_stats("Action", stats_action)
     print_extent_stats("Anchor", stats_anchor)
     print_extent_stats("Combined", stats_combined)

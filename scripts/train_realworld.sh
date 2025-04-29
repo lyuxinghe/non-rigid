@@ -7,9 +7,9 @@
 # 4. the rest of the arguments for the train.py script
 
 ########## Insertion ##########
-### 12-15-ssd ### *PCD_Scale=50*
+### 04-21-dsub-1 ### 
 ## Anchor Centroid ##
-# ./train_realworld.sh 0 tax3dv2 online insertion model.frame_type=fixed model.pred_frame=anchor_center model.point_encoder=pn2 model.diff_rotation_noise_scale=45 resources.num_workers=32
+# ./train_realworld.sh 0 tax3dv2 online insertion model.frame_type=fixed model.pred_frame=anchor_center model.point_encoder=pn2 model.diff_rotation_noise_scale=45 dataset.connector_type=04-21-dsub-1 resources.num_workers=16
 
 
 #------ Run On AutoBot with Singularity ------#
@@ -51,8 +51,8 @@ fi
 WANDB_MODE=$WANDB_MODE python train.py \
   $MODEL_PARAMS \
   $DATASET_PARAMS \
-  wandb.group=rigid \
-  wandb.project=corl2025_tax3dv2 \
+  wandb.group=waterproof \
+  wandb.project=tax3d \
   resources.gpus=[${GPU_INDEX}] \
   $COMMAND
 

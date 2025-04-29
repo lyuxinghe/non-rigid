@@ -3,13 +3,13 @@ name: insertion
 #####################################################
 # Dataset Parameters
 #####################################################
-data_dir: /home/mfi/repos/rtc_vision_toolbox/data/demonstrations
+data_dir: /home/mfi/repos/rtc_vision_toolbox/data/tax3d-yk-creator/demonstrations/
 material: rigid
 
 ###################################################
 # Insertion Specifics
 ###################################################
-connector_type: 12-15-ssd
+connector_type: 04-21-dsub-1 # ['04-21-dsub-1', '04-21-wp-2']
 data_type: learn_data
 
 ###################################################
@@ -45,23 +45,23 @@ pcd_scale: 1.0 # Scale range for the point clouds
 #####################################################
 # Data Processing/Augmentation Parameters
 #####################################################
-pcd_scale_factor: 50.0 # Scale factor for the point clouds
+pcd_scale_factor: 50.0 
 action_transform_type: axis_angle # Transformation type to apply to the action
-action_translation_variance: 0.01 # Translation variance of the action transformation
+action_translation_variance: 0.1 # Translation variance of the action transformation
 action_rotation_variance: 0.52 # Rotation variance of the action transformation in radians
 anchor_transform_type: axis_angle # Transformation type to apply to the anchor
-anchor_translation_variance: 0.01 # Translation variance of the anchor transformation
+anchor_translation_variance: 0.1 # Translation variance of the anchor transformation
 anchor_rotation_variance: 0.52 # Rotation variance of the anchor transformation in radians
 
 ###################################################
 # Data Augmentation Parameters
 ###################################################
-action_plane_occlusion: 0.8 # Probability of applying plane occlusion (0.8)
+action_plane_occlusion: 0.0 # Probability of applying plane occlusion (0.8)
 action_plane_standoff: 0.04 # Standoff distance of the occluding plane from selected plane origin
 action_ball_occlusion: 0 # Probability of applying ball occlusion (0)
 action_ball_radius: 0.1 # Radius of the occluding ball
 
 anchor_plane_occlusion: 0 # Probability of applying plane occlusion (0)
 anchor_plane_standoff: 0.04 # Standoff distance of the occluding plane from selected plane origin
-anchor_ball_occlusion: 0.8 # Probability of applying ball occlusion (0.8)
+anchor_ball_occlusion: 0.0 # Probability of applying ball occlusion (0.8)
 anchor_ball_radius: 0.1 # Radius of the occluding ball
