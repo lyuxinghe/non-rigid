@@ -46,10 +46,10 @@ pcd_scale: 1.0 # Scale range for the point clouds
 # Data Processing/Augmentation Parameters
 #####################################################
 pcd_scale_factor: 50.0 
-action_transform_type: axis_angle # Transformation type to apply to the action
+action_transform_type: insertion_specific # Transformation type to apply to the action
 action_translation_variance: 0.1 # Translation variance of the action transformation
 action_rotation_variance: 0.52 # Rotation variance of the action transformation in radians
-anchor_transform_type: axis_angle # Transformation type to apply to the anchor
+anchor_transform_type: identity # Transformation type to apply to the anchor
 anchor_translation_variance: 0.1 # Translation variance of the anchor transformation
 anchor_rotation_variance: 0.52 # Rotation variance of the anchor transformation in radians
 

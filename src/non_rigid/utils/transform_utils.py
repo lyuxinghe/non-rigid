@@ -46,7 +46,7 @@ def random_se3(
         "quat_uniform",
         "random_flat_upright",
         "random_upright",
-        "random_upright_uponly",
+        "insertion_specific",
         "identity",
     ], f"Invalid sample method {rot_sample_method}"
 
@@ -126,18 +126,34 @@ def random_se3(
             trans_var / torch.norm(random_translation, dim=1).max().item()
         )
         t = torch.rand(1).item() * translation_ratio * random_translation
-    elif rot_sample_method == "random_flat_upright":
-        # Random rotation around z axis and xy translation (no z translation)
-        theta = torch.rand(N, 1, device=device) * 2 * np.pi
-        axis_angle_z = torch.cat([torch.zeros(N, 2, device=device), theta], dim=1)
-        R = axis_angle_to_matrix(axis_angle_z)
+    elif rot_sample_method == "insertion_specific":
+        # Random axis-angle around Y axis, constrained by rot_var
+        theta = torch.randn(N, 1, device=device)  # unnormalized
+        axis_angle_y = torch.cat([
+            torch.zeros(N, 1, device=device),
+            theta,
+            torch.zeros(N, 1, device=device)
+        ], dim=1)
 
+        # Constrain rotation angle to rot_var
+        rot_ratio = (
+            torch.rand(1).item()
+            * rot_var
+            / torch.norm(axis_angle_y, dim=1).max().item()
+        )
+        constrained_axis_angle_y = rot_ratio * axis_angle_y  # [N, 3]
+        R = axis_angle_to_matrix(constrained_axis_angle_y)   # [N, 3, 3]
+
+        # Random translation in XZ plane
         random_translation = torch.randn(N, 3, device=device)
-        random_translation[:, 2] = 0
+        random_translation[:, 1] = 0.0  # no Y-axis movement
+
+        # Scale translation to trans_var
         translation_ratio = (
             trans_var / torch.norm(random_translation, dim=1).max().item()
         )
-        t = torch.rand(1).item() * translation_ratio * random_translation
+        t = torch.rand(1).item() * translation_ratio * random_translation  # [N, 3]
+
     elif rot_sample_method == "identity":
         R = torch.eye(3, device=device).unsqueeze(0).repeat(N, 1, 1)
         t = torch.zeros(N, 3, device=device)
