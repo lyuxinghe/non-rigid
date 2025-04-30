@@ -630,6 +630,11 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
             ).cpu()
             batch["noisy_goal"] = sampled_noisy_goals
 
+            # Also add gmm predictions to batch for visualization.
+            batch["gmm_probs"] = gmm_probs
+            batch["gmm_means"] = gmm_means
+            batch["sampled_idxs"] = idxs
+
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":
             pred_frame = batch["pc_anchor"].mean(axis=1, keepdim=True)

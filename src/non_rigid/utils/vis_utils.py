@@ -11,7 +11,7 @@ from matplotlib import rcParams
 from PIL import Image
 
 
-def visualize_sampled_predictions(ground_truth, context, predictions):
+def visualize_sampled_predictions(ground_truth, context, predictions, gmm_viz=None):
     """
     Helper function to visualize sampled point cloud predictions.
     Args:
@@ -42,13 +42,24 @@ def visualize_sampled_predictions(ground_truth, context, predictions):
     # Plot context.
     color_counter = 0
     for context_name, context_points in context.items():
+        # If context is "Anchor", color it differently.
+        if context_name == "Anchor" and gmm_viz is not None:
+            # Color anchor points based on predicted logits.
+            anchor_colors = gmm_viz["gmm_probs"][0].squeeze()
+            marker_dict = {
+                "size": 3, "color": anchor_colors, "colorscale": "Viridis", 
+                "line": {"width": 0}, "cmin": anchor_colors.min(), "cmax": anchor_colors.max(),
+            }
+        else:
+            marker_dict={"size": 3, "color": colors[color_counter], "line": {"width": 0}}
         traces.append(
             go.Scatter3d(
                 mode="markers",
                 x=context_points[:, 0],
                 y=context_points[:, 1],
                 z=context_points[:, 2],
-                marker={"size": 3, "color": colors[color_counter], "line": {"width": 0}},
+                # marker={"size": 3, "color": colors[color_counter], "line": {"width": 0}},
+                marker=marker_dict,
                 name=context_name,
             )
         )
@@ -62,7 +73,7 @@ def visualize_sampled_predictions(ground_truth, context, predictions):
                 x=prediction_points[:, 0],
                 y=prediction_points[:, 1],
                 z=prediction_points[:, 2],
-                marker={"size": 3, "color": colors[i + color_counter], "line": {"width": 0}},
+                marker={"size": 3, "color": colors[i + color_counter], "line": {"width": 0}, "cmin": 0, "cmax": 1},
                 name=f"Prediction {i + 1}",
             )
         )
