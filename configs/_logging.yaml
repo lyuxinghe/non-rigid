@@ -20,7 +20,7 @@ lightning:
   checkpoint_dir: ${output_dir}/checkpoints
 
 wandb:
-  entity: shobhitagg
+  entity: r-pad
   project: tax3d
 
   # Group is for grouping runs together (i.e. a train run and an eval run).

@@ -34,7 +34,8 @@ checkpoint:
   run_id: ???
   alias: v0 # (v0, monitor); v0 is the last checkpoint, monitor is best monitor-specific checkpoint
   monitor_name: val_rmse_0
-  reference: ${wandb.entity}/${wandb.project}/model-${checkpoint.run_id}:${checkpoint.alias}
+  #reference: ${wandb.entity}/${wandb.project}/model-${checkpoint.run_id}:${checkpoint.alias}
+  reference: /home/lyuxing/Desktop/tax3d_realworld/last.ckpt
 
 resources:
   num_workers: 4

@@ -86,6 +86,9 @@ class InsertionDataset(data.Dataset):
         action_seg = torch.zeros_like(action_pc[:, 0]).int()
         anchor_seg = torch.ones_like(anchor_pc[:, 0]).int()
         
+        w_init_pc_action = action_pc.clone()
+        w_init_pc_anchor = anchor_pc.clone()
+        
         # Apply augmentations
         if self.type == "train" or self.dataset_cfg.val_use_defaults:
             if not self.eval_mode:
@@ -95,13 +98,13 @@ class InsertionDataset(data.Dataset):
                     min_num_points=self.dataset_cfg.sample_size_action,
                     ball_occlusion_param={
                         "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
-                        "ball_radius": self.dataset_cfg.action_ball_radius
-                        * self.dataset_cfg.pcd_scale_factor,
+                        #"ball_radius": self.dataset_cfg.action_ball_radius * self.dataset_cfg.pcd_scale_factor,
+                        "ball_radius": self.dataset_cfg.action_ball_radius,
                     },
                     plane_occlusion_param={
                         "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
-                        "plane_standoff": self.dataset_cfg.action_plane_standoff
-                        * self.dataset_cfg.pcd_scale_factor,
+                        #"plane_standoff": self.dataset_cfg.action_plane_standoff * self.dataset_cfg.pcd_scale_factor,
+                        "plane_standoff": self.dataset_cfg.action_plane_standoff,
                     },
                 )
                 action_seg = action_seg[action_pc_indices.squeeze(0)]
@@ -111,13 +114,13 @@ class InsertionDataset(data.Dataset):
                     min_num_points=self.dataset_cfg.sample_size_anchor,
                     ball_occlusion_param={
                         "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
-                        "ball_radius": self.dataset_cfg.anchor_ball_radius
-                        * self.dataset_cfg.pcd_scale_factor,
+                        #"ball_radius": self.dataset_cfg.anchor_ball_radius * self.dataset_cfg.pcd_scale_factor,
+                        "ball_radius": self.dataset_cfg.action_ball_radius,
                     },
                     plane_occlusion_param={
                         "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
-                        "plane_standoff": self.dataset_cfg.anchor_plane_standoff
-                        * self.dataset_cfg.pcd_scale_factor,
+                        #"plane_standoff": self.dataset_cfg.anchor_plane_standoff * self.dataset_cfg.pcd_scale_factor,
+                        "plane_standoff": self.dataset_cfg.anchor_plane_standoff,
                     },
                 )
 
@@ -161,6 +164,10 @@ class InsertionDataset(data.Dataset):
         goal_action_pc = T1.transform_points(action_pc)
         anchor_pc = T1.transform_points(anchor_pc)
 
+        w_aug_pc_action = initial_action_pc.clone()
+        w_aug_pc_anchor = anchor_pc.clone()
+        w_aug_goal_action_pc = goal_action_pc.clone()
+
         # Center point clouds in scene frame.
         scene_center = torch.cat([initial_action_pc, anchor_pc], dim=0).mean(axis=0)
         goal_action_pc = goal_action_pc - scene_center
@@ -170,16 +177,26 @@ class InsertionDataset(data.Dataset):
         # Update item.
         T_goal2world = Translate(scene_center.unsqueeze(0))
         T_action2world = Translate(scene_center.unsqueeze(0))
+        T_action2goal = T0.inverse().compose(T1)
 
         goal_flow = goal_action_pc - initial_action_pc
 
         item = {}
+        #item["w_init_pc_action"] = w_init_pc_action
+        #item["w_init_pc_anchor"] = w_init_pc_anchor
+        #item["w_aug_pc_action"] = w_aug_pc_action
+        #item["w_aug_pc_anchor"] = w_aug_pc_anchor
+        #item["w_aug_goal_action_pc"] = w_aug_goal_action_pc
+        #item["T0"] = T0.get_matrix().squeeze(0)
+        #item["T1"] = T1.get_matrix().squeeze(0)
+
         item["pc_action"] = initial_action_pc # Action points in the action frame
         item["pc_anchor"] = anchor_pc # Anchor points in the scene frame
         item["seg"] = action_seg
         item["seg_anchor"] = anchor_seg
         item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0) # Transform from goal action frame to world frame
         item["T_action2world"] = T_action2world.get_matrix().squeeze(0) # Transform from action frame to world frame
+        item["T_action2goal"] = T_action2goal.get_matrix().squeeze(0) # Transform from action frame to world frame
 
         # Training-specific labels.
         # TODO: eventually, rename this key to "point"

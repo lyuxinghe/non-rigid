@@ -15,8 +15,11 @@
 #------ Run On AutoBot with Singularity ------#
 # singularity exec --nv -B /home/lyuxingh/code/tax3d_upgrade:/opt/lyuxingh/code/tax3d_upgrade -B /scratch/lyuxingh/data:/opt/lyuxingh/data -B /scratch/lyuxingh/logs:/opt/lyuxingh/logs /scratch/lyuxingh/singularity/tax3d_lyuxing.sif bash -c "cd /opt/lyuxingh/code/tax3d_upgrade/scripts && CUDA_VISIBLE_DEVICES=？ ./train.sh <YOUR TRAIN COMMAND HERE> dataset.data_dir=/opt/lyuxingh/data/rpdiff/data/task_demos/ log_dir=/opt/lyuxingh/logs"
 
-#------ Resuming from a crashed run ------#
-#./train.sh 0 cross_point_relative rpdiff False online checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-03-02/17-41-55/checkpoints/last.ckpt'
+#------ Resuming from a crashed run (u want to keep the run id, and log to the original entry)------#
+# ./train.sh 0 tax3dv2 online insertion model.frame_type=fixed model.pred_frame=anchor_center model.point_encoder=pn2 model.diff_rotation_noise_scale=45 dataset.connector_type=0428-wp-2 resources.num_workers=16 checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt=/home/lyuxing/Desktop/tax3d_realworld/checkpoints/annia0md.ckpt
+
+#------ Finetune (we dont keep the run id, and log to a new entry)------#
+#./train.sh 0 tax3dv2 online insertion model.frame_type=fixed model.pred_frame=anchor_center model.point_encoder=pn2 model.diff_rotation_noise_scale=45 dataset.connector_type=0428-wp-2 resources.num_workers=16 checkpoint.local_ckpt=/home/lyuxing/Desktop/tax3d_realworld/checkpoints/annia0md.ckpt dataset.action_rotation_variance=1.04 dataset.anchor_rotation_variance=0.262 training.epochs=22000
 
 GPU_INDEX=$1
 MODEL_TYPE=$2
@@ -51,8 +54,8 @@ fi
 WANDB_MODE=$WANDB_MODE python train.py \
   $MODEL_PARAMS \
   $DATASET_PARAMS \
-  wandb.group=waterproof \
-  wandb.project=tax3d \
+  wandb.group=insertion \
+  wandb.project=corl2025_tax3dv2 \
   resources.gpus=[${GPU_INDEX}] \
   $COMMAND
 

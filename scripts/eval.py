@@ -21,7 +21,6 @@ import numpy as np
 
 import rpad.visualize_3d.plots as vpl
 
-
 @torch.no_grad()
 @hydra.main(config_path="../configs", config_name="eval", version_base="1.3")
 def main(cfg):

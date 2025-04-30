@@ -3,7 +3,7 @@ name: insertion
 #####################################################
 # Dataset Parameters
 #####################################################
-data_dir: /home/mfi/repos/rtc_vision_toolbox/data/tax3d-yk-creator/demonstrations/
+data_dir: /data/lyuxing/tax3d/insertion/demonstrations_new/
 material: rigid
 
 ###################################################

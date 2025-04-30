@@ -115,10 +115,10 @@ if __name__ == "__main__":
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_on_rack_multi_large_proc_gen_demos/task_name_mug_on_rack_multi/preprocessed/', num_demos=None)
     #dedo_action, dedo_anchor = load_proccloth('/home/lyuxing/Desktop/tax3d_upgrade/datasets/ProcCloth/cloth=single-fixed anchor=single-random hole=single/train_tax3d')
 
-    insertion_anchor, insertion_action = load_insertion('/home/mfi/repos/rtc_vision_toolbox/data/tax3d-yk-creator/demonstrations/04-21-wp-2/learn_data/train')
+    insertion_anchor, insertion_action = load_insertion('/data/lyuxing/tax3d/insertion/demonstrations_new/04-21-wp-2/learn_data/train')
     #insertion_anchor, insertion_action = load_insertion('/home/mfi/repos/rtc_vision_toolbox/data/tax3d-yk-creator/demonstrations/04-21-dsub-1/learn_data/train')
 
-    test_scale = 1
+    test_scale = 50
     insertion_action = [pc * test_scale for pc in insertion_action]
     insertion_anchor = [pc * test_scale for pc in insertion_anchor]
 

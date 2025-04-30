@@ -98,7 +98,7 @@ def main(cfg):
         group = cfg.wandb.group
 
     if cfg.checkpoint.run_id:
-        resume = 'must'
+        resume = 'allow'
         id = cfg.checkpoint.run_id
     else:
         resume = 'allow'
@@ -252,7 +252,7 @@ def main(cfg):
         print("Starting training from scratch.")
         ckpt_file = None
     '''
-    if cfg.checkpoint.run_id:
+    if cfg.checkpoint.run_id or cfg.checkpoint.local_ckpt:
         print("Attempting to resume training from WandB checkpoint:", cfg.checkpoint.reference)
 
         api = wandb.Api()
