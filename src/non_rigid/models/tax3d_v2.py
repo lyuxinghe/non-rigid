@@ -7,6 +7,7 @@ import wandb
 from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
 from torch import nn, optim
+from scipy.spatial.transform import Rotation as R
 
 from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
 from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
@@ -411,6 +412,21 @@ class TAX3Dv2BaseModule(L.LightningModule):
             translation_err_wta = translation_errs[torch.arange(bs), trans_winner]
             rotation_err_wta = rotation_errs[torch.arange(bs), rot_winner]
             
+            # another rotation error
+            gt_T = batch["T_action2goal"]  # (B, 4, 4)
+            pred_T = pred_dict["pred_T"]   # (B * num_samples, 4, 4)
+
+            mean_gt_T = gt_T.mean(dim=0)     # (4, 4)
+            mean_pred_T = pred_T.mean(dim=0) # (4, 4)
+
+            rel_T = mean_pred_T @ torch.linalg.inv(mean_gt_T)  # (4, 4)
+            rel_R = rel_T[:3, :3].cpu().numpy() 
+
+            euler = R.from_matrix(rel_R).as_euler('xyz', degrees=True)  # (3,)
+            rot_error_scalar = np.max(np.abs(euler)) 
+
+            rot_error_2 = torch.full((rotation_errs.shape[0],), rot_error_scalar, device=gt_T.device)  # (B,)
+
             return {
                 "pred_point_world": pred_point_world,
                 "pred_point_world_wta": pred_point_world_wta,
@@ -420,8 +436,9 @@ class TAX3Dv2BaseModule(L.LightningModule):
                 "trans_wta": translation_err_wta,
                 "rot": rotation_errs,
                 "rot_wta": rotation_err_wta,
+                "rot_2": rot_error_2,
             }
-        
+
         else:
             return {
                 "pred_point_world": pred_point_world,
@@ -537,6 +554,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
                             "train/trans_wta": pred_wta_dict["trans_wta"].mean(),
                             "train/rot": pred_wta_dict["rot"].mean(),
                             "train/rot_wta": pred_wta_dict["rot_wta"].mean(),
+                            "train/rot_2": pred_wta_dict["rot_2"].mean(),
                         },
                         add_dataloader_idx=False,
                         prog_bar=True,
@@ -584,6 +602,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
                     f"val_trans_wta_{dataloader_idx}": pred_wta_dict["trans_wta"].mean(),
                     f"val_rot_{dataloader_idx}": pred_wta_dict["rot"].mean(),
                     f"val_rot_wta_{dataloader_idx}": pred_wta_dict["rot_wta"].mean(),
+                    f"val_rot_2_{dataloader_idx}": pred_wta_dict["rot_2"].mean(),
                 },
                 add_dataloader_idx=False,
                 prog_bar=True,
@@ -609,6 +628,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
                 "trans_wta": pred_wta_dict["trans_wta"].mean(),
                 "rot": pred_wta_dict["rot"].mean(),
                 "rot_wta": pred_wta_dict["rot_wta"].mean(),
+                "rot_2": pred_wta_dict["rot_2"].mean(),
             }
         else:
             # winner-take-all predictions
