@@ -64,7 +64,7 @@ class InsertionDataset(data.Dataset):
             return self.dataset_cfg.val_dataset_size if self.dataset_cfg.val_dataset_size is not None else len(self.demo_files)
         else:
             raise ValueError(f"Unknown dataset type: {self.type}")
-
+    '''
     def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
         demo = np.load(self.demo_files[index % self.num_demos], allow_pickle=True)
 
@@ -149,14 +149,14 @@ class InsertionDataset(data.Dataset):
         T0 = random_se3(
             N=1,
             rot_var=self.dataset_cfg.action_rotation_variance,
-            trans_var=self.dataset_cfg.action_translation_variance * self.dataset_cfg.pcd_scale_factor,     # since pcd is scaled, we need to scale the variance as well
+            trans_var=self.dataset_cfg.action_translation_variance,
             rot_sample_method=self.dataset_cfg.action_transform_type,
         )
 
         T1 = random_se3(
             N=1,
             rot_var=self.dataset_cfg.anchor_rotation_variance,
-            trans_var=self.dataset_cfg.anchor_translation_variance * self.dataset_cfg.pcd_scale_factor,     # since pcd is scaled, we need to scale the variance as well
+            trans_var=self.dataset_cfg.anchor_translation_variance,
             rot_sample_method=self.dataset_cfg.anchor_transform_type,
         )
 
@@ -187,8 +187,8 @@ class InsertionDataset(data.Dataset):
         #item["w_aug_pc_action"] = w_aug_pc_action
         #item["w_aug_pc_anchor"] = w_aug_pc_anchor
         #item["w_aug_goal_action_pc"] = w_aug_goal_action_pc
-        #item["T0"] = T0.get_matrix().squeeze(0)
-        #item["T1"] = T1.get_matrix().squeeze(0)
+        item["T0"] = T0.get_matrix().squeeze(0)
+        item["T1"] = T1.get_matrix().squeeze(0)
 
         item["pc_action"] = initial_action_pc # Action points in the action frame
         item["pc_anchor"] = anchor_pc # Anchor points in the scene frame
@@ -209,6 +209,129 @@ class InsertionDataset(data.Dataset):
             item["noisy_goal"] = goal_center + self.dataset_cfg.noisy_goal_scale * torch.normal(mean=torch.zeros(3), std=torch.ones(3))
 
         return item
+    '''
+
+    def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
+        demo = np.load(self.demo_files[index % self.num_demos], allow_pickle=True)
+
+        # Extract point clouds
+        points_action = demo['action_init_points']
+        points_anchor = demo['anchor_points']
+        action_goal_points = demo['action_goal_points']
+        goal_tf = demo['goal_tf']
+
+        action_pc = torch.as_tensor(points_action).float()
+        anchor_pc = torch.as_tensor(points_anchor).float()
+        action_goal_points = torch.as_tensor(action_goal_points).float()
+        goal_tf = torch.as_tensor(goal_tf).float()
+
+        # Apply scale factor
+        action_pc *= self.dataset_cfg.pcd_scale_factor
+        anchor_pc *= self.dataset_cfg.pcd_scale_factor
+        action_goal_points *= self.dataset_cfg.pcd_scale_factor
+
+        action_seg = torch.zeros_like(action_pc[:, 0]).int()
+        anchor_seg = torch.ones_like(anchor_pc[:, 0]).int()
+        
+        # Apply augmentations
+        if self.type == "train" or self.dataset_cfg.val_use_defaults:
+            if not self.eval_mode:
+                # Apply augmentations to the point clouds in their final positions
+                action_pc, action_pc_indices = maybe_apply_augmentations(
+                    action_pc,
+                    min_num_points=self.dataset_cfg.sample_size_action,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
+                        #"ball_radius": self.dataset_cfg.action_ball_radius * self.dataset_cfg.pcd_scale_factor,
+                        "ball_radius": self.dataset_cfg.action_ball_radius,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
+                        #"plane_standoff": self.dataset_cfg.action_plane_standoff * self.dataset_cfg.pcd_scale_factor,
+                        "plane_standoff": self.dataset_cfg.action_plane_standoff,
+                    },
+                )
+                action_seg = action_seg[action_pc_indices.squeeze(0)]
+
+                anchor_pc, anchor_pc_indices = maybe_apply_augmentations(
+                    anchor_pc,
+                    min_num_points=self.dataset_cfg.sample_size_anchor,
+                    ball_occlusion_param={
+                        "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
+                        #"ball_radius": self.dataset_cfg.anchor_ball_radius * self.dataset_cfg.pcd_scale_factor,
+                        "ball_radius": self.dataset_cfg.action_ball_radius,
+                    },
+                    plane_occlusion_param={
+                        "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
+                        #"plane_standoff": self.dataset_cfg.anchor_plane_standoff * self.dataset_cfg.pcd_scale_factor,
+                        "plane_standoff": self.dataset_cfg.anchor_plane_standoff,
+                    },
+                )
+
+                anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
+
+        # Set downsample types
+        if self.type == "val" and self.dataset_cfg.val_use_defaults:
+            downsample_type = "fps"
+        else:
+            downsample_type = self.dataset_cfg.downsample_type
+
+        # downsample action
+        if self.sample_size_action > 0 and action_pc.shape[0] > self.sample_size_action:
+            action_pc, action_pc_indices = downsample_pcd(action_pc.unsqueeze(0), self.sample_size_action, type=downsample_type)
+            action_pc = action_pc.squeeze(0)
+            action_seg = action_seg[action_pc_indices.squeeze(0)]
+
+        # downsample anchor
+        if self.sample_size_anchor > 0 and anchor_pc.shape[0] > self.sample_size_anchor:
+            anchor_pc, anchor_pc_indices = downsample_pcd(anchor_pc.unsqueeze(0), self.sample_size_anchor, type=downsample_type)
+            anchor_pc = anchor_pc.squeeze(0)
+            anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
+
+
+       # Apply scene-level augmentation.
+        T = random_se3(
+            N=1,
+            rot_var=self.dataset_cfg.rotation_variance,
+            trans_var=self.dataset_cfg.translation_variance,
+            rot_sample_method=self.dataset_cfg.scene_transform_type,
+        )
+        action_pc = T.transform_points(action_pc)
+        anchor_pc = T.transform_points(anchor_pc)
+        goal_action_pc = T.transform_points(goal_action_pc)
+
+        # Center point clouds in scene frame.
+        scene_center = torch.cat([action_pc, anchor_pc], dim=0).mean(axis=0)
+        goal_action_pc = goal_action_pc - scene_center
+        anchor_pc = anchor_pc - scene_center
+        action_pc = action_pc - scene_center
+
+        # Update item.
+        T_goal2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
+        T_action2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
+
+        goal_flow = goal_action_pc - action_pc
+
+        item = {}
+        item["pc_action"] = action_pc # Action points in the action frame
+        item["pc_anchor"] = anchor_pc # Anchor points in the scene frame
+        item["seg"] = action_seg
+        item["seg_anchor"] = anchor_seg
+        item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0) # Transform from goal action frame to world frame
+        item["T_action2world"] = T_action2world.get_matrix().squeeze(0) # Transform from action frame to world frame
+        
+        # Training-specific labels.
+        # TODO: eventually, rename this key to "point"
+        item["pc"] = goal_action_pc # Ground-truth goal action points in the scene frame
+        item["flow"] = goal_flow # Ground-truth flow (cross-frame) to action points
+        
+        if self.dataset_cfg.pred_frame == "noisy_goal":
+            # "Simulate" the GMM prediction as noisy goal.
+            goal_center = goal_action_pc.mean(axis=0)
+            item["noisy_goal"] = goal_center + self.dataset_cfg.noisy_goal_scale * torch.normal(mean=torch.zeros(3), std=torch.ones(3))
+
+        return item
+
 
     def set_eval_mode(self, eval_mode: bool):
         """ Toggle eval mode to enable/disable augmentation """
@@ -256,6 +379,12 @@ class RealWorldDataModule(L.LightningModule):
             self.dataset_cfg.anchor_translation_variance = 0
             self.dataset_cfg.anchor_rotation_variance = 0
         '''
+        if self.stage != "fit":
+            print("-------Turning off rotation augmentation for validation/inference.-------")
+            self.dataset_cfg.scene_transform_type = "identity"
+            self.dataset_cfg.rotation_variance = 0.0
+            self.dataset_cfg.translation_variance = 0.0
+            
         self.train_dataset = (
             DATASET_FN[self.dataset_cfg.name](self.root, self.dataset_cfg, "train")
         )
