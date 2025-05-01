@@ -222,13 +222,13 @@ class InsertionDataset(data.Dataset):
 
         action_pc = torch.as_tensor(points_action).float()
         anchor_pc = torch.as_tensor(points_anchor).float()
-        action_goal_points = torch.as_tensor(action_goal_points).float()
+        goal_action_pc = torch.as_tensor(action_goal_points).float()
         goal_tf = torch.as_tensor(goal_tf).float()
 
         # Apply scale factor
         action_pc *= self.dataset_cfg.pcd_scale_factor
         anchor_pc *= self.dataset_cfg.pcd_scale_factor
-        action_goal_points *= self.dataset_cfg.pcd_scale_factor
+        goal_action_pc *= self.dataset_cfg.pcd_scale_factor
 
         action_seg = torch.zeros_like(action_pc[:, 0]).int()
         anchor_seg = torch.ones_like(anchor_pc[:, 0]).int()
@@ -252,6 +252,7 @@ class InsertionDataset(data.Dataset):
                     },
                 )
                 action_seg = action_seg[action_pc_indices.squeeze(0)]
+                goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
 
                 anchor_pc, anchor_pc_indices = maybe_apply_augmentations(
                     anchor_pc,
@@ -281,7 +282,8 @@ class InsertionDataset(data.Dataset):
             action_pc, action_pc_indices = downsample_pcd(action_pc.unsqueeze(0), self.sample_size_action, type=downsample_type)
             action_pc = action_pc.squeeze(0)
             action_seg = action_seg[action_pc_indices.squeeze(0)]
-
+            goal_action_pc = goal_action_pc[action_pc_indices.squeeze(0)]
+            
         # downsample anchor
         if self.sample_size_anchor > 0 and anchor_pc.shape[0] > self.sample_size_anchor:
             anchor_pc, anchor_pc_indices = downsample_pcd(anchor_pc.unsqueeze(0), self.sample_size_anchor, type=downsample_type)
@@ -384,7 +386,7 @@ class RealWorldDataModule(L.LightningModule):
             self.dataset_cfg.scene_transform_type = "identity"
             self.dataset_cfg.rotation_variance = 0.0
             self.dataset_cfg.translation_variance = 0.0
-            
+
         self.train_dataset = (
             DATASET_FN[self.dataset_cfg.name](self.root, self.dataset_cfg, "train")
         )

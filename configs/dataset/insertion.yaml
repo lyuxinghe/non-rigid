@@ -3,7 +3,7 @@ name: insertion
 #####################################################
 # Dataset Parameters
 #####################################################
-data_dir: /data/lyuxing/tax3d/insertion/demonstrations_new/
+data_dir: /data/lyuxing/tax3d/insertion/demonstrations/
 material: rigid
 
 ###################################################
