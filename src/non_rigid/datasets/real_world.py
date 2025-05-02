@@ -9,6 +9,7 @@ import omegaconf
 import torch
 import torch.utils.data as data
 from pytorch3d.transforms import Translate
+import open3d as o3d
 
 from non_rigid.utils.augmentation_utils import maybe_apply_augmentations
 from non_rigid.utils.pointcloud_utils import downsample_pcd, get_multi_anchor_scene
@@ -217,12 +218,18 @@ class InsertionDataset(data.Dataset):
         # Extract point clouds
         points_action = demo['action_init_points']
         points_anchor = demo['anchor_points']
-        action_goal_points = demo['action_goal_points']
-        goal_tf = demo['goal_tf']
+        #action_goal_points = demo['action_goal_points']        # we will not use the goal action pcd provided, since we don't have the same amount of points
+        goal_tf = demo['goal_tf']                               # we instead use the provided gt transformation
+                                                                # Note that: goal_pcd @ goal_tf = initial_action_pcd
+
+        points_action_pcd = o3d.geometry.PointCloud()
+        points_action_pcd.points = o3d.utility.Vector3dVector(points_action)
+        points_action_goal_pcd = points_action_pcd.transform(np.linalg.inv(goal_tf))
+        points_action_goal = np.asarray(points_action_goal_pcd.points)
 
         action_pc = torch.as_tensor(points_action).float()
         anchor_pc = torch.as_tensor(points_anchor).float()
-        goal_action_pc = torch.as_tensor(action_goal_points).float()
+        goal_action_pc = torch.as_tensor(points_action_goal).float()
         goal_tf = torch.as_tensor(goal_tf).float()
 
         # Apply scale factor
@@ -321,7 +328,8 @@ class InsertionDataset(data.Dataset):
         item["seg_anchor"] = anchor_seg
         item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0) # Transform from goal action frame to world frame
         item["T_action2world"] = T_action2world.get_matrix().squeeze(0) # Transform from action frame to world frame
-        
+        item["T_action2goal"] = torch.linalg.inv(goal_tf) # Transform from action frame to world frame
+
         # Training-specific labels.
         # TODO: eventually, rename this key to "point"
         item["pc"] = goal_action_pc # Ground-truth goal action points in the scene frame
@@ -333,7 +341,6 @@ class InsertionDataset(data.Dataset):
             item["noisy_goal"] = goal_center + self.dataset_cfg.noisy_goal_scale * torch.normal(mean=torch.zeros(3), std=torch.ones(3))
 
         return item
-
 
     def set_eval_mode(self, eval_mode: bool):
         """ Toggle eval mode to enable/disable augmentation """

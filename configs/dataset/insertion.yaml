@@ -62,8 +62,8 @@ rotation_variance: 0.52 # Rotation variance of the demo transformation
 ###################################################
 action_plane_occlusion: 0.0 # Probability of applying plane occlusion (0.8)
 action_plane_standoff: 0.04 # Standoff distance of the occluding plane from selected plane origin
-action_ball_occlusion: 0 # Probability of applying ball occlusion (0)
-action_ball_radius: 0.1 # Radius of the occluding ball
+action_ball_occlusion: 0.8 # Probability of applying ball occlusion (0)
+action_ball_radius: 0.5 # Radius of the occluding ball
 
 anchor_plane_occlusion: 0 # Probability of applying plane occlusion (0)
 anchor_plane_standoff: 0.04 # Standoff distance of the occluding plane from selected plane origin

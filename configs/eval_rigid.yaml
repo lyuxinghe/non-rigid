@@ -35,7 +35,14 @@ checkpoint:
   alias: v0 # (v0, monitor); v0 is the last checkpoint, monitor is best monitor-specific checkpoint
   monitor_name: val_rmse_0
   #reference: ${wandb.entity}/${wandb.project}/model-${checkpoint.run_id}:${checkpoint.alias}
-  reference: /home/lyuxing/Desktop/tax3d_realworld/checkpoints/28dspu8k.ckpt
+  reference: /home/lyuxinghe/tax3d_realworld/scripts/logs/train_insertion_tax3dv2/2025-05-01/22-26-47/checkpoints/last.ckpt
+  # s1/512: p5htxw3u
+  #reference: /home/lyuxinghe/tax3d_realworld/scripts/logs/train_insertion_tax3dv2/2025-05-01/21-59-00/checkpoints/last.ckpt
+  # s6/512: 9c7je78l
+  #reference: /home/lyuxinghe/tax3d_realworld/scripts/logs/train_insertion_tax3dv2/2025-05-02/00-14-49/checkpoints/last.ckpt
+  # s1/2048: euci9z2u
+  #reference: /home/lyuxinghe/tax3d_realworld/scripts/logs/train_insertion_tax3dv2/2025-05-02/00-12-58/checkpoints/last.ckpt
+  # s6/2048: 3igc64d8
 
 resources:
   num_workers: 4
