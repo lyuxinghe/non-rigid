@@ -102,6 +102,12 @@ class TAX3Dv2BaseModule(L.LightningModule):
         if self.model_cfg.rel_pos and self.model_cfg.scene_anchor:
             raise ValueError("Relative position embedding and scene-as-anchor are not compatible.")
 
+        # Model cannot have both object and scene scale
+        if self.model_cfg.object_scale is not None and self.model_cfg.scene_scale is not None:
+            raise ValueError("Model cannot have both object and scene scale.")
+        self.object_scale = self.model_cfg.object_scale
+        self.scene_scale = self.model_cfg.scene_scale
+
         # mode-specific processing
         if self.mode == "train":
             self.run_cfg = cfg.training
@@ -792,6 +798,19 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             batch["gmm_probs"] = gmm_probs
             batch["gmm_means"] = gmm_means
             batch["sampled_idxs"] = idxs
+
+        # Re-scale point cloud inputs, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            # Computing scale factor.
+            scale = self.object_scale if self.object_scale is not None else self.scene_scale
+            points = batch["pc_action"] if self.object_scale is not None else torch.cat([batch["pc_action"], batch["pc_anchor"]], dim=1)
+            point_dists = points - points.mean(axis=1, keepdim=True)
+            point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).mean(dim=1, keepdim=True)
+
+            # Updating point clouds.
+            batch["pc_action"] = batch["pc_action"] * scale / point_scale
+            batch["pc_anchor"] = batch["pc_anchor"] * scale / point_scale
+            batch[self.label_key] = batch[self.label_key] * scale / point_scale
 
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":

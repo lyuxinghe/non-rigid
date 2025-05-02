@@ -22,6 +22,10 @@ pred_frame: anchor_center # [anchor_center, noisy_goal] frame for goal predictio
 noisy_goal_scale: 0.0 # scale for simulated noisy goal error
 action_context_frame: action_center # [action_center] frame for action context
 
+# These are internal to the model.
+object_scale: 1.0 # scale for action normalization
+scene_scale: null # scale for scene normalization
+
 #####################################################
 # Dataset-specific Model Parameters
 #####################################################
