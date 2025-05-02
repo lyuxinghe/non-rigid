@@ -25,23 +25,6 @@ import numpy as np
 import rpad.visualize_3d.plots as vpl
 from plotly import graph_objects as go
 
-# def visualize_batched_point_clouds(point_clouds):
-#     """
-#     Helper function to visualize a list of batched point clouds. This is meant to be used
-#     when visualizing action/anchor/prediction point clouds, without having to add
-
-#     point_clouds: list of point clouds, each of shape (B, N, 3)
-#     """
-#     pcs = [pc.cpu().flatten(0, 1) for pc in point_clouds]
-#     segs = []
-#     for i, pc in enumerate(pcs):
-#         segs.append(torch.ones(pc.shape[0]).int() * i)
-
-#     return vpl.segmentation_fig(
-#         torch.cat(pcs),
-#         torch.cat(segs),
-#     )
-
 @torch.no_grad()
 @hydra.main(config_path="../configs", config_name="eval", version_base="1.3")
 def main(cfg):
