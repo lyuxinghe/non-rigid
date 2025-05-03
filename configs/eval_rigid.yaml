@@ -43,7 +43,7 @@ checkpoint:
   # s1/2048: euci9z2u
   #reference: /home/lyuxinghe/tax3d_realworld/scripts/logs/train_insertion_tax3dv2/2025-05-02/00-12-58/checkpoints/last.ckpt
   # s6/2048: 3igc64d8
-
+  
 resources:
   num_workers: 4
   gpus:

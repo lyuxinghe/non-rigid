@@ -329,6 +329,7 @@ class InsertionDataset(data.Dataset):
         item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0) # Transform from goal action frame to world frame
         item["T_action2world"] = T_action2world.get_matrix().squeeze(0) # Transform from action frame to world frame
         item["T_action2goal"] = torch.linalg.inv(goal_tf) # Transform from action frame to world frame
+        item["T"] = T.get_matrix().squeeze(0)
 
         # Training-specific labels.
         # TODO: eventually, rename this key to "point"
