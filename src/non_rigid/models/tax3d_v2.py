@@ -674,6 +674,11 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
             sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
             batch["noisy_goal"] = sampled_noisy_goals
 
+            # Also add gmm predictions to batch for visualization.
+            batch["gmm_probs"] = gmm_probs
+            batch["gmm_means"] = gmm_means
+            batch["sampled_idxs"] = idxs
+
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":
             raise NotImplementedError("Mu-frame not implemented for anchor centroid prediction!")
@@ -807,6 +812,11 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
             sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
             batch["noisy_goal"] = sampled_noisy_goals
+
+            # Also add gmm predictions to batch for visualization.
+            batch["gmm_probs"] = gmm_probs
+            batch["gmm_means"] = gmm_means
+            batch["sampled_idxs"] = idxs
 
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":

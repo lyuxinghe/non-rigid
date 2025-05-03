@@ -109,7 +109,8 @@ def main(cfg):
         # Checking for GMM model directory.
         #gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"gmm_{cfg.dataset.name}_{cfg.gmm}")
         # Also adding pcd_scale
-        gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.gmm_pcd_scale}", f"gmm_{cfg.exp_name}_{cfg.gmm}")
+        # gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.gmm_pcd_scale}", f"gmm_{cfg.exp_name}_{cfg.gmm}")
+        gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.gmm_pcd_scale}", f"{cfg.exp_name}")
         if not os.path.exists(gmm_exp_name):
             raise ValueError(f"GMM experiment directory {gmm_exp_name} does not exist - train this model first.")
         
@@ -202,7 +203,7 @@ def main(cfg):
         for i in tqdm(indices):
             # Index and batchify item.
             item = dataset[i]
-            batch = [{key: item[key].to(device) for key in eval_keys}]
+            batch = [{key: item[key] for key in eval_keys}]
             batch = {key: torch.stack([item[key] for item in batch]) for key in eval_keys}
 
             # Generate predictions.
@@ -216,15 +217,29 @@ def main(cfg):
                 batch = model.update_batch_frames(batch, update_labels=True)
                 pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
 
-            pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
+            batch = {key: value.to(device) for key, value in batch.items()}
             viz_args = model.get_viz_args(batch, 0)
 
             # Get point clouds in world coordinates.
-            pred_pc_world = pred_dict["point"]["pred_world"].cpu().numpy()
+            # pred_pc_world = pred_dict["point"]["pred_world"].cpu().numpy()
             pred_ref_frame = pred_dict["pred_frame_world"].cpu().numpy()
+            # gt_pc_world = viz_args["pc_pos_viz"].cpu().numpy()
+            # action_pc_world = viz_args["pc_action_viz"].cpu().numpy()
+            # anchor_pc_world = viz_args["pc_anchor_viz"].cpu().numpy()
+            pred_pc_world = pred_dict["point"]["pred_world"].cpu().numpy()
             gt_pc_world = viz_args["pc_pos_viz"].cpu().numpy()
             action_pc_world = viz_args["pc_action_viz"].cpu().numpy()
             anchor_pc_world = viz_args["pc_anchor_viz"].cpu().numpy()
+
+            # Create GMM viz args, if needed.
+            if gmm_model is not None:
+                gmm_viz = {
+                    "gmm_probs": gmm_batch["gmm_probs"].cpu().numpy(),
+                    "gmm_means": gmm_batch["gmm_means"].cpu().numpy(),
+                    "sampled_idxs": gmm_batch["sampled_idxs"].cpu().numpy(),
+                }
+            else:
+                gmm_viz = None
 
             # visualize sampled predictions
             context = {
@@ -238,13 +253,15 @@ def main(cfg):
                 ground_truth = gt_pc_world,
                 context = context,
                 predictions = pred_pc_world,
+                # gmm_viz = None,
+                gmm_viz = gmm_viz,
                 ref_predictions = pred_ref_frame,
             )
             fig.write_html(os.path.join(save_dir, f"predictions_{i}.html"))
             #fig.show()
 
             # visualize diffusion timelapse
-            VIZ_IDX = 4 # 0
+            VIZ_IDX = 0 # 0
             results = [res[VIZ_IDX].cpu().numpy() for res in pred_dict["results_world"]]
             # For TAX3Dv2, also grab logit/residual predictions.
             # if cfg.model.tax3dv2:
@@ -269,7 +286,8 @@ def main(cfg):
     # Run the model on the train/val/test sets.
     ######################################################################
     train_indices = []
-    val_indices = [49]
+    # val_indices = [10, 12, 14, 16, 18, 20, 24, 26, 28]
+    val_indices = [10]
     #val_indices = np.arange(11, 50)
     val_ood_indices = []
     model.to(device)

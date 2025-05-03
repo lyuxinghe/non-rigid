@@ -27,6 +27,7 @@ def visualize_sampled_predictions(
     ground_truth,
     context,
     predictions,
+    gmm_viz,
     ref_predictions,
 ):
     """
@@ -45,17 +46,23 @@ def visualize_sampled_predictions(
 
     # Custom colors
     gt_color       = "#B2F78B"
-    anchor_color   = "#5F7FBF"
-    action_color   = "#73C3DE"
-    pred_base1     = "#FFDA5F"
-    pred_base2     = "#FD7217"
+    # anchor_color   = "#5F7FBF"
+    anchor_color = "#ff8a00"
+    # action_color   = "#73C3DE"
+    action_color =  "#0c80e4"
+    # pred_base1     = "#FFDA5F"
+    pred_base1 = "#dc12ec"
+    # pred_base2     = "#FD7217"
+    pred_base2 = "#e477ec"
     red_color      = "#FF0000"
     grey_light     = "#1A1A1A"
     grey_dark      = "#0A0F47"
 
+    scene_data = []
     # 1) Ground truth
     if ground_truth is not None:
         pts = ground_truth.reshape(-1, 3)
+        scene_data.append(pts)
         traces.append(go.Scatter3d(
             x=pts[:,0], y=pts[:,1], z=pts[:,2],
             mode="markers",
@@ -67,15 +74,41 @@ def visualize_sampled_predictions(
     action_pts = None
     for name, pts in context.items():
         pts = pts.reshape(-1, 3)
-        color = anchor_color if "anchor" in name.lower() else action_color
+        scene_data.append(pts)
+        # If context is "Anchor", color it differently.
+        if "anchor" in name.lower() and gmm_viz is not None:
+            # Color anchor points based on predicted logits.
+            anchor_colors = gmm_viz["gmm_probs"][0].squeeze()
+            marker_dict = {
+                "size": 6, "color": anchor_colors, "colorscale": "Inferno", 
+                "line": {"width": 0}, "cmin": anchor_colors.min(), "cmax": anchor_colors.max(),
+            }
+        else:
+            marker_dict = {
+                "size": 6, "color": anchor_color if "anchor" in name.lower() else action_color, 
+                "line": {"width": 0}, "symbol": "circle",
+            }
+
+
+        # color = anchor_color if "anchor" in name.lower() else action_color
         traces.append(go.Scatter3d(
             x=pts[:,0], y=pts[:,1], z=pts[:,2],
             mode="markers",
-            marker=dict(size=6, color=color, symbol="circle"),
+            # marker=dict(size=6, color=color, symbol="circle"),
+            marker=marker_dict,
             name=name.capitalize()
         ))
         if "action" in name.lower():
             action_pts = pts
+    
+    # Replot the anchor
+    anchor_pts = context["Anchor"]
+    traces.append(go.Scatter3d(
+        x=anchor_pts[:,0], y=anchor_pts[:,1], z=anchor_pts[:,2],
+        mode="markers",
+        marker={"size": 6, "color": anchor_color, "line": {"width": 0}, "symbol": "circle",},
+        name="Anchor2"
+    ))
 
 
     # 3) Simulated Gaussian noise around initial action
@@ -108,8 +141,15 @@ def visualize_sampled_predictions(
     # 5) Predictions color‐interpolation
     P = predictions.shape[0]
     pred_colors = interpolate_colors(pred_base1, pred_base2, P)
+    
+    # MEGA HACK BECAUSE OF CORL
+    pred_colors[0] = "#f12121"
+    pred_colors[18] = "#2ef121"
+    pred_colors[19] = "#2145f1"
+
     for i in range(P):
         pts = predictions[i]
+        scene_data.append(pts)
         
         # Draw the prediction point cloud
         traces.append(go.Scatter3d(
@@ -127,6 +167,7 @@ def visualize_sampled_predictions(
             marker=dict(size=5, color=pred_colors[i], symbol="x"),
             name=f"Prediction Centroid {i + 1}"
         ))
+    
 
     # 6) Reference prediction (red X’s)
     ref_pts = np.atleast_2d(ref_predictions.reshape(-1, 3))
@@ -169,12 +210,17 @@ def visualize_sampled_predictions(
     # assemble
     fig.add_traces(traces)
     fig.update_layout(
-        scene=dict(
-            xaxis_visible=False, yaxis_visible=False, zaxis_visible=False,
-            aspectmode='data'
-        ),
+        # scene=dict(
+        #     #xaxis_visible=False, yaxis_visible=False, zaxis_visible=False,
+        #     aspectmode='data'
+        # ),
+        scene=rvpl._3d_scene(np.concatenate(scene_data)),
         showlegend=True
     )
+    fig.update_scenes(
+        xaxis_visible=False, yaxis_visible=False, zaxis_visible=False
+    )
+    
     return fig
 
 def visualize_diffusion_timelapse(context, results, ref_frame_results=None, extras=None):
@@ -188,6 +234,21 @@ def visualize_diffusion_timelapse(context, results, ref_frame_results=None, extr
     # TODO: this could as take pc_action as input to get color scale for diffusion.
     # Colormap.
     colors = np.array(pc.qualitative.Alphabet)
+
+    # Custom colors
+    gt_color       = "#B2F78B"
+    # anchor_color   = "#5F7FBF"
+    anchor_color = "#ff8a00"
+    # action_color   = "#73C3DE"
+    action_color =  "#0c80e4"
+    # pred_base1     = "#FFDA5F"
+    pred_base1 = "#dc12ec"
+    # pred_base2     = "#FD7217"
+    pred_base2 = "#e477ec"
+    red_color      = "#FF0000"
+    grey_light     = "#1A1A1A"
+    grey_dark      = "#0A0F47"
+
 
     # Creating all frame traces. traces[i] is a list of traces for frame i.
     traces = []
@@ -222,7 +283,8 @@ def visualize_diffusion_timelapse(context, results, ref_frame_results=None, extr
                     )
                 )
             else:
-                context_marker_dict = {"size": 4, "color": colors[i], "line": {"width": 0}}
+                color = anchor_color if "anchor" in context_name.lower() else action_color
+                context_marker_dict = {"size": 4, "color": color, "line": {"width": 0}}
 
                 # adding empty residual trace
                 frame_traces.append(
@@ -237,7 +299,7 @@ def visualize_diffusion_timelapse(context, results, ref_frame_results=None, extr
             
             # Plot query in query frame.
             if context_name == "Action":
-                action_q = context_points - np.mean(context_points, axis=0, keepdims=True)
+                action_q = context_points
 
                 frame_traces.append(
                     go.Scatter3d(
@@ -245,10 +307,32 @@ def visualize_diffusion_timelapse(context, results, ref_frame_results=None, extr
                         x=action_q[:, 0],
                         y=action_q[:, 1],
                         z=action_q[:, 2],
-                        marker={"size": 4, "color": "blue", "line": {"width": 0}},
+                        marker={"size": 4, "color": action_color, "line": {"width": 0}},
                         name="Query (Query Frame)",
                     )
                 )
+
+                pred = result_step - np.mean(result_step, axis=0, keepdims=True) + np.mean(context_points, axis=0, keepdims=True)
+                frame_traces.append(go.Scatter3d(
+                    x=pred[:, 0], y=pred[:, 1], z=pred[:, 2],
+                    mode="markers",
+                    marker=dict(size=4, color=pred_base1, symbol="circle"),
+                    name="Action Noise"
+                ))
+                x_lines, y_lines, z_lines = [], [], []
+                for a, npt, in zip(action_q, pred):
+                    x_lines += [a[0], npt[0], None]
+                    y_lines += [a[1], npt[1], None]
+                    z_lines += [a[2], npt[2], None]
+                
+                frame_traces.append(go.Scatter3d(
+                    x=x_lines, y=y_lines, z=z_lines,
+                    mode="lines",
+                    line=(dict(color=pred_base1, width=2)),
+                    name="Shape Vector"
+                ))
+
+
 
             frame_traces.append(
                 go.Scatter3d(
@@ -269,7 +353,7 @@ def visualize_diffusion_timelapse(context, results, ref_frame_results=None, extr
                 x=result_step[:, 0],
                 y=result_step[:, 1],
                 z=result_step[:, 2],
-                marker={"size": 4, "color": "red", "line": {"width": 0}},
+                marker={"size": 4, "color": pred_base1, "line": {"width": 0}},
                 name="Diffusion",
                 # showlegend=False,
             )
@@ -663,12 +747,12 @@ def camera_project(point,
 
     return np.stack([x, y], axis=1)
 
-def plot_diffusion(img, results, viewmat, color_key):
+def plot_diffusion(img, results, projmat, viewmat, color_key):
     # https://stackoverflow.com/questions/34768717/matplotlib-unable-to-save-image-in-same-resolution-as-original-image
     diffusion_frames = []
 
     for res in results:
-        res_cam = camera_project(res, viewMatrix=viewmat)
+        res_cam = camera_project(res, projectionmatrix=projmat, viewMatrix=viewmat)
 
         dpi = rcParams['figure.dpi']
         img = np.array(img)
