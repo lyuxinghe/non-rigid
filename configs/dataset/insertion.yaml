@@ -17,7 +17,7 @@ data_type: learn_data
 ###################################################
 num_demos: # Number of demonstrations to load
 train_dataset_size: 100 # None: Use the length of loaded dataset
-val_dataset_size: 8 # None: Use the length of loaded dataset
+val_dataset_size: 32 # None: Use the length of loaded dataset
 val_use_defaults: False # Use default values for some parameters on the validation set
 preprocess: False
 
