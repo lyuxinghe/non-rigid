@@ -34,6 +34,12 @@ def create_model(cfg):
     # setting dataset-specific model params
     cfg.model.pcd_scale = cfg.dataset.pcd_scale
 
+    # if normalizing point clouds, set pcd_scale to 1
+    if cfg.model.object_scale is not None:
+        cfg.model.pcd_scale = cfg.model.object_scale
+    elif cfg.model.scene_scale is not None:
+        cfg.model.pcd_scale = cfg.model.scene_scale
+
     if cfg.model.name == "df_cross":
         network_fn = DiffusionTransformerNetwork
         module_fn = CrossDisplacementModule

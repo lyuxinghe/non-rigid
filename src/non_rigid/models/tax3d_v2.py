@@ -471,7 +471,6 @@ class TAX3Dv2BaseModule(L.LightningModule):
 
         # additional logging
         if do_additional_logging:
-            # TODO: VERIFY WHETHER THIS SHOULD BE TURNED INTO EVAL & NO GRAD!
             self.eval()
             with torch.no_grad():
                 # winner-take-all predictions
@@ -799,19 +798,6 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             batch["gmm_means"] = gmm_means
             batch["sampled_idxs"] = idxs
 
-        # Re-scale point cloud inputs, if necessary.
-        if self.object_scale is not None or self.scene_scale is not None:
-            # Computing scale factor.
-            scale = self.object_scale if self.object_scale is not None else self.scene_scale
-            points = batch["pc_action"] if self.object_scale is not None else torch.cat([batch["pc_action"], batch["pc_anchor"]], dim=1)
-            point_dists = points - points.mean(axis=1, keepdim=True)
-            point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).mean(dim=1, keepdim=True)
-
-            # Updating point clouds.
-            batch["pc_action"] = batch["pc_action"] * scale / point_scale
-            batch["pc_anchor"] = batch["pc_anchor"] * scale / point_scale
-            batch[self.label_key] = batch[self.label_key] * scale / point_scale
-
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":
             pred_frame = batch["pc_anchor"].mean(axis=1, keepdim=True)
@@ -826,12 +812,27 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
         
+        # Re-scale point cloud inputs, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            # Computing scale factor.
+            scale = self.object_scale if self.object_scale is not None else self.scene_scale
+            points = batch["pc_action"] if self.object_scale is not None else torch.cat([batch["pc_action"], batch["pc_anchor"]], dim=1)
+            point_dists = points - points.mean(axis=1, keepdim=True)
+            point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).mean(dim=1, keepdim=True)
+
+            # Updating point clouds.
+            batch["pc_action"] = batch["pc_action"] * scale / point_scale
+            batch["pc_anchor"] = batch["pc_anchor"] * scale / point_scale
+            pred_frame = pred_frame * scale / point_scale
+            action_context_frame = action_context_frame * scale / point_scale
+
         # Update scene-as-anchor, if necessary.
         if self.model_cfg.scene_anchor:
             batch["pc_anchor"] = torch.cat(
                 [batch["pc_anchor"], batch["pc_action"]], dim=1
             )
 
+        # Put object and scene point clouds in the corresponding frames.
         batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 
@@ -842,6 +843,10 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
                 matrix=batch["T_goal2world"]#.to(self.device)
             )
             batch["pc_world"] = T_goal2world.transform_points(batch["pc"])
+            
+            # Scale ground truth point cloud, if necessary.
+            if self.object_scale is not None or self.scene_scale is not None:
+                batch[self.label_key] = batch[self.label_key] * scale / point_scale
 
             # Put point and flow labels in prediction frame.
             batch["pc"] = batch["pc"] - pred_frame
