@@ -773,11 +773,19 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         pred_frame = expand_pcd(batch["pred_frame"].to(self.device), num_samples)
         action_context_frame = expand_pcd(batch["action_context_frame"].to(self.device), num_samples)
 
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"] + pred_frame)
-        pc_action_world = T_action2world.transform_points(pc_action + action_context_frame)
+        # Scale point clouds, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            scale = expand_pcd(batch["pc_scale"].to(self.device), num_samples)
+            pred_frame = pred_frame * scale
+            action_context_frame = action_context_frame * scale
+        else:
+            scale = 1.0
+
+        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"]*scale + pred_frame)
+        pc_action_world = T_action2world.transform_points(pc_action*scale + action_context_frame)
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
-            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results"]
+            T_goal2world.transform_points(res*scale + pred_frame) for res in pred_dict["results"]
         ]
         return pred_flow_world, pred_point_world, results_world
 
@@ -825,6 +833,7 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             batch["pc_anchor"] = batch["pc_anchor"] * scale / point_scale
             pred_frame = pred_frame * scale / point_scale
             action_context_frame = action_context_frame * scale / point_scale
+            batch["pc_scale"] = point_scale / scale
 
         # Update scene-as-anchor, if necessary.
         if self.model_cfg.scene_anchor:
@@ -849,6 +858,7 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
                 batch[self.label_key] = batch[self.label_key] * scale / point_scale
 
             # Put point and flow labels in prediction frame.
+            # TODO: the flow computation is technically bugged here, should also be scaled
             batch["pc"] = batch["pc"] - pred_frame
             batch["flow"] = batch["flow"] - pred_frame + action_context_frame
         
@@ -880,6 +890,14 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         T_goal2world = Transform3d(
             matrix=batch["T_goal2world"][viz_idx].to(self.device)
         )
+
+        # Scale point clouds, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            scale = batch["pc_scale"][viz_idx]
+            pc_action_viz = pc_action_viz * scale
+            pc_anchor_viz = pc_anchor_viz * scale
+            pred_frame = pred_frame * scale
+            action_context_frame = action_context_frame * scale
 
         pc_action_viz = T_action2world.transform_points(pc_action_viz + action_context_frame)
         pc_anchor_viz = T_goal2world.transform_points(pc_anchor_viz + pred_frame)
