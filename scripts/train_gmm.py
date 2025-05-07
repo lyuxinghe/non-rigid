@@ -45,7 +45,7 @@ def main(cfg):
     train_dataset = datamodule.train_dataset
     val_dataset = datamodule.val_dataset
     train_loader = datamodule.train_dataloader()
-    val_loader, _ = datamodule.val_dataloader()
+    val_loader = datamodule.val_dataloader()
 
     ######################################################################
     # Create the network.
@@ -99,7 +99,7 @@ def main(cfg):
                 pred = model(batch)
 
                 # Compute and backprop loss.
-                loss = loss_fn(batch, pred, var=cfg.var, uniform_loss=cfg.uniform_loss)
+                loss = loss_fn(batch, pred, var=cfg.var, uniform_loss=cfg.uniform_loss, regularize_residual=cfg.regularize_residual)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
@@ -118,7 +118,7 @@ def main(cfg):
                         pred = model(batch)
 
                         # Compute loss.
-                        loss = loss_fn(batch, pred, var=cfg.var, uniform_loss=cfg.uniform_loss)
+                        loss = loss_fn(batch, pred, var=cfg.var, uniform_loss=cfg.uniform_loss, regularize_residual=cfg.regularize_residual)
                         val_loss.append(loss.item())
                 total_val_losses.append(np.mean(val_loss))
 

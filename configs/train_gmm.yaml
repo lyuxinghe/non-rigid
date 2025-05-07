@@ -22,6 +22,7 @@ lr: 1e-4
 weight_decay: 1e-5
 var: 0.1
 uniform_loss: 1.0
+regularize_residual: 1.0
 
 resources:
   num_workers: 4

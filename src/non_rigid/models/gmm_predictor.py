@@ -82,6 +82,7 @@ class FrameGMMPredictor(nn.Module):
         return {
             "probs": probs,
             "means": means,
+            "residuals": residuals,
             "action_frame": action_frame.permute(0, 2, 1),
             "anchor_frame": anchor_frame.permute(0, 2, 1),
         }
@@ -99,7 +100,7 @@ class GMMLoss(torch.nn.Module):
         self.pcd_scale = cfg.dataset.pcd_scale
         self.eps = eps
     
-    def forward(self, batch, pred, var=0.00001, uniform_loss=0.0):
+    def forward(self, batch, pred, var=0.00001, uniform_loss=0.0, regularize_residual=0.0):
         # Computing ground truth action mean in anchor frame.
         anchor_frame = pred["anchor_frame"]
         targets = batch["pc"].to(anchor_frame.device) - anchor_frame
@@ -126,6 +127,12 @@ class GMMLoss(torch.nn.Module):
                 torch.log(torch.sum(point_likelihoods, dim=-2, keepdim=True)) + maxlog
             )
             loss += uniform_loss * uniform_nll
+        
+        # Regularization term.
+        if regularize_residual > 0.0:
+            residuals = pred["residuals"]
+            residual_loss = torch.norm(residuals, dim=-1).mean()
+            loss += regularize_residual * residual_loss
         return loss
 
 #################################################################################
