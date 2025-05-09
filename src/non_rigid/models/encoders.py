@@ -36,7 +36,6 @@ def pn2_encoder(in_channels, out_channels, model_cfg):
         pn2_params.sa1.r = 0.2 * model_cfg.pcd_scale
         pn2_params.sa2.r = 0.4 * model_cfg.pcd_scale
 
-    breakpoint()
     class PN2DenseWrapper(nn.Module):
         def __init__(self, in_channels, out_channels, p):
             super().__init__()
