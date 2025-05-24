@@ -22,7 +22,7 @@ class FrameGMMPredictor(nn.Module):
         assert model_cfg.name == "df_cross", "FrameGMMPredictor is only compatible with df_cross model."
         assert model_cfg.in_channels == 3, "FrameGMMPredictor is only compatible with 3 input channels."
         assert model_cfg.learn_sigma == True, "FrameGMMPredictor must learn sigma."
-        assert model_cfg.point_encoder == "mlp", "FrameGMMPredictor is only compatible with MLP point encoder."
+        # assert model_cfg.point_encoder == "mlp", "FrameGMMPredictor is only compatible with MLP point encoder."
         assert model_cfg.joint_encode == False, "FrameGMMPredictor is not compatible with joint encoding."
         assert model_cfg.feature == False, "FrameGMMPredictor is not compatible with flow/recon features."
         assert model_cfg.rel_pos == True, "FrameGMMPredictor must use relative position embedding."

@@ -72,13 +72,28 @@ def main(cfg):
     ######################################################################
     # Create the network.
     ######################################################################
+    cfg.model.pcd_scale = cfg.dataset.pcd_scale
     model = FrameGMMPredictor(cfg.model, device)
 
     ######################################################################
     # Evaluation loop.
     ######################################################################
     # Creating logging directory.
-    exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.job_type}_{cfg.epochs}")
+    # exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.job_type}_{cfg.epochs}")
+    data_dir = (
+            f"cloth={cfg.dataset.cloth_geometry}-{cfg.dataset.cloth_pose} " + \
+            f"anchor={cfg.dataset.anchor_geometry}-{cfg.dataset.anchor_pose} " + \
+            f"hole={cfg.dataset.hole} " + \
+            f"robot={cfg.dataset.robot} " + \
+            f"num_anchors={cfg.dataset.num_anchors}"
+        )
+    exp_name = os.path.join(
+        os.path.expanduser(cfg.gmm_log_dir),
+        cfg.job_type,
+        data_dir,
+        f"epochs={cfg.epochs}_var={cfg.var}_unif={cfg.uniform_loss}_rr={cfg.regularize_residual}_enc={cfg.model.point_encoder}"
+    )
+    
     if not os.path.exists(exp_name):
         raise ValueError(f"Experiment directory {exp_name} does not exist - train this model first.")
     
