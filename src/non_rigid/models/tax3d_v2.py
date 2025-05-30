@@ -826,7 +826,8 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             scale = self.object_scale if self.object_scale is not None else self.scene_scale
             points = batch["pc_action"] if self.object_scale is not None else torch.cat([batch["pc_action"], batch["pc_anchor"]], dim=1)
             point_dists = points - points.mean(axis=1, keepdim=True)
-            point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).mean(dim=1, keepdim=True)
+            # point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).mean(dim=1, keepdim=True)
+            point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).max(dim=1, keepdim=True).values
 
             # Updating point clouds.
             batch["pc_action"] = batch["pc_action"] * scale / point_scale
