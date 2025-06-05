@@ -579,6 +579,8 @@ if __name__ == "__main__":
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single//task_name_mug_on_rack/preprocessed/', num_demos=None)
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_med_single/task_name_mug_on_rack/preprocessed/', num_demos=None)
     #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_on_rack_multi_large_proc_gen_demos/task_name_mug_on_rack_multi/preprocessed/', num_demos=None)
+    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_med_multi/task_name_mug_on_rack_multi/preprocessed/', num_demos=None)
+
     dedo_action, dedo_anchor = load_proccloth('/home/lyuxing/Desktop/tax3d_upgrade/datasets/ProcCloth/cloth=single-fixed anchor=single-random hole=single/train_tax3d')
     
     stats_action = compute_extent_and_scale_stats(dedo_action)
@@ -586,8 +588,8 @@ if __name__ == "__main__":
     stats_combined = compute_extent_and_scale_stats(
         [np.concatenate((pc1, pc2), axis=0) for pc1, pc2 in zip(dedo_action, dedo_anchor)]
     )
-    '''
     
+    '''
     test_scale = 15
     rpdiff_action = [pc * test_scale for pc in rpdiff_action]
     rpdiff_anchor = [pc * test_scale for pc in rpdiff_anchor]
@@ -597,8 +599,8 @@ if __name__ == "__main__":
     stats_combined = compute_extent_and_scale_stats(
         [np.concatenate((pc1, pc2), axis=0) for pc1, pc2 in zip(rpdiff_action, rpdiff_anchor)]
     )
-    
     '''
+    
     print_extent_stats("Action", stats_action)
     print_extent_stats("Anchor", stats_anchor)
     print_extent_stats("Combined", stats_combined)

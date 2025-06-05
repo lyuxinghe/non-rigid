@@ -337,6 +337,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
             pred_dict["point"]["pred_world"] = pred_point_world
             pred_dict["results_world"] = results_world
             pred_dict["pred_frame_world"] = pred_frame_world
+            pred_dict["init_action_world"] = pc_action_world
 
             # if the material is rigid, we also output estimated translation and rotation
             if self.dataset_cfg.material == "rigid":

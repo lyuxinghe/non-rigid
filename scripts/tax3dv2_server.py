@@ -157,8 +157,6 @@ def main(cfg):
     ######################################################################
     cfg.dataset.num_demos = 1
     cfg.inference.batch_size = 1
-    cfg.inference.num_trials = 1
-    cfg.inference.num_wta_trials = 1
     cfg.inference.val_batch_size = 1
     cfg.inference.batch_size = 1
 
@@ -167,7 +165,7 @@ def main(cfg):
     dataset_cfg = cfg.dataset
     gmm_cfg = cfg.gmm
     assert server_cfg.work_dir is not None
-    
+    print("##################### Diffusion Config #####################")
     print(
         json.dumps(
             omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
@@ -199,28 +197,38 @@ def main(cfg):
         if model_cfg.pred_frame != "noisy_goal":
             raise ValueError("GMM can only be used with noisy goal models.")
 
-        # Construct the base search directory
-        gmm_base_dir = os.path.join(os.path.expanduser(gmm_cfg.gmm_log_dir), f"{gmm_cfg.gmm_pcd_scale}")
-        
-        # Find subdirectory containing exp_name
-        matched_dirs = [d for d in glob.glob(os.path.join(gmm_base_dir, "*")) if gmm_cfg.exp_name in os.path.basename(d)]
-        if len(matched_dirs) == 0:
-            raise ValueError(f"No GMM experiment directory containing '{gmm_cfg.exp_name}' found in {gmm_base_dir}.")
-        elif len(matched_dirs) > 1:
-            raise ValueError(f"Multiple matching directories found for '{gmm_cfg.exp_name}': {matched_dirs}")
-        
-        gmm_exp_name = matched_dirs[0]
-        print(f"Found GMM experiment directory: {gmm_exp_name}")
+        gmm_exp_path = os.path.join(
+            os.path.expanduser(gmm_cfg.gmm_log_dir),
+            f"gmm_{cfg.dataset.name}",
+            gmm_cfg.task_name,
+            f"epochs={gmm_cfg.gmm}_var={gmm_cfg.var}_unif={gmm_cfg.uniform_loss}_rr={gmm_cfg.regularize_residual}_enc={gmm_cfg.point_encoder}_pn2scale={gmm_cfg.pcd_scale}"
+        )
+
+        if os.path.exists(gmm_exp_path):
+            print(f"Found GMM experiment directory: {gmm_exp_path}")
+        else:
+            raise ValueError(f"GMM experiment directory does not exist: {gmm_exp_path}")
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
+
         gmm_yaml_path = os.path.join(script_dir, "..", "configs", "model", "df_cross.yaml")
         gmm_model_spec = omegaconf.OmegaConf.load(os.path.abspath(gmm_yaml_path))
+        gmm_model_spec.rel_pos = True
+        gmm_model_spec.point_encoder = gmm_cfg.point_encoder
+        gmm_model_spec.pcd_scale = gmm_cfg.pcd_scale
 
+        print("##################### GMM Config #####################")
+        print(
+            json.dumps(
+                omegaconf.OmegaConf.to_container(gmm_model_spec, resolve=True, throw_on_missing=False),
+                sort_keys=True,
+                indent=4,
+            )
+        )
         # Load GMM model config and checkpoint
         #gmm_model_cfg = omegaconf.OmegaConf.load(os.path.join(hydra.utils.get_original_cwd(), "../configs/model/df_cross.yaml"))
-        gmm_model_spec.rel_pos = True
         gmm_model = FrameGMMPredictor(gmm_model_spec, device)
-        gmm_path = os.path.join(gmm_exp_name, "checkpoints", f"epoch_{gmm_cfg.gmm}.pt")
+        gmm_path = os.path.join(gmm_exp_path, "checkpoints", f"epoch_{gmm_cfg.gmm}.pt")
         gmm_model.load_state_dict(torch.load(gmm_path))
         print(f"Using GMM checkpoint: {gmm_path}")
 
@@ -369,7 +377,7 @@ def infer(payload: dict):
                 # Generate predictions.
                 if gmm_model is not None:
                     # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                    pred_batch = {key: expand_pcd(value, cfg.inference.num_trials) for key, value in batch.items()}
+                    pred_batch = {key: expand_pcd(value, cfg.inference.num_gmm_trials) for key, value in batch.items()}
                     pred_batch = model.update_batch_frames(pred_batch, update_labels=True, gmm_model=gmm_model)
                     batch = model.update_batch_frames(batch, update_labels=True)
                     pred_dict = model.predict(pred_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
@@ -390,7 +398,7 @@ def infer(payload: dict):
         with torch.no_grad():
             if gmm_model is not None:
                 # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                pred_batch = {key: expand_pcd(value, cfg.inference.num_trials) for key, value in batch.items()}
+                pred_batch = {key: expand_pcd(value, cfg.inference.num_gmm_trials) for key, value in batch.items()}
                 pred_batch = model.update_batch_frames(pred_batch, update_labels=True, gmm_model=gmm_model)
                 batch = model.update_batch_frames(batch, update_labels=True)
                 pred_dict = model.predict(pred_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
@@ -449,7 +457,7 @@ def infer(payload: dict):
         with torch.no_grad():
             if gmm_model is not None:
                 # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                pred_batch = {key: expand_pcd(value, cfg.inference.num_trials) for key, value in batch.items()}
+                pred_batch = {key: expand_pcd(value, cfg.inference.num_gmm_trials) for key, value in batch.items()}
                 pred_batch = model.update_batch_frames(pred_batch, update_labels=False, gmm_model=gmm_model)
                 #batch = model.update_batch_frames(batch, update_labels=False)
                 pred_dict = model.predict(pred_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
@@ -461,17 +469,21 @@ def infer(payload: dict):
         raise HTTPException(404, f"{infer_name} is not supported")
 
 
-    pred_T = pred_dict["pred_T"].squeeze(0).cpu().numpy()
-    pred_point_world = pred_dict["point"]["pred_world"].squeeze(0).cpu().numpy() / cfg.dataset.pcd_scale_factor
+    pred_T = pred_dict["pred_T"].cpu().numpy()
+    pred_frame_world = pred_dict["pred_frame_world"].cpu().numpy() / cfg.dataset.pcd_scale_factor
+    pred_point_world = pred_dict["point"]["pred_world"].cpu().numpy() / cfg.dataset.pcd_scale_factor
+    init_action_world = pred_dict["init_action_world"][0].cpu().numpy() / cfg.dataset.pcd_scale_factor
 
-    log_str = f"Inference done: Pred_T{pred_T}"
+    log_str = f"Inference done: Pred_T shape {pred_T.shape}"
     log(log_str)
 
     # save pred
     
-    # if save_pred:
-    if True:
+    if save_pred:
         merged_dict = merge_and_move_to_cpu(pred_batch, pred_dict)
+        merged_dict['cfg'] = {
+            'pcd_scale_factor': cfg.dataset.pcd_scale_factor
+        }
         np.savez(out_f, **merged_dict)
 
         log_str = f"Inference saved: {out_f}"
@@ -491,7 +503,11 @@ def infer(payload: dict):
         log_str = f"Visualization saved: {vis_dir}"
         log(log_str)
 
-    return {"ok": True, "pred_T": pred_T.tolist(), "pred_p": pred_point_world.tolist()}
+    return {"ok": True, 
+            "pred_T": pred_T.tolist(), 
+            "pred_p": pred_point_world.tolist(), 
+            "pred_f": pred_frame_world.tolist(),
+            "init_action":init_action_world.tolist()}
 
 # -------------------------------------------------------------------------
 @app.post("/shutdown")

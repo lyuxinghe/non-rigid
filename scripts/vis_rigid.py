@@ -287,8 +287,8 @@ def main(cfg):
     ######################################################################
     train_indices = []
     # val_indices = [10, 12, 14, 16, 18, 20, 24, 26, 28]
-    val_indices = [10]
-    #val_indices = np.arange(11, 50)
+    # val_indices = [10]
+    val_indices = np.arange(11, 50)
     val_ood_indices = []
     model.to(device)
     run_vis(datamodule.train_dataset, model, train_indices)
