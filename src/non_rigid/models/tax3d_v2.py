@@ -273,7 +273,10 @@ class TAX3Dv2BaseModule(L.LightningModule):
         pred_r = final_dict["sample_r"]
         pred_s = final_dict["sample_s"]
         pred = pred_s + pred_r        
+        results_r = [res["sample_r"] for res in results]
+        results_s = [res["sample_s"] for res in results]
         results = [res["sample_r"] + res["sample_s"] for res in results]
+
         '''
         finetune_frame = pred_r
         z_r = final_dict["prev_sample_r"]
@@ -306,17 +309,25 @@ class TAX3Dv2BaseModule(L.LightningModule):
 
             # computing flow and point predictions
             if self.prediction_type == "flow":
+                '''
                 pred_flow = pred
                 pred_point = pc_action + pred_flow
                 # for flow predictions, convert results to point predictions
                 results = [
                     pc_action + res.permute(0, 2, 1) for res in results
-                ]
+                ]'''
+                raise NotImplementedError
             elif self.prediction_type == "point":
                 pred_point = pred
                 pred_flow = pred_point - pc_action
                 results = [
                     res.permute(0, 2, 1) for res in results
+                ]
+                results_r = [
+                    res.permute(0, 2, 1) for res in results_r
+                ]
+                results_s = [
+                    res.permute(0, 2, 1) for res in results_s
                 ]
 
             pred_dict = {
@@ -327,24 +338,27 @@ class TAX3Dv2BaseModule(L.LightningModule):
                     "pred": pred_point,
                 },
                 "results": results,
+                "results_r": results_r,
+                "results_s": results_s,
             }
 
             # compute world frame predictions
-            pred_flow_world, pred_point_world, pc_action_world, pred_frame_world, results_world = self.get_world_preds(
-                batch, num_samples, pc_action, pred_dict
-            )
-            pred_dict["flow"]["pred_world"] = pred_flow_world
-            pred_dict["point"]["pred_world"] = pred_point_world
-            pred_dict["results_world"] = results_world
-            pred_dict["pred_frame_world"] = pred_frame_world
-            pred_dict["init_action_world"] = pc_action_world
+            pred_world_dict = self.get_world_preds(batch, num_samples, pc_action, pred_dict)
+
+            pred_dict["flow"]["pred_world"] = pred_world_dict['pred_flow_world']
+            pred_dict["point"]["pred_world"] = pred_world_dict['pred_point_world']
+            pred_dict["pred_frame_world"] = pred_world_dict['pred_frame_world']
+            pred_dict["init_action_world"] = pred_world_dict['pc_action_world']
+            pred_dict["results_world"] = pred_world_dict['results_world']
+            pred_dict["results_r_world"] = pred_world_dict['results_r_world']
+            pred_dict["results_s_world"] = pred_world_dict['results_s_world']
 
             # if the material is rigid, we also output estimated translation and rotation
             if self.dataset_cfg.material == "rigid":
                 scaling_factor = self.dataset_cfg.pcd_scale_factor
 
-                action_world_scaled = pc_action_world / scaling_factor
-                pred_world_scaled = pred_point_world / scaling_factor
+                action_world_scaled = pred_world_dict['pc_action_world'] / scaling_factor
+                pred_world_scaled = pred_world_dict['pred_point_world'] / scaling_factor
 
                 T = svd_estimation(source=action_world_scaled, target=pred_world_scaled, return_magnitude=False)
                 pred_dict["pred_T"] = T
@@ -802,7 +816,24 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         results_world = [
             T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results"]
         ]
-        return pred_flow_world, pred_point_world, pc_action_world, pred_frame_world, results_world
+        results_r_world = [
+            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results_r"]
+        ]
+        results_s_world = [
+            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results_s"]
+        ]
+
+        pred_world_dict = {
+            "pred_flow_world": pred_flow_world,
+            "pred_point_world": pred_point_world,
+            "pc_action_world": pc_action_world,
+            "pred_frame_world": pred_frame_world,
+            "results_world": results_world,
+            "results_r_world": results_r_world,
+            "results_s_world": results_s_world,
+        }
+
+        return pred_world_dict
 
     def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
         # Using GMM model, if provided.

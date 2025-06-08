@@ -22,6 +22,7 @@ epochs: 1000
 lr: 1e-4
 weight_decay: 1e-5
 var: 0.1
+var_scale: 3.0
 uniform_loss: 1.0
 regularize_residual: 0.0
 

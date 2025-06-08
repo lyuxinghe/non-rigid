@@ -97,7 +97,7 @@ class GMMLoss(torch.nn.Module):
         eps: value used to clamp var, for stability.
         """
         super(GMMLoss, self).__init__()
-        self.pcd_scale = cfg.dataset.pcd_scale
+        self.var_scale = cfg.var_scale
         self.eps = eps
     
     def forward(self, batch, pred, var=0.00001, uniform_loss=0.0, regularize_residual=0.0):
@@ -112,7 +112,7 @@ class GMMLoss(torch.nn.Module):
 
         # Computing GMM likelihood loss.
         diff = targets - means
-        var *= self.pcd_scale
+        var *= self.var_scale
         point_likelihood_exps = -0.5 * torch.sum((diff ** 2) / var, dim=-1, keepdim=True)
         maxlog = point_likelihood_exps.max(dim=-2, keepdim=True).values
         point_likelihoods = torch.exp(point_likelihood_exps - maxlog)

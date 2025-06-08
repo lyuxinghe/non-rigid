@@ -76,7 +76,7 @@ def main(cfg):
         os.path.expanduser(cfg.gmm_log_dir),
         cfg.job_type,
         cfg.task_name,
-        f"epochs={cfg.epochs}_var={cfg.var}_unif={cfg.uniform_loss}_rr={cfg.regularize_residual}_enc={cfg.model.point_encoder}_pn2scale={cfg.model.pcd_scale}"
+        f"epochs={cfg.epochs}_var={cfg.var}_unif={cfg.uniform_loss}_rr={cfg.regularize_residual}_enc={cfg.model.point_encoder}_pn2scale={cfg.model.pcd_scale}_varscale={cfg.var_scale}"
     )
 
     if os.path.exists(exp_name):
