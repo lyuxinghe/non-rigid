@@ -159,6 +159,7 @@ class GaussianDiffusionDDRDSeparate:
         loss_type,
         time_based_weighting,
         rotation_noise_scale,
+        zero_shape,
     ):
 
         self.model_mean_type = model_mean_type
@@ -169,6 +170,9 @@ class GaussianDiffusionDDRDSeparate:
         # TODO: custom variance for each?
         self.var_r = 1.0
         self.var_s = 1.0
+
+        # should we force shape to be zero-mean?
+        self.zero_shape = zero_shape
 
         # diffusion noise scale
         self.rotation_noise_scale = rotation_noise_scale
@@ -446,6 +450,9 @@ class GaussianDiffusionDDRDSeparate:
         
         noise_r = th.randn_like(x_r)
         noise_s = th.randn_like(x_s)
+        if self.zero_shape:
+            noise_s = noise_s - noise_s.mean(dim=2, keepdim=True)
+        
         nonzero_mask_r = (
             (t != 0).float().view(-1, *([1] * (len(x_r.shape) - 1)))
         )  # no noise when t == 0
@@ -546,6 +553,8 @@ class GaussianDiffusionDDRDSeparate:
             img_s = noise_s
         else:
             img_s = th.randn(*shape_s, device=device)
+            if self.zero_shape:
+                img_s = img_s - img_s.mean(dim=2, keepdim=True)
 
         indices = list(range(self.num_timesteps))[::-1]
 
@@ -918,6 +927,9 @@ class GaussianDiffusionDDRDSeparate:
             # 10. The rotation noise is the difference between the rotated and original points.
             rotation_noise = rotated_pc - x_start
             noise_s = noise_s + rotation_noise
+
+        if self.zero_shape:
+            noise_s = noise_s - noise_s.mean(dim=2, keepdim=True)
 
         # Compute the forward noising for each branch.
         xr_t = self.q_sample(xr_start, t, noise=noise_r)  # [B, C, 1]

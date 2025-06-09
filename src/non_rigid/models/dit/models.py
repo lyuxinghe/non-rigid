@@ -1058,6 +1058,12 @@ class TAX3Dv2_FixedFrame_Token_DiT(nn.Module):
         xr_out = self.final_layer_r(xr_out, c).permute(0, 2, 1)        
         xs_out = self.final_layer_s(xs_out, c).permute(0, 2, 1)
 
+        if self.model_cfg.zero_shape:
+            xs_out = torch.cat([
+            xs_out[:, :3, :] - xs_out[:, :3, :].mean(dim=2, keepdim=True),  # First 3 channels zero-meaned
+            xs_out[:, 3:, :]  # Last 3 channels unchanged
+        ], dim=1)
+
         return xr_out, xs_out
 
 class TAX3Dv2_FixedFrame_Dual_DiT(nn.Module):

@@ -99,6 +99,7 @@ def create_diffusion_ddrd_separate(
     diffusion_steps=1000,
     time_based_weighting=False,
     rotation_noise_scale=False,
+    zero_shape=False,
 ):
     betas = gd_ddrd_separate.get_named_beta_schedule(noise_schedule, diffusion_steps)
     if use_kl:
@@ -127,6 +128,7 @@ def create_diffusion_ddrd_separate(
         loss_type=loss_type,
         time_based_weighting=time_based_weighting,
         rotation_noise_scale=rotation_noise_scale,
+        zero_shape=zero_shape,
         # rescale_timesteps=rescale_timesteps,
     )
 
