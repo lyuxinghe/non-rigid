@@ -14,14 +14,13 @@
 #./train_rigid.sh 0 ddrd_flow_separate rpdiff_fit online checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-03-02/17-41-55/checkpoints/last.ckpt'
 
 GPU_INDEX=$1
-DATASET_NAME=$2
+CHECKPOINT=$2
 shift
 shift
 COMMAND=$@
 
-WANDB_MODE=$WANDB_MODE python train_gmm.py \
+WANDB_MODE=$WANDB_MODE python eval_gmm.py \
   model.rel_pos=True \
-  model.point_encoder=pn2 \
-  dataset=$DATASET_NAME \
   resources.gpus=[${GPU_INDEX}] \
+  checkpoint.run_id=${CHECKPOINT} \
   $COMMAND

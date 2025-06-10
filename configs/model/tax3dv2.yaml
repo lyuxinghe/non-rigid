@@ -13,6 +13,7 @@ joint_encode: True # If True, use joint encoding for point cloud feature
 rel_pos: False # If True, encode relative position
 scene_anchor: False # If True, use scene as the anchor
 frame_type: fixed # (fixed, mu) Type of frame-prediction for the model
+one_hot_recon: False # If True, use one-hot encoding for reconstruction
 
 #####################################################
 # Model-specific Dataset/Data-processing Parameters
@@ -21,6 +22,10 @@ frame_type: fixed # (fixed, mu) Type of frame-prediction for the model
 pred_frame: anchor_center # [anchor_center, noisy_goal] frame for goal prediction
 noisy_goal_scale: 0.0 # scale for simulated noisy goal error
 action_context_frame: action_center # [action_center] frame for action context
+
+# These are internal to the model.
+object_scale: null # scale for action normalization
+scene_scale: null # scale for scene normalization
 
 #####################################################
 # Dataset-specific Model Parameters

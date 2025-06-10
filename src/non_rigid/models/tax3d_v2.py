@@ -102,6 +102,12 @@ class TAX3Dv2BaseModule(L.LightningModule):
         if self.model_cfg.rel_pos and self.model_cfg.scene_anchor:
             raise ValueError("Relative position embedding and scene-as-anchor are not compatible.")
 
+        # Model cannot have both object and scene scale
+        if self.model_cfg.object_scale is not None and self.model_cfg.scene_scale is not None:
+            raise ValueError("Model cannot have both object and scene scale.")
+        self.object_scale = self.model_cfg.object_scale
+        self.scene_scale = self.model_cfg.scene_scale
+
         # mode-specific processing
         if self.mode == "train":
             self.run_cfg = cfg.training
@@ -424,8 +430,9 @@ class TAX3Dv2BaseModule(L.LightningModule):
         Training step for the module. Logs training metrics and visualizations to wandb.
         """
         self.train()
+        bs = batch[self.label_key].shape[0]
         t = torch.randint(
-            0, self.diff_steps, (self.batch_size,), device=self.device
+            0, self.diff_steps, (bs,), device=self.device
         ).long()
 
         batch = self.update_batch_frames(batch, update_labels=True)
@@ -464,7 +471,6 @@ class TAX3Dv2BaseModule(L.LightningModule):
 
         # additional logging
         if do_additional_logging:
-            # TODO: VERIFY WHETHER THIS SHOULD BE TURNED INTO EVAL & NO GRAD!
             self.eval()
             with torch.no_grad():
                 # winner-take-all predictions
@@ -647,6 +653,11 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
             ).cpu()
             batch["noisy_goal"] = sampled_noisy_goals
 
+            # Also add gmm predictions to batch for visualization.
+            batch["gmm_probs"] = gmm_probs
+            batch["gmm_means"] = gmm_means
+            batch["sampled_idxs"] = idxs
+
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":
             raise NotImplementedError("Mu-frame not implemented for anchor centroid prediction!")
@@ -762,11 +773,19 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         pred_frame = expand_pcd(batch["pred_frame"].to(self.device), num_samples)
         action_context_frame = expand_pcd(batch["action_context_frame"].to(self.device), num_samples)
 
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"] + pred_frame)
-        pc_action_world = T_action2world.transform_points(pc_action + action_context_frame)
+        # Scale point clouds, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            scale = expand_pcd(batch["pc_scale"].to(self.device), num_samples)
+            pred_frame = pred_frame * scale
+            action_context_frame = action_context_frame * scale
+        else:
+            scale = 1.0
+
+        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"]*scale + pred_frame)
+        pc_action_world = T_action2world.transform_points(pc_action*scale + action_context_frame)
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
-            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results"]
+            T_goal2world.transform_points(res*scale + pred_frame) for res in pred_dict["results"]
         ]
         return pred_flow_world, pred_point_world, results_world
 
@@ -782,6 +801,11 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             ).cpu()
             batch["noisy_goal"] = sampled_noisy_goals
 
+            # Also add gmm predictions to batch for visualization.
+            batch["gmm_probs"] = gmm_probs
+            batch["gmm_means"] = gmm_means
+            batch["sampled_idxs"] = idxs
+
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":
             pred_frame = batch["pc_anchor"].mean(axis=1, keepdim=True)
@@ -796,12 +820,29 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
         
+        # Re-scale point cloud inputs, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            # Computing scale factor.
+            scale = self.object_scale if self.object_scale is not None else self.scene_scale
+            points = batch["pc_action"] if self.object_scale is not None else torch.cat([batch["pc_action"], batch["pc_anchor"]], dim=1)
+            point_dists = points - points.mean(axis=1, keepdim=True)
+            # point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).mean(dim=1, keepdim=True)
+            point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).max(dim=1, keepdim=True).values
+
+            # Updating point clouds.
+            batch["pc_action"] = batch["pc_action"] * scale / point_scale
+            batch["pc_anchor"] = batch["pc_anchor"] * scale / point_scale
+            pred_frame = pred_frame * scale / point_scale
+            action_context_frame = action_context_frame * scale / point_scale
+            batch["pc_scale"] = point_scale / scale
+
         # Update scene-as-anchor, if necessary.
         if self.model_cfg.scene_anchor:
             batch["pc_anchor"] = torch.cat(
                 [batch["pc_anchor"], batch["pc_action"]], dim=1
             )
 
+        # Put object and scene point clouds in the corresponding frames.
         batch["pc_anchor"] = batch["pc_anchor"] - pred_frame
         batch["pc_action"] = batch["pc_action"] - action_context_frame
 
@@ -812,8 +853,13 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
                 matrix=batch["T_goal2world"]#.to(self.device)
             )
             batch["pc_world"] = T_goal2world.transform_points(batch["pc"])
+            
+            # Scale ground truth point cloud, if necessary.
+            if self.object_scale is not None or self.scene_scale is not None:
+                batch[self.label_key] = batch[self.label_key] * scale / point_scale
 
             # Put point and flow labels in prediction frame.
+            # TODO: the flow computation is technically bugged here, should also be scaled
             batch["pc"] = batch["pc"] - pred_frame
             batch["flow"] = batch["flow"] - pred_frame + action_context_frame
         
@@ -845,6 +891,14 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
         T_goal2world = Transform3d(
             matrix=batch["T_goal2world"][viz_idx].to(self.device)
         )
+
+        # Scale point clouds, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            scale = batch["pc_scale"][viz_idx]
+            pc_action_viz = pc_action_viz * scale
+            pc_anchor_viz = pc_anchor_viz * scale
+            pred_frame = pred_frame * scale
+            action_context_frame = action_context_frame * scale
 
         pc_action_viz = T_action2world.transform_points(pc_action_viz + action_context_frame)
         pc_anchor_viz = T_goal2world.transform_points(pc_anchor_viz + pred_frame)

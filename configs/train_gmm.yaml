@@ -21,7 +21,8 @@ epochs: 1000
 lr: 1e-4
 weight_decay: 1e-5
 var: 0.1
-uniform_loss: 1.0
+uniform_loss: 0.1
+regularize_residual: 0.0
 
 resources:
   num_workers: 4
