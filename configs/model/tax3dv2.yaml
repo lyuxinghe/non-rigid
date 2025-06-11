@@ -31,7 +31,7 @@ scene_scale: null # scale for scene normalization
 # Dataset-specific Model Parameters
 #####################################################
 # These are shared and overriden by the dataset config.
-pcd_scale: 1 # Scale range for the point clouds
+pcd_scale: 3.0 # Scale range for the point clouds
 
 #####################################################
 # Model Diffusion Parameters

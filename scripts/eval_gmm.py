@@ -244,6 +244,7 @@ def main(cfg):
                 yaxis_visible=False,
                 zaxis_visible=False,
             )
+
             fig.write_html(os.path.join(viz_path, split, f"{i}.html"))
 
         # Plot statistics.

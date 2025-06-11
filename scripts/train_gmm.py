@@ -23,14 +23,6 @@ warnings.filterwarnings("ignore", message="TypedStorage is deprecated", category
 
 @hydra.main(config_path="../configs", config_name="train_gmm", version_base="1.3")
 def main(cfg):
-    print(
-        json.dumps(
-            omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
-            sort_keys=True,
-            indent=4,
-        )
-    )
-
     ######################################################################
     # Torch settings.
     ######################################################################

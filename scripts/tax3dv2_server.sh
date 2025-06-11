@@ -6,9 +6,10 @@
 # 3. the rest of the arguments for the eval script
 
 # Example usage:
-# Load from Wandb: ./eval.sh 0 `CHECKPOINT`
-# Load from local: ./eval.sh 0 `CHECKPOINT` checkpoint.reference="/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_df_cross/2025-04-11/12-50-17/checkpoints/last.ckpt"
-# Evaluate with GMM: ./eval_rigid.sh 0 kmiio9ii gmm=1000 exp_name=rpdiff_mug_single_easy_rack
+# ./tax3dv2_server.sh 0 kwcsrp5k gmm.gmm=1000 gmm.exp_name=book_bookshelf server.work_dir=/home/lyuxing/Desktop/tax3d_upgrade/scripts/tmp
+
+# Get absolute path to the directory containing this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 GPU_INDEX=$1
 CHECKPOINT=$2
@@ -17,7 +18,7 @@ shift
 COMMAND=$@
 
 echo "Evaluating model at checkpoint $CHECKPOINT with command: $COMMAND."
-python eval_rigid.py \
+python "$SCRIPT_DIR/tax3dv2_server.py" \
     resources.gpus=[${GPU_INDEX}] \
     checkpoint.run_id=${CHECKPOINT} \
     wandb.group=rigid \
