@@ -57,7 +57,7 @@ nstructions for running code on AUTOBOT:
 
 Copying the data to the head node:
 ```
-rsync -anv --exclude='*archived*' --exclude='*.gif'  proccloth/ eycai@autobot.vision.cs.cmu.edu:/project_data/held/eycai/data/proccloth
+rsync -anv --exclude='*archive*' --exclude='*.gif'  proccloth/ eycai@autobot.vision.cs.cmu.edu:/project_data/held/eycai/data/proccloth
 ```
 
 Copying data from head node to GPU node:
@@ -67,14 +67,11 @@ rsync -anv data/ autobot-0-25:/scratch/eycai/data
 
 Copying the code to the head node:
 ```
-rsync -anv --exclude='*scripts/logs/*' --exclude='.git/*' --exclude='*scripts/wandb*' --exclude='*.ckpt' --exclude='*notebooks/*' non-rigid/ eycai@autobot.vision.cs.cmu.edu:code/non-rigid
+rsync -anv --exclude='*scripts/logs/*' --exclude='.git/*' --exclude='*scripts/wandb*' --exclude='*.ckpt' --exclude='*notebooks/*' --exclude='third_party/*' non-rigid/ eycai@autobot.vision.cs.cmu.edu:code/non-rigid
 ```
 
 
-RUNNING EVAL FROM GPU NODE:
-```
-singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/opt/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && ./eval.sh 1 gzc40qe1 dataset.data_dir='/opt/eycai/data/proccloth/' coverage=True"
-```
+
 
 TRAINING TAX3D FROM GPU NODE:
 ```
@@ -83,10 +80,15 @@ singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B
 
 TRAINING TAX3Dv2-fixed-frame FROM GPU NODE:
 ```
-singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/opt/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && CUDA_VISIBLE_DEVICES=0 ./train_deform.sh 0 tax3dv2 online dedo dataset.data_dir=/opt/eycai/data/ dataset.train_size=400 model.frame_type=fixed model.joint_encode=True model.feature=True model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.diff_rotation_noise_scale=45 resources.num_workers=16"
+singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/opt/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && CUDA_VISIBLE_DEVICES=0 ./train_deform.sh 0 tax3dv2_corl2025 online dedo dataset.data_dir=/opt/eycai/data/ dataset.hole=single dataset.train_size=400 resources.num_workers=16"
 ```
 
 TRAINING TAX3Dv2-mu-frame FROM GPU NODE:
 ```
-singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/opt/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && CUDA_VISIBLE_DEVICES=0 ./train_deform.sh 0 tax3dv2 online dedo dataset.data_dir=/opt/eycai/data/ dataset.train_size=400 model.frame_type=mu model.joint_encode=True model.feature=True model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.diff_rotation_noise_scale=45 resources.num_workers=16"
+singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/opt/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && CUDA_VISIBLE_DEVICES=0 ./train_deform.sh 0 tax3dv2 online dedo dataset.data_dir=/opt/eycai/data/ dataset.hole=single dataset.train_size=400 model.frame_type=mu model.joint_encode=True model.feature=True model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.diff_rotation_noise_scale=45 resources.num_workers=16"
+```
+
+TRAINING DP3:
+```
+singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/home/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && ./train_dedo_policy.sh dp3 dedo_proccloth none 1 0 easy"
 ```

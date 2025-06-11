@@ -421,8 +421,9 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         Training step for the module. Logs training metrics and visualizations to wandb.
         """
         self.train()
+        bs = batch[self.label_key].shape[0]
         t = torch.randint(
-            0, self.diff_steps, (self.batch_size,), device=self.device
+            0, self.diff_steps, (bs,), device=self.device
         ).long()
         
         batch = self.update_batch_frames(batch, update_labels=True)
@@ -632,10 +633,17 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         if gmm_model is not None:
             assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
             gmm_pred = gmm_model(batch)
-            gmm_probs, gmm_means = gmm_pred["probs"], gmm_pred["means"]
+            gmm_probs, gmm_means, gmm_anchor_frame = gmm_pred["probs"], gmm_pred["means"], gmm_pred["anchor_frame"]
             idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
-            sampled_noisy_goals = gmm_means[torch.arange(gmm_means.shape[0]), idxs].cpu()
+            sampled_noisy_goals = (
+                gmm_means[torch.arange(gmm_means.shape[0]), idxs] + gmm_anchor_frame.squeeze(1)
+            ).cpu()
             batch["noisy_goal"] = sampled_noisy_goals
+
+            # Also add gmm predictions to batch for visualization.
+            batch["gmm_probs"] = gmm_probs
+            batch["gmm_means"] = gmm_means
+            batch["sampled_idxs"] = idxs
 
         # Processing prediction frame.
         if self.model_cfg.pred_frame == "anchor_center":

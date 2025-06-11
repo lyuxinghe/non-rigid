@@ -89,7 +89,6 @@ def visualize_sampled_predictions(
                 "line": {"width": 0}, "symbol": "circle",
             }
 
-
         # color = anchor_color if "anchor" in name.lower() else action_color
         traces.append(go.Scatter3d(
             x=pts[:,0], y=pts[:,1], z=pts[:,2],

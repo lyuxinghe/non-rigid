@@ -25,6 +25,7 @@ COMMAND=$@
 
 WANDB_MODE=$WANDB_MODE python train_gmm.py \
   model.rel_pos=True \
+  model.point_encoder=pn2 \
   dataset=$DATASET_NAME \
   resources.gpus=[${GPU_INDEX}] \
   $COMMAND

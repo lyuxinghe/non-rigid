@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-import omegaconf
+from omegaconf import OmegaConf
 import json
 import os
 import shutil
@@ -10,7 +10,7 @@ from plotly import graph_objects as go
 
 from tqdm import tqdm
 
-from non_rigid.utils.script_utils import create_datamodule
+from non_rigid.utils.script_utils import create_datamodule, create_model
 from non_rigid.models.gmm_predictor import FrameGMMPredictor
 
 import rpad.visualize_3d.plots as rvpl
@@ -22,9 +22,21 @@ warnings.filterwarnings("ignore", message="TypedStorage is deprecated", category
 
 @hydra.main(config_path="../configs", config_name="eval_gmm", version_base="1.3")
 def main(cfg):
+    # Grab config file from saved run.
+    exp_name = os.path.join(
+        os.path.expanduser(cfg.gmm_log_dir),
+        cfg.checkpoint.run_id,
+    )
+    if not os.path.exists(exp_name):
+        raise ValueError(f"Experiment directory {exp_name} does not exist - train this model first.")
+    run_cfg = OmegaConf.load(os.path.join(exp_name, "config.yaml"))
+
+    # Update config with run config.
+    OmegaConf.update(cfg, "dataset", OmegaConf.select(run_cfg, "dataset"), merge=True, force_add=True)
+    OmegaConf.update(cfg, "model", OmegaConf.select(run_cfg, "model"), merge=True, force_add=True)
     print(
         json.dumps(
-            omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
+            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
             sort_keys=True,
             indent=4,
         )
@@ -72,25 +84,15 @@ def main(cfg):
     ######################################################################
     # Create the network.
     ######################################################################
-    cfg.model.pcd_scale = cfg.dataset.pcd_scale
-    model = FrameGMMPredictor(cfg.model, device)
+    network, _ = create_model(cfg)
+    model = FrameGMMPredictor(network, cfg.model, device)
 
     ######################################################################
     # Evaluation loop.
     ######################################################################
-    # Creating logging directory.
-    #exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.job_type}_{cfg.epochs}")
-    exp_name = os.path.join(
-        os.path.expanduser(cfg.gmm_log_dir),
-        cfg.job_type,
-        cfg.task_name,
-        f"epochs={cfg.epochs}_var={cfg.var}_unif={cfg.uniform_loss}_rr={cfg.regularize_residual}_enc={cfg.model.point_encoder}"
-    )
-    if not os.path.exists(exp_name):
-        raise ValueError(f"Experiment directory {exp_name} does not exist - train this model first.")
-    
+    # For now, only evaluate the last checkpoint.
     viz_path = os.path.join(exp_name, "viz")
-    ckpt_path = os.path.join(exp_name, "checkpoints", f"epoch_{cfg.epochs}.pt")
+    ckpt_path = os.path.join(exp_name, "checkpoints", f"epoch_{run_cfg.epochs}.pt")
 
     os.makedirs(os.path.join(viz_path, "train"), exist_ok=True)
     os.makedirs(os.path.join(viz_path, "val"), exist_ok=True)
@@ -146,7 +148,7 @@ def main(cfg):
             sampled_means_pc = sampled_means.cpu().numpy()
 
             scene_data = np.concatenate(
-                 [anchor_pc, gt_means_pc, sampled_means_pc, means_viz], axis=0
+                [anchor_pc, gt_means_pc, sampled_means_pc, means_viz], axis=0
             )
 
             fig.add_trace(

@@ -5,12 +5,14 @@ import json
 import os
 import shutil
 import hydra
+import wandb
 
 from plotly import graph_objects as go
 
 from tqdm import tqdm
+import wandb.util
 
-from non_rigid.utils.script_utils import create_datamodule
+from non_rigid.utils.script_utils import create_datamodule, create_model
 from non_rigid.models.gmm_predictor import FrameGMMPredictor, GMMLoss, viz_gmm
 
 
@@ -45,13 +47,13 @@ def main(cfg):
     train_dataset = datamodule.train_dataset
     val_dataset = datamodule.val_dataset
     train_loader = datamodule.train_dataloader()
-    val_loader, _ = datamodule.val_dataloader()
+    val_loader = datamodule.val_dataloader()
 
     ######################################################################
     # Create the network.
     ######################################################################
-    cfg.model.pcd_scale = cfg.dataset.pcd_scale
-    model = FrameGMMPredictor(cfg.model, device)
+    network, _ = create_model(cfg)
+    model = FrameGMMPredictor(network, cfg.model, device)
 
     ######################################################################
     # Training loop.
@@ -69,14 +71,10 @@ def main(cfg):
     total_probs50 = []
 
     # Creating experiment directory.
-    # exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.job_type}_{cfg.epochs}")
-
-    # Creating experiment directory.
+    run_id = wandb.util.generate_id(length=10) # For simplicity, using wandb.util.generate_id() as a unique identifier.
     exp_name = os.path.join(
         os.path.expanduser(cfg.gmm_log_dir),
-        cfg.job_type,
-        cfg.task_name,
-        f"epochs={cfg.epochs}_var={cfg.var}_unif={cfg.uniform_loss}_rr={cfg.regularize_residual}_enc={cfg.model.point_encoder}_pn2scale={cfg.model.pcd_scale}_varscale={cfg.var_scale}"
+        run_id,
     )
 
     if os.path.exists(exp_name):
@@ -85,6 +83,10 @@ def main(cfg):
     os.makedirs(exp_name, exist_ok=True)
     os.makedirs(os.path.join(exp_name, "checkpoints"), exist_ok=True)
     os.makedirs(os.path.join(exp_name, "logs"), exist_ok=True)
+
+    # Saving config.
+    with open(os.path.join(exp_name, "config.yaml"), "w") as f:
+        omegaconf.OmegaConf.save(cfg, f)
 
     # Visualizing initial model.
     fig, num_probs99, num_probs90, num_probs50 = viz_gmm(model, train_dataset)
@@ -95,6 +97,7 @@ def main(cfg):
     total_probs50.append(num_probs50)
 
     # Training loop.
+    print(f"Training GMM with run ID: {run_id}")
     with tqdm(total=num_epochs) as pbar:
         pbar.set_description("Training")
         

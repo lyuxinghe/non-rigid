@@ -6,34 +6,27 @@ import omegaconf
 import torch
 import wandb
 import os
-from pytorch3d.transforms import Transform3d, Translate
 
 from non_rigid.utils.script_utils import (
     create_model,
     create_datamodule,
     load_checkpoint_config_from_wandb,
 )
-
-from non_rigid.nets.dgcnn import DGCNN
 from non_rigid.metrics.flow_metrics import flow_rmse
-from non_rigid.utils.pointcloud_utils import expand_pcd
+from non_rigid.utils.pointcloud_utils import expand_pcd, downsample_pcd
 from non_rigid.models.gmm_predictor import FrameGMMPredictor
-from non_rigid.utils.vis_utils import visualize_sampled_predictions, visualize_diffusion_timelapse
 from tqdm import tqdm
 import numpy as np
-
-import rpad.visualize_3d.plots as vpl
-from plotly import graph_objects as go
 
 @torch.no_grad()
 @hydra.main(config_path="../configs", config_name="eval", version_base="1.3")
 def main(cfg):
     task_overrides = HydraConfig.get().overrides.task
     cfg = load_checkpoint_config_from_wandb(
-        cfg,
-        task_overrides,
-        cfg.wandb.entity,
-        cfg.wandb.project,
+        cfg, 
+        task_overrides, 
+        cfg.wandb.entity, 
+        cfg.wandb.project, 
         cfg.checkpoint.run_id
     )
     print(
@@ -62,21 +55,14 @@ def main(cfg):
     ######################################################################
     # Manually setting eval-specific configs.
     ######################################################################
-    # Using a custom cloth-specific batch size, to allow for simultaneous evaluation
-    # of RMSE, coverage, and precision.
-    if cfg.dataset.hole == "single":
-        bs = 1
-    elif cfg.dataset.hole == "double":
-        bs = 2
-    else:
-        raise ValueError(f"Unknown hole type: {cfg.dataset.hole}.")
-    bs *= cfg.dataset.num_anchors
-
-    cfg.inference.batch_size = bs
-    cfg.inference.val_batch_size = bs
+    # We're not computing evals, only generating and saving predictions, so 
+    # one-by-one is fine for now.
+    cfg.inference.batch_size = 1
+    cfg.inference.val_batch_size = 1
+    cfg.dataset.sample_size_action = -1
 
     ######################################################################
-    # Load the reference frame predictor, if necessary.
+    # Load the GMM frame predictor, if necessary.
     ######################################################################
     if cfg.gmm is not None:
         # GMM can only be used with noisy goal models.
@@ -103,7 +89,7 @@ def main(cfg):
 
     ######################################################################
     # Create the datamodule. This is just to initialize the datasets - we are
-    # not going to use the dataloaders, because we need to manually downsample
+    # not going to use the dataloaders, because we need to manually downsample 
     # and batch.
     ######################################################################
     cfg, datamodule = create_datamodule(cfg)
@@ -135,9 +121,9 @@ def main(cfg):
             monitor_name = cfg.checkpoint.monitor_name
             if not isinstance(monitor_name, str):
                 raise ValueError(f"Invalid monitor name: {monitor_name}. Must be a string.")
-
+            
             # searching for checkpoints with exact monitor name - should only be one for now.
-            valid_artifact_file_names = [f for f in artifact_file_names if
+            valid_artifact_file_names = [f for f in artifact_file_names if 
                                          f.split("-")[2].split("=")[0] == monitor_name]
             if len(valid_artifact_file_names) == 0:
                 raise ValueError(f"Could not find any files with monitor name: {monitor_name}.")
@@ -152,7 +138,6 @@ def main(cfg):
         ckpt_file = checkpoint_reference
     # Load the network weights.
     ckpt = torch.load(ckpt_file, map_location=device)
-
     network.load_state_dict(
         {k.partition(".")[2]: v for k, v, in ckpt["state_dict"].items() if k.startswith("network.")}
     )
@@ -161,102 +146,74 @@ def main(cfg):
     model.eval()
 
     ######################################################################
-    # Helper function to run evals for a given dataset.
+    # Helper function to sample and save predictions for goal-
+    # conditioned policy evaluations.
     ######################################################################
-    def run_vis(dataset, model, indices):
-        num_samples = cfg.inference.num_wta_trials
-        eval_keys = ["pc_action", "pc_anchor", "pc", "flow", "seg", "seg_anchor", "T_action2world", "T_goal2world"]
-        if cfg.model.pred_frame == "noisy_goal":
-            eval_keys.append("noisy_goal")
+    def generate_preds(dataset, save_path):
+        batch_keys = ["pc_action", "pc_anchor", "pc", "T_action2world", "T_goal2world"]
+        for i in tqdm(range(len(dataset))):
+            item = dataset.__getitem__(i)
+            batch = {key: item[key].unsqueeze(0) for key in batch_keys}
 
-        for i in tqdm(indices):
-            # Index and batchify item.
-            item = dataset[i]
-            batch = [{key: item[key] for key in eval_keys}]
-            batch = {key: torch.stack([item[key] for item in batch]) for key in eval_keys}
+            # getting cloth-specific gripper points, and remaining action points
+            deform_data = item["deform_data"]
+            pc_action = batch["pc_action"]
+            gripper_indices = [0, deform_data["deform_params"]["node_density"] - 1]
+            gripper_points = pc_action[:, gripper_indices, :]
+            non_gripper_points = torch.cat([
+                pc_action[:, 1:gripper_indices[1], :],
+                pc_action[:, gripper_indices[1]+1:, :]
+            ], dim=1)
 
-            # Generate predictions.
+            # fps downsampling on non-gripper points
+            non_gripper_points, non_gripper_indices = downsample_pcd(non_gripper_points, 510, type="fps")
+
+            # concatenating gripper points with downsampled non-gripper points
+            batch["pc_action"] = torch.cat([gripper_points, non_gripper_points], dim=1)
+
+            # sampling model predictions
             if gmm_model is not None:
-                # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                gmm_batch = {key: expand_pcd(value, num_samples) for key, value in batch.items()}
-                gmm_batch = model.update_batch_frames(gmm_batch, update_labels=True, gmm_model=gmm_model)
-                batch = model.update_batch_frames(batch, update_labels=True)
+                gmm_batch = {key: expand_pcd(value, 10) for key, value in batch.items()}
+                gmm_batch = model.update_batch_frames(gmm_batch, update_labels=False, gmm_model=gmm_model)
                 pred_dict = model.predict(gmm_batch, 1, progress=False, full_prediction=True)
             else:
-                batch = model.update_batch_frames(batch, update_labels=True)
-                pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
+                batch = model.update_batch_frames(batch, update_labels=False)
+                pred_dict = model.predict(batch, 10, progress=False, full_prediction=True)
+            pred_point_world = pred_dict["point"]["pred_world"]
+            results_world = pred_dict["results_world"]
 
-            #batch = model.update_batch_frames(batch, update_labels=True)
-            #pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
-            batch = {key: value.to(device) for key, value in batch.items()}
+            # updating indices for visualization
+            non_gripper_indices += 1
+            non_gripper_indices[non_gripper_indices >= gripper_indices[1]] += 1
 
-            viz_args = model.get_viz_args(batch, 0)
-
-            # Get point clouds in world coordinates.
-            pred_pc_world = pred_dict["point"]["pred_world"].cpu().numpy()
-            gt_pc_world = viz_args["pc_pos_viz"].cpu().numpy()
-            action_pc_world = viz_args["pc_action_viz"].cpu().numpy()
-            anchor_pc_world = viz_args["pc_anchor_viz"].cpu().numpy()
-
-            # Another hack; if scene-as-anchor, revert back to just anchor.
-            if cfg.model.scene_anchor:
-                anchor_pc_world = anchor_pc_world[:anchor_pc_world.shape[0] // 2, :]
-
-            # Create GMM viz args, if needed.
-            if gmm_model is not None:
-                gmm_viz = {
-                    "gmm_probs": gmm_batch["gmm_probs"].cpu().numpy(),
-                    "gmm_means": gmm_batch["gmm_means"].cpu().numpy(),
-                    "sampled_idxs": gmm_batch["sampled_idxs"].cpu().numpy(),
-                }
-            else:
-                gmm_viz = None
-
-            # visualize sampled predictions
-            context = {
-                "Action": action_pc_world,
-                "Anchor": anchor_pc_world,
+            action_indices = np.concatenate(
+                [np.array(gripper_indices), non_gripper_indices.squeeze().cpu().numpy()]
+            )
+            save_dict = {
+                "pred_point_world": pred_point_world.cpu().numpy(),
+                "results_world": torch.stack(results_world).cpu().numpy(),
+                "action_indices": action_indices,
             }
-            fig = visualize_sampled_predictions(
-                ground_truth = gt_pc_world,
-                context = context,
-                predictions = pred_pc_world,
-                gmm_viz = gmm_viz,
+            np.savez(
+                save_path / f"pred_{i}.npz",
+                **save_dict,
             )
-            fig.show()
-
-            # Visualize diffusion timelapse.
-            VIZ_IDX = 4 # 0
-            results = [res[VIZ_IDX].cpu().numpy() for res in pred_dict["results_world"]]
-            # For TAX3Dv2, also grab logit/residual predictions.
-            # if cfg.model.tax3dv2:
-            #     extras = [ext[VIZ_IDX].cpu().numpy() for ext in pred_dict["extras"]]
-                # ref_frame_results = [ref_frame_res[VIZ_IDX].cpu().numpy() for ref_frame_res in pred_dict["ref_frame_results_world"]]
-            # else:
-            extras = None
-            ref_frame_results = None
-            fig = visualize_diffusion_timelapse(
-                context = {
-                    "Action": action_pc_world,
-                    "Anchor": anchor_pc_world,
-                },
-                results = results,
-                extras = extras,
-                ref_frame_results = ref_frame_results,
-            )
-            fig.show()
 
     ######################################################################
-    # Run the model on the train/val/test sets.
+    # Generate predictions on the train/val sets.
     ######################################################################
-    train_indices = []
-    val_indices = [8]
-    val_ood_indices = []
+    # Creating directory for model predictions.
+    pred_dir = datamodule.root / "tax3d_preds" / cfg.checkpoint.run_id
+    if os.path.exists(pred_dir):
+        print(f"Prediction directory {pred_dir} already exists. Delete first.")
+        quit()
+    os.makedirs(pred_dir, exist_ok=True)
+    os.makedirs(pred_dir / "train", exist_ok=True)
+    os.makedirs(pred_dir / "val", exist_ok=True)
+
     model.to(device)
-    run_vis(datamodule.train_dataset, model, train_indices)
-    run_vis(datamodule.val_dataset, model, val_indices)
-    run_vis(datamodule.val_ood_dataset, model, val_ood_indices)
-
+    generate_preds(datamodule.train_dataset, pred_dir / "train")
+    generate_preds(datamodule.val_dataset, pred_dir / "val")
 
 if __name__ == "__main__":
     main()
