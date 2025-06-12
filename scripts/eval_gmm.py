@@ -86,6 +86,7 @@ def main(cfg):
     ######################################################################
     network, _ = create_model(cfg)
     model = FrameGMMPredictor(network, cfg.model, device)
+    model.eval()
 
     ######################################################################
     # Evaluation loop.

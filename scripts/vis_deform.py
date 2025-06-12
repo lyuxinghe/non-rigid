@@ -83,18 +83,21 @@ def main(cfg):
         if cfg.model.pred_frame != "noisy_goal":
             raise ValueError("GMM can only be used with noisy goal models.")
         
-        # Checking for GMM model directory.
-        gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"gmm_{cfg.dataset.name}_{cfg.gmm}")
-        if not os.path.exists(gmm_exp_name):
-            raise ValueError(f"GMM experiment directory {gmm_exp_name} does not exist - train this model first.")
+        # Grab config file from saved run.
+        exp_name = os.path.join(
+            os.path.expanduser(cfg.gmm_log_dir),
+            cfg.gmm,
+        )
+        if not os.path.exists(exp_name):
+            raise ValueError(f"Experiment directory {exp_name} does not exist - train this model first.")
+        gmm_cfg = omegaconf.OmegaConf.load(os.path.join(exp_name, "config.yaml"))
         
-        # Loading GMM frame predictor.
-        gmm_model_cfg = omegaconf.OmegaConf.load(os.path.join(hydra.utils.get_original_cwd(), "../configs/model/df_cross.yaml"))
-        gmm_model_cfg.rel_pos = True
-        gmm_model = FrameGMMPredictor(gmm_model_cfg, device)
+        # Creating GMM network.
+        network, _ = create_model(gmm_cfg)
+        gmm_model = FrameGMMPredictor(network, gmm_cfg.model, device)
         gmm_model.load_state_dict(
             torch.load(
-                os.path.join(gmm_exp_name, "checkpoints", f"epoch_{cfg.gmm}.pt")
+                os.path.join(exp_name, "checkpoints", f"epoch_{gmm_cfg.epochs}.pt")
             )
         )
         gmm_model.eval()
