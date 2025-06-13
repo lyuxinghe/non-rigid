@@ -28,7 +28,7 @@ def visualize_sampled_predictions(
     context,
     predictions,
     gmm_viz,
-    ref_predictions,
+    # ref_predictions,
 ):
     """
     Helper function to visualize sampled point cloud predictions with custom colors
@@ -142,6 +142,7 @@ def visualize_sampled_predictions(
     pred_colors = interpolate_colors(pred_base1, pred_base2, P)
     
     # MEGA HACK BECAUSE OF CORL
+    # NOTE: for visualization purposes, can hardcode pred-specific colors here.
     pred_colors[0] = "#f12121"
     pred_colors[18] = "#2ef121"
     pred_colors[19] = "#2145f1"
@@ -168,43 +169,43 @@ def visualize_sampled_predictions(
         ))
     
 
-    # 6) Reference prediction (red X’s)
-    ref_pts = np.atleast_2d(ref_predictions.reshape(-1, 3))
-    traces.append(go.Scatter3d(
-        x=ref_pts[:,0], y=ref_pts[:,1], z=ref_pts[:,2],
-        mode="markers",
-        marker=dict(size=5, color=red_color, symbol="x"),
-        name="Ref Prediction"
-    ))
+    # # 6) Reference prediction (red X’s)
+    # ref_pts = np.atleast_2d(ref_predictions.reshape(-1, 3))
+    # traces.append(go.Scatter3d(
+    #     x=ref_pts[:,0], y=ref_pts[:,1], z=ref_pts[:,2],
+    #     mode="markers",
+    #     marker=dict(size=5, color=red_color, symbol="x"),
+    #     name="Ref Prediction"
+    # ))
 
-    # 7) Sampled vector noise for the reference
-    #    a single 3‐vector
-    ref_noise_vec = np.random.normal(scale=1.0, size=(3,))
-    ref_center = ref_pts[0]
-    dest = ref_center + ref_noise_vec
-    traces.append(go.Scatter3d(
-        x=[dest[0]], y=[dest[1]], z=[dest[2]],
-        mode="markers",
-        marker=dict(size=5, color=grey_dark, symbol="x"),
-        name="Ref Noise"
-    ))
-    # as a line
-    traces.append(go.Scatter3d(
-        x=[ref_center[0], dest[0]],
-        y=[ref_center[1], dest[1]],
-        z=[ref_center[2], dest[2]],
-        mode="lines",
-        line=dict(color=grey_light, width=3, dash="dash"),
-        name="Ref Noise Vec"
-    ))
-    # 8) Gaussian cloud around displaced reference
-    noise_ref_cloud = dest + (noise_action - noise_action.mean(axis=0))
-    traces.append(go.Scatter3d(
-        x=noise_ref_cloud[:,0], y=noise_ref_cloud[:,1], z=noise_ref_cloud[:,2],
-        mode="markers",
-        marker=dict(size=6, color=grey_light, symbol="circle"),
-        name="Ref Noise Cloud"
-    ))
+    # # 7) Sampled vector noise for the reference
+    # #    a single 3‐vector
+    # ref_noise_vec = np.random.normal(scale=1.0, size=(3,))
+    # ref_center = ref_pts[0]
+    # dest = ref_center + ref_noise_vec
+    # traces.append(go.Scatter3d(
+    #     x=[dest[0]], y=[dest[1]], z=[dest[2]],
+    #     mode="markers",
+    #     marker=dict(size=5, color=grey_dark, symbol="x"),
+    #     name="Ref Noise"
+    # ))
+    # # as a line
+    # traces.append(go.Scatter3d(
+    #     x=[ref_center[0], dest[0]],
+    #     y=[ref_center[1], dest[1]],
+    #     z=[ref_center[2], dest[2]],
+    #     mode="lines",
+    #     line=dict(color=grey_light, width=3, dash="dash"),
+    #     name="Ref Noise Vec"
+    # ))
+    # # 8) Gaussian cloud around displaced reference
+    # noise_ref_cloud = dest + (noise_action - noise_action.mean(axis=0))
+    # traces.append(go.Scatter3d(
+    #     x=noise_ref_cloud[:,0], y=noise_ref_cloud[:,1], z=noise_ref_cloud[:,2],
+    #     mode="markers",
+    #     marker=dict(size=6, color=grey_light, symbol="circle"),
+    #     name="Ref Noise Cloud"
+    # ))
 
     # assemble
     fig.add_traces(traces)

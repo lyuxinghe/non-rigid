@@ -26,7 +26,7 @@ import rpad.visualize_3d.plots as vpl
 from plotly import graph_objects as go
 
 @torch.no_grad()
-@hydra.main(config_path="../configs", config_name="eval", version_base="1.3")
+@hydra.main(config_path="../configs", config_name="eval_deform", version_base="1.3")
 def main(cfg):
     task_overrides = HydraConfig.get().overrides.task
     cfg = load_checkpoint_config_from_wandb(
