@@ -44,6 +44,7 @@ class DedoDataset(BaseDataset):
             num_anchors='1',
             goal_conditioning='none',
             robot=True,
+            size='small',
             action_size=512,
             anchor_size=512,
             ):
@@ -60,6 +61,7 @@ class DedoDataset(BaseDataset):
         self.num_anchors = num_anchors
         self.goal_conditioning = goal_conditioning
         self.robot = robot
+        self.size = size
         self.action_size = action_size
         self.anchor_size = anchor_size
 
@@ -74,7 +76,7 @@ class DedoDataset(BaseDataset):
             f'hole={self.hole} ' + \
             f'robot={self.robot} ' + \
             f'num_anchors={self.num_anchors} ' + \
-            'dp3 big'
+            f'dp3 {self.size}'
         )
         self.zarr_dir = os.path.join(root_dir, dataset_dir)
         train_zarr_path = os.path.join(self.zarr_dir, 'train.zarr')

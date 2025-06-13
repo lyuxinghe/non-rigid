@@ -48,6 +48,7 @@ dataset:
   num_anchors: 2
   hole: single
   robot: True
+  size: small # [small, medium, big]
   
   goal_conditioning: ${policy.goal_conditioning}
   action_size: ${task.action_size}
