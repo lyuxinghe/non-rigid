@@ -33,6 +33,10 @@ checkpoint:
   monitor_name: null
   reference: ${wandb.entity}/${wandb.project}/model-${checkpoint.run_id}:${checkpoint.alias}
 
+# diffusion inference settings.
+diffusion:
+  mode: ddpm # (ddpm, ddim) Diffusion mode
+
 resources:
   num_workers: 4
   gpus:
