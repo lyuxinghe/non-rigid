@@ -22,6 +22,7 @@ val_dataset_size: 400 # None: Use the length of loaded dataset
 test_dataset_size: 400  # None: Use the length of loaded dataset
 val_use_defaults: False # Use default values for some parameters on the validation set
 preprocess: True
+augment_gt: False
 
 sample_size_action: 512
 sample_size_anchor: 512
@@ -47,13 +48,12 @@ pcd_scale: 3.0 # Scale range for the point clouds
 #####################################################
 # Data Processing/Augmentation Parameters
 #####################################################
-pcd_scale_factor: 15.0 # Scale factor for the point clouds
 scene_transform_type: random_flat_upright # Transformation type to apply to the scene
 translation_variance: 0.0 # Translation variance of the demo transformation
 rotation_variance: 180 # Rotation variance of the demo transformation
 
 ###################################################
-# Data Augmentation Parameters
+# Data Augmentation Parameters (Assuming the point cloud max scale is 1)
 ###################################################
 action_plane_occlusion: 0.8 # Probability of applying plane occlusion (0.8)
 action_plane_standoff: 0.04 # Standoff distance of the occluding plane from selected plane origin

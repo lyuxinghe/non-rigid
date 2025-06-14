@@ -76,7 +76,9 @@ def preprocess_demo(
 
     preprocessed = {
         "multi_obj_start_pcd": multi_obj_start_pcd_dict,
-        "multi_obj_final_pcd": multi_obj_final_pcd_dict
+        "multi_obj_final_pcd": multi_obj_final_pcd_dict,
+        "multi_obj_start_obj_pose" : demo['multi_obj_start_obj_pose'].item(),
+        "multi_obj_final_obj_pose" : demo['multi_obj_final_obj_pose'].item(),
     }
     
     return preprocessed
@@ -142,4 +144,4 @@ if __name__ == "__main__":
     main()
     
 # Examples:
-# python preprocess --task-name mug_rack_easy_single --task-type task_name_mug_on_rack
+# python preprocess.py --task-name mug_rack_easy_single --task-type task_name_mug_on_rack

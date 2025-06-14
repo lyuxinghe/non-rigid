@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
+import random
 
 import lightning as L
 import numpy as np
@@ -9,10 +10,22 @@ import omegaconf
 import torch
 import torch.utils.data as data
 from pytorch3d.transforms import Translate
+from scipy.spatial.transform import Rotation as R
 
 from non_rigid.utils.augmentation_utils import maybe_apply_augmentations
 from non_rigid.utils.pointcloud_utils import downsample_pcd, get_multi_anchor_scene
 from non_rigid.utils.transform_utils import random_se3
+
+from typing import List
+
+def matrix_from_list(pose_list: List[float]) -> np.ndarray:
+    trans = pose_list[:3]
+    quat = pose_list[3:]
+
+    T = np.eye(4)
+    T[:-1, :-1] = R.from_quat(quat).as_matrix()
+    T[:-1, -1] = trans
+    return T
 
 class RPDiffDataset(data.Dataset):
     def __init__(self, root, dataset_cfg, type):
@@ -22,7 +35,11 @@ class RPDiffDataset(data.Dataset):
         self.dataset_cfg = dataset_cfg
         self.rpdiff_task_name = dataset_cfg.rpdiff_task_name
         self.rpdiff_task_type = dataset_cfg.rpdiff_task_type
-        
+
+        # additional processing flags
+        self.augment_gt = False
+        self.preprocess = False
+
         # if eval_mode = True, we turn off occlusion
         self.eval_mode = False if self.type == "train" else True
             
@@ -34,10 +51,16 @@ class RPDiffDataset(data.Dataset):
         
         if 'preprocess' in dataset_cfg and dataset_cfg.preprocess:
             self.dataset_dir = self.dataset_dir / "preprocessed"
+            self.preprocess = True
             print(f"Loading RPDiff Preprocessed Dataset from {self.dataset_dir}")
         else:
             print(f"Loading RPDiff Dataset from {self.dataset_dir}")
-        
+
+        if 'augment_gt' in dataset_cfg and dataset_cfg.augment_gt:
+            self.augment_gt = True
+            print(f"Augmenting RPDiff Dataset Ground Truths for Book/Bookshelf and Can/Cabinet")
+
+
         # setting sample sizes
         self.sample_size_action = self.dataset_cfg.sample_size_action
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor
@@ -69,19 +92,23 @@ class RPDiffDataset(data.Dataset):
         child_start_pcd = demo['multi_obj_start_pcd'].item()['child']
         parent_final_pcd = demo['multi_obj_final_pcd'].item()['parent']
         child_final_pcd = demo['multi_obj_final_pcd'].item()['child']
-
+        
         action_pc = torch.as_tensor(child_start_pcd).float()
         anchor_pc = torch.as_tensor(parent_start_pcd).float()
         goal_action_pc = torch.as_tensor(child_final_pcd).float()
         goal_anchor_pc = torch.as_tensor(parent_final_pcd).float()  # same as anchor_pc
 
-        action_pc *= self.dataset_cfg.pcd_scale_factor
-        anchor_pc *= self.dataset_cfg.pcd_scale_factor
-        goal_action_pc *= self.dataset_cfg.pcd_scale_factor
-
         action_seg = torch.zeros_like(action_pc[:, 0]).int()
         anchor_seg = torch.ones_like(anchor_pc[:, 0]).int()
-        
+
+        # calculate the scale of action and anchor pcd, such that we can estimate reasonable params 
+        # for 1. augmentations and 2. noise scale
+        # TODO: this mighe be a bit inefficient ..., optimize it!
+        action_point_dists = action_pc - action_pc.mean(dim=0, keepdim=True)
+        action_point_scale = torch.linalg.norm(action_point_dists, dim=1, keepdim=True).max()
+        anchor_point_dists = anchor_pc - anchor_pc.mean(dim=0, keepdim=True) 
+        anchor_point_scale = torch.linalg.norm(anchor_point_dists, dim=1, keepdim=True).max()
+
         # Apply augmentations
         if self.type == "train" or self.dataset_cfg.val_use_defaults:
             if not self.eval_mode:
@@ -92,12 +119,12 @@ class RPDiffDataset(data.Dataset):
                     ball_occlusion_param={
                         "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
                         "ball_radius": self.dataset_cfg.action_ball_radius
-                        * self.dataset_cfg.pcd_scale_factor,
+                        / action_point_scale,
                     },
                     plane_occlusion_param={
                         "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
                         "plane_standoff": self.dataset_cfg.action_plane_standoff
-                        * self.dataset_cfg.pcd_scale_factor,
+                        / action_point_scale,
                     },
                 )
                 action_seg = action_seg[action_pc_indices.squeeze(0)]
@@ -109,12 +136,12 @@ class RPDiffDataset(data.Dataset):
                     ball_occlusion_param={
                         "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
                         "ball_radius": self.dataset_cfg.anchor_ball_radius
-                        * self.dataset_cfg.pcd_scale_factor,
+                        / anchor_point_scale,
                     },
                     plane_occlusion_param={
                         "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
                         "plane_standoff": self.dataset_cfg.anchor_plane_standoff
-                        * self.dataset_cfg.pcd_scale_factor,
+                        / anchor_point_scale,
                     },
                 )
 
@@ -139,8 +166,54 @@ class RPDiffDataset(data.Dataset):
             anchor_pc = anchor_pc.squeeze(0)
             anchor_seg = anchor_seg[anchor_pc_indices.squeeze(0)]
 
+        # Apply task-specific augmentations for book/bookshelf and can/cabinet
+        if self.augment_gt and ("bookshelf" in self.rpdiff_task_name or "cabinet" in self.rpdiff_task_name):
+            final_parent_pose_list = demo['multi_obj_final_obj_pose'].item()['parent']
+            final_child_pose_list = demo['multi_obj_final_obj_pose'].item()['child']
+            final_parent_pose_mat = matrix_from_list(final_parent_pose_list)
+            final_child_pose_mat = matrix_from_list(final_child_pose_list)
+            parent_ori = final_parent_pose_mat[:3, :3]
+            child_centroid = final_child_pose_mat[:3, 3]
+            
+            if "bookshelf" in self.rpdiff_task_name:
+                rotations = [
+                    R.from_euler('xyz', [0, 0, 0]).as_matrix(),
+                    R.from_euler('xyz', [np.pi, 0, 0]).as_matrix(),
+                    R.from_euler('xyz', [0, np.pi, 0]).as_matrix(),
+                    R.from_euler('xyz', [np.pi, np.pi, 0]).as_matrix(),
+                ]
+            elif "cabinet" in self.rpdiff_task_name:
+                rotations = [
+                    R.from_euler('xyz', [0, 0, 0]).as_matrix(),
+                    R.from_euler('xyz', [np.pi, 0, 0]).as_matrix(),
+                ]
+            else:
+                raise ValueError(f"Unknown task: {self.rpdiff_task_name}")
 
-       # Apply scene-level augmentation.
+            canonical_rot = random.choice(rotations)
+            rot = parent_ori @ canonical_rot @ parent_ori.T
+
+            tf = np.eye(4)
+            tf[:3, :3] = rot
+
+            tf_torch = torch.as_tensor(tf, dtype=goal_action_pc.dtype, device=goal_action_pc.device)
+            child_centroid_torch = torch.as_tensor(child_centroid, dtype=goal_action_pc.dtype, device=goal_action_pc.device)
+
+            # center the goal point cloud 
+            child_centroid_torch = child_centroid_torch.unsqueeze(0)
+            goal_action_pc_centered = goal_action_pc - child_centroid_torch  # [N, 3]
+
+            # convert centered point cloud to homogeneous coordinates
+            goal_action_pc_homogeneous = torch.cat([
+                goal_action_pc_centered, 
+                torch.ones(goal_action_pc_centered.shape[0], 1, dtype=goal_action_pc.dtype, device=goal_action_pc.device)
+            ], dim=1) # [N, 3] -> [N, 4]
+
+            # apply transformation and bring it back to world frame
+            goal_action_pc_transformed = (tf_torch @ goal_action_pc_homogeneous.T).T
+            goal_action_pc = goal_action_pc_transformed[:, :3] + child_centroid_torch
+
+        # Apply scene-level augmentation.
         T = random_se3(
             N=1,
             rot_var=self.dataset_cfg.rotation_variance,
@@ -179,7 +252,10 @@ class RPDiffDataset(data.Dataset):
         if self.dataset_cfg.pred_frame == "noisy_goal":
             # "Simulate" the GMM prediction as noisy goal.
             goal_center = goal_action_pc.mean(axis=0)
-            item["noisy_goal"] = goal_center + self.dataset_cfg.noisy_goal_scale * torch.normal(mean=torch.zeros(3), std=torch.ones(3))
+            goal_noise = self.dataset_cfg.noisy_goal_scale * torch.normal(mean=torch.zeros(3), std=torch.ones(3))
+            # New: we scale the noise added to the goal, such that the noise is roughly on the scale of object scale
+            scaled_goal_noise = goal_noise * action_point_scale
+            item["noisy_goal"] = goal_center + scaled_goal_noise
 
         return item
 

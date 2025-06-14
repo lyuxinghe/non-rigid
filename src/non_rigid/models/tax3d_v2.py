@@ -363,10 +363,9 @@ class TAX3Dv2BaseModule(L.LightningModule):
 
             # if the material is rigid, we also output estimated translation and rotation
             if self.dataset_cfg.material == "rigid":
-                scaling_factor = self.dataset_cfg.pcd_scale_factor
 
-                action_world_scaled = pred_world_dict['pc_action_world'] / scaling_factor
-                pred_world_scaled = pred_world_dict['pred_point_world'] / scaling_factor
+                action_world_scaled = pred_world_dict['pc_action_world'].clone()
+                pred_world_scaled = pred_world_dict['pred_point_world'].clone()
 
                 T = svd_estimation(source=action_world_scaled, target=pred_world_scaled, return_magnitude=False)
                 pred_dict["pred_T"] = T
@@ -386,7 +385,6 @@ class TAX3Dv2BaseModule(L.LightningModule):
 
         seg = batch["seg"].to(self.device)
         ground_truth_point_world = batch["pc_world"].to(self.device)
-        scaling_factor = self.dataset_cfg.pcd_scale_factor
 
         # re-shaping and expanding for winner-take-all
         bs = ground_truth_point_world.shape[0]
@@ -400,14 +398,13 @@ class TAX3Dv2BaseModule(L.LightningModule):
         # pred = pred_dict[self.prediction_type]["pred"]
         pred_point_world = pred_dict["point"]["pred_world"]
 
-        # TODO: this should happen inside get model kwargs
-        pred_point_world_scaled = pred_point_world / scaling_factor
-        ground_truth_point_world_scaled = ground_truth_point_world / scaling_factor
+        pred_point_world_clone = pred_point_world.clone()
+        ground_truth_point_world_clone = ground_truth_point_world.clone()
 
         # computing error metrics
         seg = seg == 0
 
-        rmse = flow_rmse(pred_point_world_scaled, ground_truth_point_world_scaled, mask=True, seg=seg).reshape(bs, num_samples)
+        rmse = flow_rmse(pred_point_world_clone, ground_truth_point_world_clone, mask=True, seg=seg).reshape(bs, num_samples)
         pred_point_world = pred_point_world.reshape(bs, num_samples, -1, 3)
 
         # computing winner-take-all metrics
@@ -416,7 +413,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         pred_point_world_wta = pred_point_world[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            translation_errs, rotation_errs = svd_estimation(source=pred_point_world_scaled.reshape(bs * num_samples, -1, 3), target=ground_truth_point_world_scaled, return_magnitude=True)
+            translation_errs, rotation_errs = svd_estimation(source=pred_point_world_clone, target=ground_truth_point_world_clone, return_magnitude=True)
 
             translation_errs = translation_errs.reshape(bs, num_samples)
             rotation_errs = rotation_errs.reshape(bs, num_samples)
@@ -499,21 +496,6 @@ class TAX3Dv2BaseModule(L.LightningModule):
         do_additional_logging = (
             self.global_step % self.additional_train_logging_period == 0
         )
-
-        '''
-        # Perform gradient monitoring after backward pass
-        max_grad = 0
-        for name, param in self.network.named_parameters():
-            if param.grad is not None:
-                grad_norm = param.grad.data.norm(2).item()  # Compute L2 norm of gradient
-                max_grad = max(max_grad, grad_norm)
-        
-        # Log gradient norm
-        self.log("train/max_grad_norm", max_grad, prog_bar=True)
-        if max_grad > 1e3:  # Example threshold for gradient explosion
-            self.log("train/grad_warning", 1.0)
-            print(f"Warning: Exploding gradient detected! Max Gradient Norm: {max_grad:.4f}")
-        '''
 
         # additional logging
         if do_additional_logging:
