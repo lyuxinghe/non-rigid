@@ -14,11 +14,9 @@ from non_rigid.utils.script_utils import (
     load_checkpoint_config_from_wandb,
 )
 
-from non_rigid.nets.dgcnn import DGCNN
-from non_rigid.metrics.flow_metrics import flow_rmse
 from non_rigid.utils.pointcloud_utils import expand_pcd
 from non_rigid.models.gmm_predictor import FrameGMMPredictor
-from non_rigid.utils.vis_utils import visualize_sampled_predictions, visualize_diffusion_timelapse
+from non_rigid.utils.vis_utils import visualize_sampled_predictions, visualize_diffusion_timelapse, visualize_multimodality
 from tqdm import tqdm
 import numpy as np
 
@@ -62,18 +60,18 @@ def main(cfg):
     ######################################################################
     # Manually setting eval-specific configs.
     ######################################################################
-    # Using a custom cloth-specific batch size, to allow for simultaneous evaluation
-    # of RMSE, coverage, and precision.
-    if cfg.dataset.hole == "single":
-        bs = 1
-    elif cfg.dataset.hole == "double":
-        bs = 2
-    else:
-        raise ValueError(f"Unknown hole type: {cfg.dataset.hole}.")
-    bs *= cfg.dataset.num_anchors
+    # # Using a custom cloth-specific batch size, to allow for simultaneous evaluation
+    # # of RMSE, coverage, and precision.
+    # if cfg.dataset.hole == "single":
+    #     bs = 1
+    # elif cfg.dataset.hole == "double":
+    #     bs = 2
+    # else:
+    #     raise ValueError(f"Unknown hole type: {cfg.dataset.hole}.")
+    # bs *= cfg.dataset.num_anchors
 
-    cfg.inference.batch_size = bs
-    cfg.inference.val_batch_size = bs
+    # cfg.inference.batch_size = bs
+    # cfg.inference.val_batch_size = bs
 
     ######################################################################
     # Load the reference frame predictor, if necessary.
@@ -226,7 +224,7 @@ def main(cfg):
                 predictions = pred_pc_world,
                 gmm_viz = gmm_viz,
             )
-            fig.show()
+            # fig.show()
 
             # Visualize diffusion timelapse.
             VIZ_IDX = 4 # 0
@@ -247,7 +245,22 @@ def main(cfg):
                 extras = extras,
                 ref_frame_results = ref_frame_results,
             )
-            fig.show()
+            # fig.show()
+
+            # Create multi-modal gif.
+            gif_results = [res.cpu().numpy() for res in pred_dict["results_world"]]
+            fig = visualize_multimodality(
+                context = {
+                    "Anchor": anchor_pc_world,
+                },
+                predictions = pred_pc_world,
+                results = gif_results,
+                # indices = [0, 1],
+                indices = [0, 2, 3, 7],
+                gif_path = os.path.expanduser("~/data/multimodal_viz"),
+            )
+            # fig.show()
+
 
     ######################################################################
     # Run the model on the train/val/test sets.

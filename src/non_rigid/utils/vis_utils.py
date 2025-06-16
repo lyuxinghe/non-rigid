@@ -5,10 +5,14 @@ import plotly.graph_objects as go
 import plotly.colors as pc
 import rpad.visualize_3d.primitives as rvpr
 import torch
+import os
 
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from PIL import Image
+import imageio
+from io import BytesIO
+from tqdm import tqdm
 
 
 def interpolate_colors(hex1, hex2, n):
@@ -454,6 +458,109 @@ def visualize_diffusion_timelapse(context, results, ref_frame_results=None, extr
     )
     fig.update_scenes(
         xaxis_visible=False, yaxis_visible=False, zaxis_visible=False
+    )
+    return fig
+
+def visualize_multimodality(context, predictions, results, indices=[0, 1, 2], gif_path=None):
+    num_frames = 100
+    scene_data = []
+    gif_frames = []
+    fig = go.Figure()
+
+    # Custom colors.
+    anchor_color = "#ff8a00"
+    color_0 = "#f12121"
+    color_1 = "#2ef121"
+    color_2 = "#2145f1"
+    color_3 = "#a12ef1" 
+    colors = [color_0, color_1, color_2, color_3]
+
+    # Add anchor points to the figure.
+    anchor_pts = context["Anchor"]
+    scene_data.append(anchor_pts)
+    fig.add_trace(
+        go.Scatter3d(
+            x=anchor_pts[:, 0], y=anchor_pts[:, 1], z=anchor_pts[:, 2],
+            mode="markers",
+            marker=dict(size=6, color=anchor_color, symbol="circle"),
+            name="Anchor"
+        )
+    )
+
+    # Adding predictions points to scene data, and initializing diffusion traces..
+    for i, idx in enumerate(indices):
+        scene_data.append(predictions[i])
+        fig.add_trace(
+            go.Scatter3d(
+                x=results[0][idx][:, 0], y=results[0][idx][:, 1], z=results[0][idx][:, 2],
+                mode="markers",
+                marker=dict(size=6, color=colors[i], symbol="circle"),
+                name=f"Prediction {idx}"
+            )
+        )
+
+    fig.update_layout(
+        scene=rvpl._3d_scene(np.concatenate(scene_data)),
+        showlegend=False
+    )
+    fig.update_scenes(
+        xaxis_visible=False, yaxis_visible=False, zaxis_visible=False
+    )
+
+    # Creating denoising frames.
+    for i in tqdm(range(num_frames)):
+        angle = 2 * np.pi * i / num_frames
+        camera = dict(
+            up=dict(x=0, y=0, z=1),
+            # center=dict(x=0, y=0, z=0),
+            eye=dict(
+                x=np.cos(angle),
+                y=np.sin(angle),
+                z=0.8
+            )
+        )
+        for j, idx in enumerate(indices):
+            # Updating diffusion traces.
+            fig.update_traces(x=results[i][idx][:, 0], y=results[i][idx][:, 1], z=results[i][idx][:, 2],
+                            selector=dict(name=f"Prediction {idx}"))
+
+        fig.update_layout(
+            scene_camera=camera,
+            width=900,
+            height=900,
+        )
+        frame = fig.to_image(format='png')
+        gif_frames.append(Image.open(BytesIO(frame)))
+        # fig.write_image(os.path.join(gif_path, f"multimodality_frame_{i + 1}.png"))
+
+    # Creating additional frames for final prediction.
+    for i in tqdm(range(num_frames)):
+        angle = 2 * np.pi * i / num_frames
+        camera = dict(
+            up=dict(x=0, y=0, z=1),
+            center=dict(x=0, y=0, z=0),
+            eye=dict(
+                x=np.cos(angle),
+                y=np.sin(angle),
+                z=0.8
+            )
+        )
+        fig.update_layout(
+            scene_camera=camera,
+            width=900,
+            height=900,
+        )
+        frame = fig.to_image(format='png')
+        gif_frames.append(Image.open(BytesIO(frame)))
+        # fig.write_image(os.path.join(gif_path, f"multimodality_frame_{i + 1 + num_frames}.png"))
+
+    # Create gif.
+    gif_frames[0].save(
+        os.path.join(gif_path, "multimodality_animation4.gif"),
+        save_all=True,
+        append_images=gif_frames[1:],
+        duration=33,  # milliseconds per frame
+        loop=0,  # loop forever
     )
     return fig
 
