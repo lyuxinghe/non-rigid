@@ -457,8 +457,9 @@ class GaussianDiffusionDDRDSeparate:
             out_s["mean"] = self.condition_mean(cond_fn, out_s, x_s, t, model_kwargs=model_kwargs)
 
         sample_r = out_r["mean"] + nonzero_mask_r * th.exp(0.5 * out_r["log_variance"]) * noise_r
-        # sample_r = out_r["mean"]
+        # ample_r = out_r["mean"]
         sample_s = out_s["mean"] + nonzero_mask_s * th.exp(0.5 * out_s["log_variance"]) * noise_s
+        # sample_s = out_s["mean"]
 
         return {"sample_r": sample_r, "sample_s": sample_s, "pred_xstart": out_r["pred_xstart"]+out_s["pred_xstart"]}
 

@@ -66,6 +66,7 @@ class DP3(BasePolicy):
                                                 pointcloud_encoder_cfg=pointcloud_encoder_cfg,
                                                 use_pc_color=use_pc_color,
                                                 pointnet_type=pointnet_type,
+                                                goal_conditioning=goal_conditioning,
                                                 )
 
         # create diffusion model

@@ -122,6 +122,9 @@ class TAX3Dv2BaseModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid mode: {self.mode}")
         
+        # DDIM; only available during inference
+        self.use_ddim = cfg.diffusion.mode == "ddim" and self.mode == "eval"
+        
         # data params
         self.batch_size = self.run_cfg.batch_size
         self.val_batch_size = self.run_cfg.val_batch_size
@@ -267,7 +270,9 @@ class TAX3Dv2BaseModule(L.LightningModule):
         #trans_noise_scale = torch.tensor(0.6, device=self.device)
         #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device) * torch.sqrt(1 + trans_noise_scale)
 
-        final_dict, results = self.diffusion.p_sample_loop(
+        reverse_sample_function = self.diffusion.p_sample_loop if not self.use_ddim else self.diffusion.ddim_sample_loop
+        # final_dict, results = self.diffusion.p_sample_loop(
+        final_dict, results = reverse_sample_function(
             self.network,
             z_r.shape,
             z_s.shape,

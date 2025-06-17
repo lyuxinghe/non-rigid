@@ -62,21 +62,24 @@ def main(cfg):
     ######################################################################
     # Manually setting eval-specific configs.
     ######################################################################
-    # Using a custom cloth-specific batch size, to allow for simultaneous evaluation 
-    # of RMSE, coverage, and precision.
-    if cfg.dataset.hole == "single":
-        bs = 1
-    elif cfg.dataset.hole == "double":
-        bs = 2
+    if cfg.dataset.name == "dedo":
+        # For DEOD, use a custom cloth-specific batch size, to allow for simultaneous evaluation 
+        # of RMSE, coverage, and precision.
+        if cfg.dataset.hole == "single":
+            bs = 1
+        elif cfg.dataset.hole == "double":
+            bs = 2
+        else:
+            raise ValueError(f"Unknown hole type: {cfg.dataset.hole}.")
+        bs *= cfg.dataset.num_anchors
     else:
-        raise ValueError(f"Unknown hole type: {cfg.dataset.hole}.")
-    bs *= cfg.dataset.num_anchors
+        bs = 1
 
     ######################################################################
     # Create the datamodule.
     ######################################################################
-    if cfg.dataset.name != "dedo":
-        raise ValueError(f"This evaluation script only works with the DEDO dataset.")
+    # if cfg.dataset.name != "dedo":
+    #     raise ValueError(f"This evaluation script only works with the DEDO dataset.")
     cfg, datamodule = create_datamodule(cfg)
     train_dataset = datamodule.train_dataset
     val_dataset = datamodule.val_dataset
@@ -107,7 +110,10 @@ def main(cfg):
         rmses = []
         coverage_rmses = []
         precision_rmses = []
+
+        # TODO: hacking this in for now to only visualize some data points.
         num_batches = len(dataset) // bs
+        num_batches = min(num_batches, 100)
         data_keys = ["pc_action", "pc_anchor", "pc"]
 
         for i in tqdm(range(num_batches), desc=f"Evaluating {split} set", leave=False):

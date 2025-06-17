@@ -198,7 +198,119 @@ class PointNetEncoderXYZ(nn.Module):
         """
         self.input_pointcloud = input[0].detach()
 
+
+class PointNetEncoderXYZseg(nn.Module):
+    """Encoder for Pointcloud
+    """
+
+    def __init__(self,
+                 in_channels: int=5,
+                 out_channels: int=1024,
+                 use_layernorm: bool=False,
+                 final_norm: str='none',
+                 use_projection: bool=True,
+                 goal_conditioning: str='none',
+                 **kwargs
+                 ):
+        """_summary_
+
+        Args:
+            in_channels (int): feature size of input (3 or 6)
+            input_transform (bool, optional): whether to use transformation for coordinates. Defaults to True.
+            feature_transform (bool, optional): whether to use transformation for features. Defaults to True.
+            is_seg (bool, optional): for segmentation or classification. Defaults to False.
+        """
+        super().__init__()
+        block_channel = [64, 128, 256]
+        cprint("[PointNetEncoderXYZ] use_layernorm: {}".format(use_layernorm), 'cyan')
+        cprint("[PointNetEncoderXYZ] use_final_norm: {}".format(final_norm), 'cyan')
+        
+        # TODO: depending on if goal conditioned or not, this should change
+        assert in_channels == 5 or in_channels == 6, cprint(f"PointNetEncoderXYZseg only supports 5 or 6 channels, but got {in_channels}", "red")
+       
+        self.mlp = nn.Sequential(
+            nn.Linear(in_channels, block_channel[0]),
+            nn.LayerNorm(block_channel[0]) if use_layernorm else nn.Identity(),
+            nn.ReLU(),
+            nn.Linear(block_channel[0], block_channel[1]),
+            nn.LayerNorm(block_channel[1]) if use_layernorm else nn.Identity(),
+            nn.ReLU(),
+            nn.Linear(block_channel[1], block_channel[2]),
+            nn.LayerNorm(block_channel[2]) if use_layernorm else nn.Identity(),
+            nn.ReLU(),
+        )
+        
+        
+        if final_norm == 'layernorm':
+            self.final_projection = nn.Sequential(
+                nn.Linear(block_channel[-1], out_channels),
+                nn.LayerNorm(out_channels)
+            )
+        elif final_norm == 'none':
+            self.final_projection = nn.Linear(block_channel[-1], out_channels)
+        else:
+            raise NotImplementedError(f"final_norm: {final_norm}")
+
+        self.use_projection = use_projection
+        if not use_projection:
+            self.final_projection = nn.Identity()
+            cprint("[PointNetEncoderXYZseg] not use projection", "yellow")
+        
+        self.goal_conditioning = goal_conditioning
+        self.one_hot_n = in_channels - 3
+        if self.goal_conditioning == "none":
+            assert in_channels == 5
+        else:
+            assert in_channels == 6
+            
+        VIS_WITH_GRAD_CAM = False
+        if VIS_WITH_GRAD_CAM:
+            self.gradient = None
+            self.feature = None
+            self.input_pointcloud = None
+            self.mlp[0].register_forward_hook(self.save_input)
+            self.mlp[6].register_forward_hook(self.save_feature)
+            self.mlp[6].register_backward_hook(self.save_gradient)
+         
+         
+    def forward(self, x):
+        # Sanity check for one-hot encoding
+        total_num_points = x.shape[-2]
+        assert total_num_points % self.one_hot_n == 0, cprint(f"total_num_points: {total_num_points} should be divisible by one_hot_n: {self.one_hot_n}", "red")
+        
+        # Adding one-hot encoding to point cloud input
+        num_points = total_num_points // self.one_hot_n
+        one_hot_encoding = torch.zeros((total_num_points, self.one_hot_n), device=x.device)
+        for i in range(self.one_hot_n):
+            one_hot_encoding[i * num_points:(i + 1) * num_points, i] = 1.0
+        x = torch.cat([x, one_hot_encoding.unsqueeze(0).repeat(x.shape[0], 1, 1)], dim=-1)  # B * N * (3 + one_hot_n)
+
+        x = self.mlp(x)
+        x = torch.max(x, 1)[0]
+        x = self.final_projection(x)
+        return x
     
+    def save_gradient(self, module, grad_input, grad_output):
+        """
+        for grad-cam
+        """
+        self.gradient = grad_output[0]
+
+    def save_feature(self, module, input, output):
+        """
+        for grad-cam
+        """
+        if isinstance(output, tuple):
+            self.feature = output[0].detach()
+        else:
+            self.feature = output.detach()
+    
+    def save_input(self, module, input, output):
+        """
+        for grad-cam
+        """
+        self.input_pointcloud = input[0].detach()
+
 
 
 class DP3Encoder(nn.Module):
@@ -210,6 +322,7 @@ class DP3Encoder(nn.Module):
                  pointcloud_encoder_cfg=None,
                  use_pc_color=False,
                  pointnet_type='pointnet',
+                 goal_conditioning="none",
                  ):
         super().__init__()
         self.imagination_key = 'imagin_robot'
@@ -239,6 +352,8 @@ class DP3Encoder(nn.Module):
             if use_pc_color:
                 pointcloud_encoder_cfg.in_channels = 6
                 self.extractor = PointNetEncoderXYZRGB(**pointcloud_encoder_cfg)
+            elif pointcloud_encoder_cfg.one_hot:
+                self.extractor = PointNetEncoderXYZseg(goal_conditioning=goal_conditioning, **pointcloud_encoder_cfg)
             else:
                 pointcloud_encoder_cfg.in_channels = 3
                 self.extractor = PointNetEncoderXYZ(**pointcloud_encoder_cfg)
