@@ -123,8 +123,11 @@ class TAX3Dv2BaseModule(L.LightningModule):
             raise ValueError(f"Invalid mode: {self.mode}")
         
         # DDIM; only available during inference
-        self.use_ddim = cfg.diffusion.mode == "ddim" and self.mode == "eval"
-        
+        if "diffusion" in cfg:
+            self.use_ddim = cfg.diffusion.mode == "ddim" and self.mode == "eval"
+        else:
+            self.use_ddim = False
+            
         # data params
         self.batch_size = self.run_cfg.batch_size
         self.val_batch_size = self.run_cfg.val_batch_size
