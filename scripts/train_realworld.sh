@@ -13,7 +13,7 @@
 
 
 #------ Run On AutoBot with Singularity ------#
-# singularity exec --nv -B /home/lyuxingh/code/tax3d_upgrade:/opt/lyuxingh/code/tax3d_upgrade -B /scratch/lyuxingh/data:/opt/lyuxingh/data -B /scratch/lyuxingh/logs:/opt/lyuxingh/logs /scratch/lyuxingh/singularity/tax3d_lyuxing.sif bash -c "cd /opt/lyuxingh/code/tax3d_upgrade/scripts && CUDA_VISIBLE_DEVICES=？ ./train.sh <YOUR TRAIN COMMAND HERE> dataset.data_dir=/opt/lyuxingh/data/rpdiff/data/task_demos/ log_dir=/opt/lyuxingh/logs"
+#singularity exec --nv -B /home/lyuxingh/code/tax3d_realworld:/opt/lyuxingh/code/tax3d_realworld -B /scratch/lyuxingh/data:/opt/lyuxingh/data -B /scratch/lyuxingh/logs:/opt/lyuxingh/logs /scratch/lyuxingh/singularity/tax3d_realworld.sif bash -c "cd /opt/lyuxingh/code/tax3d_realworld/scripts && CUDA_VISIBLE_DEVICES=0 ./train_realworld.sh 0 tax3dv2 online insertion model.point_encoder=pn2 model.diff_rotation_noise_scale=45 dataset.connector_type=0503-wp-1 model.pcd_scale=1.0 dataset.pcd_scale=1.0 dataset.sample_size_action=2048 dataset.sample_size_anchor=2048 resources.num_workers=16 dataset.data_dir=/opt/lyuxingh/data/insertion/demonstrations/ log_dir=/opt/lyuxingh/logs"
 
 #------ Resuming from a crashed run (u want to keep the run id, and log to the original entry)------#
 # ./train.sh 0 tax3dv2 online insertion model.frame_type=fixed model.pred_frame=anchor_center model.point_encoder=pn2 model.diff_rotation_noise_scale=45 dataset.connector_type=0428-wp-2 resources.num_workers=16 checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt=/home/lyuxing/Desktop/tax3d_realworld/checkpoints/annia0md.ckpt
