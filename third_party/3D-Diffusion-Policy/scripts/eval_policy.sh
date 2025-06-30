@@ -12,9 +12,9 @@ config_name=${alg_name}
 addition_info=${3}
 seed=${4}
 exp_name=${task_name}-${alg_name}-${addition_info}
-# run_dir="data/outputs/${exp_name}_seed${seed}"
-# run_dir="/home/eycai/Documents/data/outputs/${exp_name}_seed${seed}"
-run_dir="'~/data/outputs/${exp_name}_seed${seed}'"
+# NOTE: Hack for now; assuming training seed is 1, so eval can use a different seed.
+# run_dir="'~/data/outputs/${exp_name}_seed${seed}'"
+run_dir="'~/data/outputs/${exp_name}_seed1'"
 
 gpu_id=${5}
 shift

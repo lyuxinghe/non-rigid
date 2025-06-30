@@ -19,13 +19,20 @@ addition_info=${3}
 seed=${4}
 gpu_id=${5}
 dedo_type=${6}
-goal_model=${7}
+data_size=${7}
+goal_model=${8}
 
 # Setting up goal-conditioning.
 if [[ $addition_info == "none" ]]; then
     overrides="policy.goal_conditioning=none "
 elif [[ $addition_info == "gt" ]]; then
     overrides="policy.goal_conditioning=gt_pcd "
+elif [[ $addition_info == "none_seg" ]]; then
+    overrides="policy.goal_conditioning=none "
+    overrides+="policy.pointcloud_encoder_cfg.one_hot=True policy.pointcloud_encoder_cfg.in_channels=5 "
+elif [[ $addition_info == "gt_seg" ]]; then
+    overrides="policy.goal_conditioning=gt_pcd "
+    overrides+="policy.pointcloud_encoder_cfg.one_hot=True policy.pointcloud_encoder_cfg.in_channels=6 "
 else
     echo "Invalid goal conditioning type. Exiting."
     exit 1
@@ -38,13 +45,20 @@ elif [[ $dedo_type == "hard" ]]; then
     hole="double"
 fi
 
+if [[ $data_size == "small" ]] || [[ $data_size == "medium" ]] || [[ $data_size == "big" ]]; then
+    overrides+="task.dataset.size=${data_size} "
+else
+    echo "Invalid data size. Exiting."
+    exit 1
+fi
+
 overrides+="task.dataset.cloth_geometry=multi task.dataset.cloth_pose=random "
 overrides+="task.dataset.anchor_geometry=single task.dataset.anchor_pose=random "
 overrides+="task.dataset.num_anchors=2 task.dataset.hole=${hole} "
 overrides+="task.dataset.robot=True "
 
 # Concatenate addition_info and dedo_type for more informative run name.
-addition_info="${addition_info}_${dedo_type}"
+addition_info="${addition_info}_${dedo_type}_${data_size}"
 
 # If goal model is not an empty string, add model id to overrides.
 if [[ -n $goal_model ]]; then

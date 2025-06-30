@@ -335,6 +335,9 @@ class TrainDP3Workspace:
             self.epoch += 1
             del step_log
 
+        # At the end of training, save the last checkpoint.
+        if cfg.checkpoint.save_last_ckpt:
+            self.save_checkpoint()
         # also save the latest checkpoint to wandb, if needed.
         # self.save_checkpoint_to_wandb(
         #     path=os.path.join(self.output_dir, 'checkpoints', f'latest.ckpt'),
@@ -381,6 +384,7 @@ class TrainDP3Workspace:
         hole = dataset_cfg.hole
         num_anchors = dataset_cfg.num_anchors
         robot = dataset_cfg.robot
+        # Don't load size-specific dataset, since we only care about val. performance.
         dataset_name = (
             f'cloth={cloth_geometry}-{cloth_pose} ' + \
             f'anchor={anchor_geometry}-{anchor_pose} ' + \
@@ -388,6 +392,7 @@ class TrainDP3Workspace:
             f'robot={robot} ' + \
             f'num_anchors={num_anchors} ' + \
             'dp3'
+            # f'dp3 {self.size}'
         )
         dataset_dir = os.path.join(
             os.path.expanduser(dataset_cfg.root_dir),
@@ -395,14 +400,15 @@ class TrainDP3Workspace:
         )
 
         # load the latest checkpoint
-
         cfg = copy.deepcopy(self.cfg)
-        seed = cfg.task.inference.seed
+        # seed = cfg.task.inference.seed
+        seed = self.cfg.training.seed
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
 
-        lastest_ckpt_path = self.get_checkpoint_path(tag="best")
+        # lastest_ckpt_path = self.get_checkpoint_path(tag="latest")
+        lastest_ckpt_path = self.get_checkpoint_path(tag="latest")
         if lastest_ckpt_path.is_file():
             cprint(f"Resuming from checkpoint {lastest_ckpt_path}", 'magenta')
             self.load_checkpoint(path=lastest_ckpt_path)
@@ -411,7 +417,10 @@ class TrainDP3Workspace:
         env_runner: BaseRunner
         env_runner = hydra.utils.instantiate(
             cfg.task.env_runner,
-            output_dir=self.output_dir, viz=False)
+            output_dir=self.output_dir, 
+            # viz=self.cfg.training.seed == 0, # only visualize for seed 0
+            viz=False,
+        )
         assert isinstance(env_runner, BaseRunner)
         policy = self.model
         if cfg.training.use_ema:
@@ -426,7 +435,14 @@ class TrainDP3Workspace:
         #     if isinstance(value, float):
         #         cprint(f"{key}: {value:.4f}", 'magenta')
 
-        runner_log = env_runner.run_dataset(policy, dataset_dir, 'val')
+        runner_log = env_runner.run_dataset(
+            policy=policy, 
+            dataset_dir=dataset_dir, 
+            dataset_name='val',
+            seed=self.cfg.training.seed,
+            # save_viz=self.cfg.training.seed == 0, # only visualize for seed 0
+            save_viz=False,    
+        )
 
         cprint(f"---------------- Eval Results for Val. --------------", 'magenta')
         for key, value in runner_log.items():

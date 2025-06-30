@@ -3,22 +3,38 @@ import numpy as np
 
 x = np.array([32, 64, 256])
 
-single = {
-    "dp3": np.array([0.175, 0.25, 0.2]),
-    "dp3_gt": np.array([0.525, 0.775, 0.825]),
-    "dp3_gt_tax3d": np.array([0.45, 0.55, 0.525]),
-    "dp3_gt_tax3d_2": np.array([0.5, 0.925, 0.8]),
-    "tax3d": np.array([0.45, 0.45, 0.45]),
-    "tax3d_2": np.array([0.95, 0.95, 0.95]),
+# single = {
+#     "dp3": np.array([0.175, 0.25, 0.2]),
+#     "dp3_gt": np.array([0.525, 0.775, 0.825]),
+#     "dp3_gt_tax3d": np.array([0.45, 0.55, 0.525]),
+#     "dp3_gt_tax3d_2": np.array([0.5, 0.925, 0.8]),
+#     "tax3d": np.array([0.45, 0.45, 0.45]),
+#     "tax3d_2": np.array([0.95, 0.95, 0.95]),
+# }
+
+# double = {
+#     "DP3, Vanilla": np.array([0.3625, 0.4, 0.325]),
+#     "DP3 + TAX3D": np.array([0.5, 0.575, 0.5875]),
+#     "DP3 + Ours": np.array([0.775, 0.8375, 0.8875]),
+#     "DP3 + Oracle": np.array([0.7, 0.8375, 0.85]),
+#     #"tax3d": np.array([0.6125, 0.6125, 0.6125]),
+#     #"tax3d_2": np.array([0.9, 0.9, 0.9]),
+# }
+
+single_hole_mean_success_rate = {
+    "DP3, Vanilla": np.array([0.125, 0.230, 0.2]),
+    "DP3 + TAX3D": np.array([0.4, 0.45, 0.49]),
+    "DP3 + Ours": np.array([0.395, 0.7, 0.91]),
+    "DP3 + Ours++": np.array([0.435, 0.715, 0.85]),
+    "DP3 + Oracle": np.array([0.385, 0.67, 0.84]),
 }
 
-double = {
-    "DP3, Vanilla": np.array([0.3625, 0.4, 0.325]),
-    "DP3 + TAX3D": np.array([0.5, 0.575, 0.5875]),
-    "DP3 + Ours": np.array([0.775, 0.8375, 0.8875]),
-    "DP3 + Oracle": np.array([0.7, 0.8375, 0.85]),
-    #"tax3d": np.array([0.6125, 0.6125, 0.6125]),
-    #"tax3d_2": np.array([0.9, 0.9, 0.9]),
+double_hole_mean_success_rate = {
+    "DP3, Vanilla": np.array([0.3225, 0.3075, 0.2375]),
+    "DP3 + TAX3D": np.array([0.52, 0.5825, 0.58]),
+    "DP3 + Ours": np.array([0.645, 0.7425, 0.8425]),
+    "DP3 + Ours++": np.array([0.6125, 0.8, 0.86]),
+    "DP3 + Oracle": np.array([0.6875, 0.8, 0.925]),
 }
 
 def plot_methods(method_dict, title):
@@ -97,7 +113,7 @@ def plot_bar(method_dict, title):
     for key, value in method_dict.items():
         fig.add_trace(
             go.Bar(
-                x=["128", "256", "1024"],
+                x=["32", "64", "256"],
                 y=value,
                 name=key,
                 textposition="auto",
@@ -105,10 +121,10 @@ def plot_bar(method_dict, title):
             )
         )
     fig.update_layout(
-        # title=dict(text=title, x=0.5, xanchor="center"),
-        xaxis_title="# Training Demonstrations",
+        title=dict(text=title, x=0.5, xanchor="center"),
+        xaxis_title="# Training Cloths",
         yaxis_title="Success Rate",
-        width=1000,
+        width=1100,
         height=600,
         legend=dict(
             x=0.5,
@@ -134,4 +150,5 @@ def plot_bar(method_dict, title):
 # plot_methods(double, title="Double Hole")
 #plot_methods(task_avg, title="Task Average")
 
-plot_bar(double, title="Double Hole")
+plot_bar(double_hole_mean_success_rate, title="Double Hole")
+plot_bar(single_hole_mean_success_rate, title="Single Hole")
