@@ -169,6 +169,7 @@ class GaussianDiffusionDDRDSeparate:
         # TODO: custom variance for each?
         self.var_r = 1.0
         self.var_s = 1.0
+        self.zero_shape = True
 
         # diffusion noise scale
         self.rotation_noise_scale = rotation_noise_scale
@@ -355,6 +356,7 @@ class GaussianDiffusionDDRDSeparate:
             "extra": extra,
         }
 
+        out_s["mean"] = out_s["mean"] - out_s["mean"].mean(dim=2, keepdim=True)  # Center the shape mean
         return out_r, out_s
 
 

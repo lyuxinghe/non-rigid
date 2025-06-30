@@ -21,7 +21,7 @@ import numpy as np
 from plotly import graph_objects as go
 
 @torch.no_grad()
-@hydra.main(config_path="../configs", config_name="eval", version_base="1.3")
+@hydra.main(config_path="../configs", config_name="eval_deform", version_base="1.3")
 def main(cfg):
     task_overrides = HydraConfig.get().overrides.task
     cfg = load_checkpoint_config_from_wandb(
@@ -117,13 +117,15 @@ def main(cfg):
     # Helper function to sample rotation errors for forward process.
     ######################################################################
     def forward_rotation_noise(dataset, model):
-        num_samples_per_timestep = 20
+        num_samples_per_timestep = 1
         diffusion = model.diffusion
         eval_keys = ["pc_action", "pc_anchor", "pc", "flow", "seg", "seg_anchor", "T_action2world", "T_goal2world"]
         if cfg.model.pred_frame == "noisy_goal":
             eval_keys.append("noisy_goal")
         
         rotation_errs_forward = torch.zeros((diffusion.num_timesteps, len(dataset), num_samples_per_timestep)).to(device)
+        frame_means = torch.zeros((diffusion.num_timesteps, len(dataset), 3)).to(device)
+        shape_means = torch.zeros((diffusion.num_timesteps, len(dataset), 3)).to(device)
 
         for i in tqdm(range(len(dataset))):
             # prepare data batch
@@ -142,7 +144,7 @@ def main(cfg):
 
             for j in tqdm(range(diffusion.num_timesteps)):
                 # Sampling noise.
-                # noise_r = torch.randn_like(xr_start)
+                noise_r = torch.randn_like(xr_start)
                 noise_s = torch.randn_like(xs_start)
 
                 if diffusion.rotation_noise_scale:
@@ -193,13 +195,23 @@ def main(cfg):
 
                 # Forward process.
                 # xr_t = diffusion.q_sample(xr_start, t=torch.tensor([j]*num_samples_per_timestep).to(device), noise=noise_r)
+                # xs_t = diffusion.q_sample(xs_start, t=torch.tensor([j]*num_samples_per_timestep).to(device), noise=noise_s)
+                # translation_errs, rotation_errs = svd_estimation(
+                #     xs_start.permute(0, 2, 1), 
+                #     xs_t.permute(0, 2, 1), 
+                #     return_magnitude=True
+                # )
+                # rotation_errs_forward[j, i] = rotation_errs
+
+                xr_t = diffusion.q_sample(xr_start, t=torch.tensor([j]*num_samples_per_timestep).to(device), noise=noise_r)
                 xs_t = diffusion.q_sample(xs_start, t=torch.tensor([j]*num_samples_per_timestep).to(device), noise=noise_s)
-                translation_errs, rotation_errs = svd_estimation(
-                    xs_start.permute(0, 2, 1), 
-                    xs_t.permute(0, 2, 1), 
-                    return_magnitude=True
-                )
-                rotation_errs_forward[j, i] = rotation_errs
+                
+                frame_means[j, i] = xr_t.squeeze(-1).mean(dim=0)
+                shape_means[j, i] = xs_t.mean(dim=-1).mean(dim=0)
+
+        frame_means = torch.norm(frame_means[:, 4, :], dim=-1)
+        shape_means = torch.norm(shape_means[:, 4, :], dim=-1)
+        breakpoint()
 
         np.save(f"/home/jacinto/data/rotation_noise/{cfg.checkpoint.run_id}_forward.npy", rotation_errs_forward.cpu().numpy())
 
@@ -305,9 +317,9 @@ def main(cfg):
         fig.show()
         breakpoint()
 
-    # forward_rotation_noise(datamodule.val_dataset, model)
+    forward_rotation_noise(datamodule.val_dataset, model)
     # reverse_rotation_noise(datamodule.val_dataset, model)
-    visualize_rotation_errors(datamodule.val_dataset, cfg.checkpoint.run_id)
+    # visualize_rotation_errors(datamodule.val_dataset, cfg.checkpoint.run_id)
 
 if __name__ == "__main__":
     main()

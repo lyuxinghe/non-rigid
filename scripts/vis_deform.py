@@ -189,6 +189,13 @@ def main(cfg):
 
             #batch = model.update_batch_frames(batch, update_labels=True)
             #pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
+
+            # for j in range(101):
+            #     frame = pred_dict["results_r"][j][4]
+            #     shape = pred_dict["results_s"][j][4]
+            #     print(torch.norm(frame), torch.norm(torch.mean(shape, dim=1)))
+            #     # print(frame)
+            # breakpoint()
             batch = {key: value.to(device) for key, value in batch.items()}
 
             viz_args = model.get_viz_args(batch, 0)
@@ -225,6 +232,7 @@ def main(cfg):
                 gmm_viz = gmm_viz,
             )
             # fig.show()
+            # break
 
             # Visualize diffusion timelapse.
             VIZ_IDX = 4 # 0
@@ -235,7 +243,7 @@ def main(cfg):
                 # ref_frame_results = [ref_frame_res[VIZ_IDX].cpu().numpy() for ref_frame_res in pred_dict["ref_frame_results_world"]]
             # else:
             extras = None
-            ref_frame_results = None
+            ref_frame_results = [ref_res[VIZ_IDX].cpu().numpy() for ref_res in pred_dict["results_r_world"]]
             fig = visualize_diffusion_timelapse(
                 context = {
                     "Action": action_pc_world,
@@ -245,7 +253,8 @@ def main(cfg):
                 extras = extras,
                 ref_frame_results = ref_frame_results,
             )
-            # fig.show()
+            fig.show()
+            break
 
             # Create multi-modal gif.
             gif_results = [res.cpu().numpy() for res in pred_dict["results_world"]]
@@ -256,7 +265,14 @@ def main(cfg):
                 predictions = pred_pc_world,
                 results = gif_results,
                 # indices = [0, 1],
-                indices = [0, 2, 3, 7],
+                # indices = [0, 3, 9, 13], # 8, double-hole
+                # indices = [0, 1, 3, 9], # 13, double-hole
+                # indices = [0, 1, 2, 5], # 0, double-hole
+                # indices = [0, 6, 8, 19], # 64, double-hole
+                # indices = [0, 1, 3, 7], # 0, single-hole
+                # indices = [0, 1, 2, 5], # 3, single-hole
+                # indices = [0, 1, 3, 5], # 6, single-hole
+                indices = [0, 1, 2, 4], # 33, single-hole
                 gif_path = os.path.expanduser("~/data/multimodal_viz"),
             )
             # fig.show()
@@ -266,7 +282,7 @@ def main(cfg):
     # Run the model on the train/val/test sets.
     ######################################################################
     train_indices = []
-    val_indices = [8]
+    val_indices = [33] # single-hole: 3, 0, 6, 33
     val_ood_indices = []
     model.to(device)
     run_vis(datamodule.train_dataset, model, train_indices)

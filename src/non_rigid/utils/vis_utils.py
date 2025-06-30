@@ -374,6 +374,7 @@ def visualize_diffusion_timelapse(context, results, ref_frame_results=None, extr
                     y=ref_frame_res[:, 1],
                     z=ref_frame_res[:, 2],
                     marker={"size": 6, "color": "green", "line": {"width": 0}},
+                    name="Reference Frame",
                 )
             )
             query_pred_q = result_step - ref_frame_res
@@ -556,7 +557,7 @@ def visualize_multimodality(context, predictions, results, indices=[0, 1, 2], gi
 
     # Create gif.
     gif_frames[0].save(
-        os.path.join(gif_path, "multimodality_animation4.gif"),
+        os.path.join(gif_path, "multimodality_animation_sh_33.gif"),
         save_all=True,
         append_images=gif_frames[1:],
         duration=33,  # milliseconds per frame
