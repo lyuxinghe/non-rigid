@@ -829,10 +829,10 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             T_goal2world.transform_points(res*scale + pred_frame) for res in pred_dict["results"]
         ]
         results_r_world = [
-            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results_r"]
+            T_goal2world.transform_points(res*scale + pred_frame) for res in pred_dict["results_r"]
         ]
         results_s_world = [
-            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results_s"]
+            T_goal2world.transform_points(res*scale + pred_frame) for res in pred_dict["results_s"]
         ]
 
         pred_world_dict = {

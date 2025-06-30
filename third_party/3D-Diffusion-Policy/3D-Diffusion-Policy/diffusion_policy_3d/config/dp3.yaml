@@ -64,6 +64,7 @@ policy:
     use_layernorm: true
     final_norm: layernorm # layernorm, none
     normal_channel: false
+    one_hot: false # object, scene, and goal segmentation
 
 
 ema:
