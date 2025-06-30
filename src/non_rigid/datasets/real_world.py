@@ -34,14 +34,12 @@ class InsertionDataset(data.Dataset):
         # data loading
         self.dataset_dir = self.root / self.connector_type / self.data_type / self.split
 
-        '''
-        # Not Implemented for now #
         if 'preprocess' in dataset_cfg and dataset_cfg.preprocess:
             self.dataset_dir = self.dataset_dir / "preprocessed"
             print(f"Loading Insertion Preprocessed Dataset from {self.dataset_dir}")
         else:
             print(f"Loading Insertion Dataset from {self.dataset_dir}")
-        '''
+        
         # setting sample sizes
         self.sample_size_action = self.dataset_cfg.sample_size_action
         self.sample_size_anchor = self.dataset_cfg.sample_size_anchor

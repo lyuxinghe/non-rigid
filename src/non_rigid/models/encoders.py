@@ -159,7 +159,10 @@ class JointFeatureEncoder(nn.Module):
 
         # Creating base encoders - action-frame, and prediction-frame.
         self.action_encoder = encoder_fn(out_channels=hidden_size)
-        self.pred_encoder = encoder_fn(out_channels=hidden_size)
+        if "one_hot_recon" in self.model_cfg and self.model_cfg.one_hot_recon:
+            self.pred_encoder = encoder_fn(in_channels=self.in_channels + 1, out_channels=hidden_size)
+        else:
+            self.pred_encoder = encoder_fn(out_channels=hidden_size)
 
         # Creating extra feature encoders, if necessary.
         if self.model_cfg.feature:
@@ -182,7 +185,12 @@ class JointFeatureEncoder(nn.Module):
         # Encode base features - action-frame, and prediction frame.
         action_size = x0.shape[-1]
         action_enc = self.action_encoder(x0)
-        pred_enc = self.pred_encoder(torch.cat([x_recon, y], dim=-1))
+        if "one_hot_recon" in self.model_cfg and self.model_cfg.one_hot_recon:
+            x_recon_one_hot = torch.cat([x_recon, torch.ones_like(x_recon[:, :1, :])], dim=1)
+            y_one_hot = torch.cat([y, torch.zeros_like(y[:, :1, :])], dim=1)
+            pred_enc = self.pred_encoder(torch.cat([x_recon_one_hot, y_one_hot], dim=-1))
+        else:
+            pred_enc = self.pred_encoder(torch.cat([x_recon, y], dim=-1))
         action_pred_enc, anchor_pred_enc = pred_enc[:, :, :action_size], pred_enc[:, :, action_size:]
         anchor_pred_enc = anchor_pred_enc.permute(0, 2, 1)
 

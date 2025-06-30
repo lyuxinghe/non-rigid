@@ -12,6 +12,7 @@ feature: False # If True, encode additional features
 joint_encode: False # If True, use joint encoding for point cloud feature
 rel_pos: False # If True, encode relative position
 scene_anchor: False # If True, use scene as the anchor
+one_hot_recon: False # If True, use one-hot encoding for reconstruction
 
 #####################################################
 # Model-specific Dataset/Data-processing Parameters
