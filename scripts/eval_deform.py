@@ -51,7 +51,7 @@ def main(cfg):
     torch.set_float32_matmul_precision("medium")
 
     # Global seed for reproducibility.
-    L.seed_everything(42)
+    L.seed_everything(cfg.seed)
 
     device = f"cuda:{cfg.resources.gpus[0]}"
 
@@ -70,6 +70,20 @@ def main(cfg):
 
     cfg.inference.batch_size = bs
     cfg.inference.val_batch_size = bs
+
+    ########################################################################
+    # Quick logic checks for failure analysis
+    #######################################################################
+    if cfg.gmm_error > 0.0 or cfg.sparse < 512:
+        failure_analysis = True
+    else:
+        failure_analysis = True
+    
+    if cfg.gmm_error > 0.0 and cfg.sparse < 512:
+        raise ValueError("Can only analyze failure with GMM error or sparse point clouds, not both.")
+    
+    if cfg.gmm_error > 0.0 and cfg.gmm is not None:
+        raise ValueError("For now, GMM error can only be used with simulated GMM prediction.")
 
     ######################################################################
     # Load the GMM frame predictor, if necessary.
@@ -199,7 +213,7 @@ def main(cfg):
                 batch = model.update_batch_frames(batch, update_labels=True)
                 pred_dict = model.predict(gmm_batch, 1, progress=False, full_prediction=True)
             else:
-                batch = model.update_batch_frames(batch, update_labels=True)
+                batch = model.update_batch_frames(batch, update_labels=True, gmm_error=cfg.gmm_error)
                 pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
             pred_point_world = pred_dict["point"]["pred_world"]
 
@@ -236,13 +250,18 @@ def main(cfg):
     ######################################################################
     model.to(device)
 
-    train_rmse, train_coverage, train_precision = run_eval(datamodule.train_dataset, model)
-    val_rmse, val_coverage, val_precision = run_eval(datamodule.val_dataset, model)
-    # val_ood_rmse, val_ood_coverage, val_ood_precision = run_eval(datamodule.val_ood_dataset, model)
+    # For failure analysis, we only run on the validation set.
+    if failure_analysis:
+        val_rmse, val_coverage, val_precision = run_eval(datamodule.val_dataset, model)
+        print(f"Val RMSE: {val_rmse}, Coverage: {val_coverage}, Precision: {val_precision}")
+    else:
+        train_rmse, train_coverage, train_precision = run_eval(datamodule.train_dataset, model)
+        val_rmse, val_coverage, val_precision = run_eval(datamodule.val_dataset, model)
+        # val_ood_rmse, val_ood_coverage, val_ood_precision = run_eval(datamodule.val_ood_dataset, model)
 
-    print(f"Train RMSE: {train_rmse}, Coverage: {train_coverage}, Precision: {train_precision}")
-    print(f"Val RMSE: {val_rmse}, Coverage: {val_coverage}, Precision: {val_precision}")
-    # print(f"Val OOD RMSE: {val_ood_rmse}, Coverage: {val_ood_coverage}, Precision: {val_ood_precision}")
+        print(f"Train RMSE: {train_rmse}, Coverage: {train_coverage}, Precision: {train_precision}")
+        print(f"Val RMSE: {val_rmse}, Coverage: {val_coverage}, Precision: {val_precision}")
+        # print(f"Val OOD RMSE: {val_ood_rmse}, Coverage: {val_ood_coverage}, Precision: {val_ood_precision}")
 
 if __name__ == "__main__":
     main()

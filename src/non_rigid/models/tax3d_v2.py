@@ -847,7 +847,7 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
 
         return pred_world_dict
 
-    def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
+    def update_batch_frames(self, batch, update_labels=False, gmm_model=None, gmm_error=0.0):
         # Using GMM model, if provided.
         if gmm_model is not None:
             assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
@@ -869,6 +869,15 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
             pred_frame = batch["pc_anchor"].mean(axis=1, keepdim=True)
         elif self.model_cfg.pred_frame == "noisy_goal":
             pred_frame = batch["noisy_goal"].unsqueeze(1)
+
+            if gmm_error > 0.0:
+                error_noise_scale = torch.linalg.norm(
+                    batch["pc_anchor"] - batch["pc_anchor"].mean(axis=1, keepdim=True),
+                    dim=2,
+                    keepdim=True,
+                ).max(dim=1, keepdim=True).values * gmm_error
+                error_noise = torch.randn_like(pred_frame) * error_noise_scale
+                pred_frame = pred_frame + error_noise
         else:
             raise ValueError(f"Invalid prediction frame: {self.model_cfg.pred_frame}")
 

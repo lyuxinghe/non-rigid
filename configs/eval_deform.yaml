@@ -37,6 +37,10 @@ checkpoint:
 diffusion:
   mode: ddpm # (ddpm, ddim) Diffusion mode
 
+# failure analysis params.
+gmm_error: 0.0 # Error magnitude for GMM failure analysis.
+sparse: 512 # Number of points to sample for sparse point cloud.
+
 resources:
   num_workers: 4
   gpus:

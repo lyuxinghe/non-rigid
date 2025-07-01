@@ -356,7 +356,7 @@ class GaussianDiffusionDDRDSeparate:
             "extra": extra,
         }
 
-        out_s["mean"] = out_s["mean"] - out_s["mean"].mean(dim=2, keepdim=True)  # Center the shape mean
+        # out_s["mean"] = out_s["mean"] - out_s["mean"].mean(dim=2, keepdim=True)  # Center the shape mean
         return out_r, out_s
 
 

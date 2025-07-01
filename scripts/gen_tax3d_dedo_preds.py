@@ -61,6 +61,20 @@ def main(cfg):
     cfg.inference.val_batch_size = 1
     cfg.dataset.sample_size_action = -1
 
+    ########################################################################
+    # Quick logic checks for failure analysis
+    #######################################################################
+    if cfg.gmm_error > 0.0 or cfg.sparse < 512:
+        failure_analysis = True
+    else:
+        failure_analysis = True
+    
+    if cfg.gmm_error > 0.0 and cfg.sparse < 512:
+        raise ValueError("Can only analyze failure with GMM error or sparse point clouds, not both.")
+    
+    if cfg.gmm_error > 0.0 and cfg.gmm is not None:
+        raise ValueError("For now, GMM error can only be used with simulated GMM prediction.")
+
     ######################################################################
     # Load the GMM frame predictor, if necessary.
     ######################################################################
@@ -180,7 +194,7 @@ def main(cfg):
                 gmm_batch = model.update_batch_frames(gmm_batch, update_labels=False, gmm_model=gmm_model)
                 pred_dict = model.predict(gmm_batch, 1, progress=False, full_prediction=True)
             else:
-                batch = model.update_batch_frames(batch, update_labels=False)
+                batch = model.update_batch_frames(batch, update_labels=False, gmm_error=cfg.gmm_error)
                 pred_dict = model.predict(batch, 10, progress=False, full_prediction=True)
             pred_point_world = pred_dict["point"]["pred_world"]
             results_world = pred_dict["results_world"]
