@@ -22,7 +22,7 @@ class FrameGMMPredictor(nn.Module):
         assert model_cfg.name == "df_cross", "FrameGMMPredictor is only compatible with df_cross model."
         assert model_cfg.in_channels == 3, "FrameGMMPredictor is only compatible with 3 input channels."
         assert model_cfg.learn_sigma == True, "FrameGMMPredictor must learn sigma."
-        assert model_cfg.point_encoder == "mlp", "FrameGMMPredictor is only compatible with MLP point encoder."
+        # assert model_cfg.point_encoder == "mlp", "FrameGMMPredictor is only compatible with MLP point encoder."
         assert model_cfg.joint_encode == False, "FrameGMMPredictor is not compatible with joint encoding."
         assert model_cfg.feature == False, "FrameGMMPredictor is not compatible with flow/recon features."
         assert model_cfg.rel_pos == True, "FrameGMMPredictor must use relative position embedding."
@@ -82,6 +82,7 @@ class FrameGMMPredictor(nn.Module):
         return {
             "probs": probs,
             "means": means,
+            "residuals": residuals,
             "action_frame": action_frame.permute(0, 2, 1),
             "anchor_frame": anchor_frame.permute(0, 2, 1),
         }
@@ -96,11 +97,10 @@ class GMMLoss(torch.nn.Module):
         eps: value used to clamp var, for stability.
         """
         super(GMMLoss, self).__init__()
-        self.pcd_scale = cfg.dataset.pcd_scale
+        self.var_scale = cfg.var_scale
         self.eps = eps
-        print(f"Training GMM Predictor with pcd_scale of {self.pcd_scale}")
-        
-    def forward(self, batch, pred, var=0.00001, uniform_loss=0.0):
+    
+    def forward(self, batch, pred, var=0.00001, uniform_loss=0.0, regularize_residual=0.0):
         # Computing ground truth action mean in anchor frame.
         anchor_frame = pred["anchor_frame"]
         targets = batch["pc"].to(anchor_frame.device) - anchor_frame
@@ -112,7 +112,7 @@ class GMMLoss(torch.nn.Module):
 
         # Computing GMM likelihood loss.
         diff = targets - means
-        var *= self.pcd_scale
+        var *= self.var_scale
         point_likelihood_exps = -0.5 * torch.sum((diff ** 2) / var, dim=-1, keepdim=True)
         maxlog = point_likelihood_exps.max(dim=-2, keepdim=True).values
         point_likelihoods = torch.exp(point_likelihood_exps - maxlog)
@@ -127,6 +127,12 @@ class GMMLoss(torch.nn.Module):
                 torch.log(torch.sum(point_likelihoods, dim=-2, keepdim=True)) + maxlog
             )
             loss += uniform_loss * uniform_nll
+        
+        # Regularization term.
+        if regularize_residual > 0.0:
+            residuals = pred["residuals"]
+            residual_loss = torch.norm(residuals, dim=-1).mean()
+            loss += regularize_residual * residual_loss
         return loss
 
 #################################################################################

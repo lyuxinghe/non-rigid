@@ -1,134 +1,193 @@
 import os
-
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from scipy.stats import norm
-from tqdm import tqdm
+import open3d as o3d
+from pathlib import Path
+from typing import Dict, List, Tuple
+import argparse
 
-
-def load_insertion(dir, num_demos=None):
-    npz_files = [f for f in os.listdir(dir) if f.endswith('.npz')]
-    loaded_anchor = []
-    loaded_goal_action = []
-
-    if num_demos:
-        npz_files = npz_files[:num_demos]
-
-    for npz_file in npz_files:
-        file_path = os.path.join(dir, npz_file)
-        demo = np.load(file_path, allow_pickle=True)
-
-        # Extract point clouds
-        points_raw = demo["clouds"]
-        classes_raw = demo["classes"]
-
-        points_action = points_raw[classes_raw == 0]
-        points_anchor = points_raw[classes_raw == 1]
-
-        loaded_anchor.append(points_anchor)
-        loaded_goal_action.append(points_action)
-
-    return loaded_anchor, loaded_goal_action
-
-
-def compute_extent_and_scale_stats(pcd_list):
+def calculate_pcd_scale(points: np.ndarray) -> float:
     """
-    Compute statistics of point cloud extents and scaling factors.
-
+    Calculate the scale of a point cloud as the maximum distance from the centroid.
+    
     Args:
-        pcd_list (List[np.ndarray or torch.Tensor]): 
-            List of point clouds of shape (N_i, 3)
-
+        points: Point cloud as numpy array of shape (N, 3)
+    
     Returns:
-        dict: Dictionary with:
-            - 'mean_extent': np.ndarray of shape (3,)
-            - 'min_extent': np.ndarray of shape (3,)
-            - 'max_extent': np.ndarray of shape (3,)
-            - 'extent_25': np.ndarray of shape (3,)
-            - 'extent_75': np.ndarray of shape (3,)
-            - 'mean_scale': float
-            - 'scale_25': float
-            - 'scale_75': float
+        Scale value as float
     """
-    extents = []
-    scales = []
+    points_tensor = torch.as_tensor(points).float()
+    point_dists = points_tensor - points_tensor.mean(dim=0, keepdim=True)
+    point_scale = torch.linalg.norm(point_dists, dim=1, keepdim=True).max()
+    return point_scale.item()
 
-    for pc in pcd_list:
-        if isinstance(pc, torch.Tensor):
-            pc = pc.detach().cpu().numpy()
+def process_demo_file(file_path: str) -> Dict[str, float]:
+    """
+    Process a single demo file and calculate scales for action and anchor point clouds.
+    
+    Args:
+        file_path: Path to the .npz demo file
+    
+    Returns:
+        Dictionary containing action and anchor scales, or None if processing fails
+    """
+    try:
+        # Load the demo file
+        demo = np.load(file_path, allow_pickle=True)
+        
+        # Extract point clouds (following dataloader pattern)
+        points_action = demo.get('action_init_points') * 50.0
+        points_anchor = demo.get('anchor_points') * 50.0
+        goal_tf = demo.get('goal_tf')
+        
+        if points_action is None or points_anchor is None:
+            print(f"Warning: Missing required keys in {file_path}")
+            return None
+        
+        # Process action points (following dataloader transformation)
+        points_action_pcd = o3d.geometry.PointCloud()
+        points_action_pcd.points = o3d.utility.Vector3dVector(points_action)
+        
+        # Transform to goal frame if goal_tf is available
+        if goal_tf is not None:
+            points_action_goal_pcd = points_action_pcd.transform(np.linalg.inv(goal_tf))
+            points_action_goal = np.asarray(points_action_goal_pcd.points)
+        else:
+            points_action_goal = points_action
+            print(f"Warning: No goal_tf found in {file_path}, using original action points")
+        
+        # Calculate scales
+        action_scale = calculate_pcd_scale(points_action)
+        anchor_scale = calculate_pcd_scale(points_anchor)
+        action_goal_scale = calculate_pcd_scale(points_action_goal)
+        
+        return {
+            'action_scale': action_scale,
+            'anchor_scale': anchor_scale,
+            'action_goal_scale': action_goal_scale,
+            'file_path': file_path
+        }
+        
+    except Exception as e:
+        print(f"Error processing {file_path}: {e}")
+        return None
 
-        center = pc.mean(axis=0)
-        pc_centered = pc - center
-
-        min_xyz = pc_centered.min(axis=0)
-        max_xyz = pc_centered.max(axis=0)
-        extent = max_xyz - min_xyz
-        avg_extent = extent.mean()
-        scale = 1.0 / avg_extent
-
-        extents.append(extent)
-        scales.append(scale)
-
-    extents = np.stack(extents, axis=0)
-    scales = np.array(scales)
-
+def calculate_dataset_scales(data_folder: str) -> Dict[str, List[float]]:
+    """
+    Calculate scales for all .npz files in the given folder.
+    
+    Args:
+        data_folder: Path to folder containing .npz demo files
+    
+    Returns:
+        Dictionary containing lists of scales for each point cloud type
+    """
+    data_path = Path(data_folder)
+    npz_files = list(data_path.glob('*.npz'))
+    
+    if not npz_files:
+        print(f"No .npz files found in {data_folder}")
+        return {}
+    
+    print(f"Found {len(npz_files)} .npz files")
+    
+    action_scales = []
+    anchor_scales = []
+    action_goal_scales = []
+    processed_files = []
+    
+    for file_path in npz_files:
+        #print(f"Processing: {file_path.name}")
+        result = process_demo_file(str(file_path))
+        
+        if result is not None:
+            action_scales.append(result['action_scale'])
+            anchor_scales.append(result['anchor_scale'])
+            action_goal_scales.append(result['action_goal_scale'])
+            processed_files.append(result['file_path'])
+    
     return {
-        "mean_extent": extents.mean(axis=0),
-        "min_extent": extents.min(axis=0),
-        "max_extent": extents.max(axis=0),
-        "extent_25": np.percentile(extents, 25, axis=0),
-        "extent_75": np.percentile(extents, 75, axis=0),
-        "mean_scale": scales.mean(),
-        "scale_25": np.percentile(scales, 25),
-        "scale_75": np.percentile(scales, 75)
+        'action_scales': action_scales,
+        'anchor_scales': anchor_scales,
+        'action_goal_scales': action_goal_scales,
+        'processed_files': processed_files
     }
 
+def print_statistics(scales_dict: Dict[str, List[float]]):
+    """Print detailed statistics for the calculated scales."""
+    
+    if not scales_dict:
+        print("No data to analyze")
+        return
+    
+    print(f"\n{'='*60}")
+    print("POINT CLOUD SCALE ANALYSIS")
+    print(f"{'='*60}")
+    print(f"Total files processed: {len(scales_dict['processed_files'])}")
+    
+    for scale_type in ['action_scales', 'anchor_scales', 'action_goal_scales']:
+        if scale_type in scales_dict and scales_dict[scale_type]:
+            scales = scales_dict[scale_type]
+            scales_array = np.array(scales)
+            
+            print(f"\n{scale_type.replace('_', ' ').title()}:")
+            print(f"  Count: {len(scales)}")
+            print(f"  Mean:  {scales_array.mean():.6f}")
+            print(f"  Std:   {scales_array.std():.6f}")
+            print(f"  Min:   {scales_array.min():.6f}")
+            print(f"  Max:   {scales_array.max():.6f}")
+            print(f"  Median: {np.median(scales_array):.6f}")
+            print(f"  25th percentile: {np.percentile(scales_array, 25):.6f}")
+            print(f"  75th percentile: {np.percentile(scales_array, 75):.6f}")
 
-def print_extent_stats(name, stats):
-    """
-    Nicely print extent and scale stats.
+def save_results(scales_dict: Dict[str, List[float]], output_file: str):
+    """Save results to a numpy file for later analysis."""
+    if scales_dict:
+        np.savez(output_file, **scales_dict)
+        print(f"\nResults saved to: {output_file}")
 
-    Args:
-        name (str): Label for the point cloud group
-        stats (dict): Output from compute_extent_and_scale_stats
-    """
-    print(f"\n=== Stats for {name} ===")
-    print(f"Mean Extent (x, y, z): {stats['mean_extent']}")
-    print(f"Min Extent  (x, y, z): {stats['min_extent']}")
-    print(f"Max Extent  (x, y, z): {stats['max_extent']}")
-    print(f"25% Extent (x, y, z):  {stats['extent_25']}")
-    print(f"75% Extent (x, y, z):  {stats['extent_75']}")
-    print(f"Mean Scale:            {stats['mean_scale']:.5f}")
-    print(f"25% Scale:             {stats['scale_25']:.5f}")
-    print(f"75% Scale:             {stats['scale_75']:.5f}")
-
-# Example usage
+def main():
+    parser = argparse.ArgumentParser(description='Calculate point cloud scales for demo dataset')
+    parser.add_argument('--data_folder', type=str, help='Path to folder containing .npz demo files')
+    parser.add_argument('--output', '-o', type=str, default='pcd_scales_analysis.npz', 
+                       help='Output file to save results (default: pcd_scales_analysis.npz)')
+    parser.add_argument('--verbose', '-v', action='store_true', 
+                       help='Print detailed information for each file')
+    
+    args = parser.parse_args()
+    
+    if not os.path.exists(args.data_folder):
+        print(f"Error: Data folder '{args.data_folder}' does not exist")
+        return
+    
+    print(f"Analyzing point cloud scales in: {args.data_folder}")
+    
+    # Calculate scales for all files
+    scales_dict = calculate_dataset_scales(args.data_folder)
+    
+    # Print statistics
+    print_statistics(scales_dict)
+    
+    # Save results
+    if scales_dict:
+        #save_results(scales_dict, args.output)
+        
+        # Additional analysis
+        if scales_dict['action_scales'] and scales_dict['anchor_scales']:
+            action_scales = np.array(scales_dict['action_scales'])
+            anchor_scales = np.array(scales_dict['anchor_scales'])
+            
+            print(f"\n{'='*60}")
+            print("COMPARATIVE ANALYSIS")
+            print(f"{'='*60}")
+            print(f"Action vs Anchor scale ratio (mean): {(action_scales / anchor_scales).mean():.6f}")
+            print(f"Action vs Anchor scale ratio (std):  {(action_scales / anchor_scales).std():.6f}")
+            '''
+            # Recommend scale factor
+            max_scale = max(action_scales.max(), anchor_scales.max())
+            recommended_scale = 1.0 / max_scale
+            print(f"\nRecommended scale factor to normalize to [0,1]: {recommended_scale:.6f}")
+            print(f"This would make the largest point cloud have scale = 1.0")
+            '''
 if __name__ == "__main__":
-    # Create a list of example point clouds
-
-    
-    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/can_in_cabinet_stack/task_name_stack_can_in_cabinet/', num_demos=None)
-    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/book_on_bookshelf_double_view_rnd_ori/task_name_book_in_bookshelf/preprocessed/', num_demos=None)
-    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_easy_single//task_name_mug_on_rack/preprocessed/', num_demos=None)
-    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_rack_med_single/task_name_mug_on_rack/preprocessed/', num_demos=None)
-    #rpdiff_action, rpdiff_anchor, rpdiff_goal_action = load_rpdiff(dir='/data/lyuxing/tax3d/rpdiff/data/task_demos/mug_on_rack_multi_large_proc_gen_demos/task_name_mug_on_rack_multi/preprocessed/', num_demos=None)
-    #dedo_action, dedo_anchor = load_proccloth('/home/lyuxing/Desktop/tax3d_upgrade/datasets/ProcCloth/cloth=single-fixed anchor=single-random hole=single/train_tax3d')
-
-    insertion_anchor, insertion_action = load_insertion('/data/lyuxing/tax3d/insertion/demonstrations_new/04-21-wp-2/learn_data/train')
-    #insertion_anchor, insertion_action = load_insertion('/home/mfi/repos/rtc_vision_toolbox/data/tax3d-yk-creator/demonstrations/04-21-dsub-1/learn_data/train')
-
-    test_scale = 50
-    insertion_action = [pc * test_scale for pc in insertion_action]
-    insertion_anchor = [pc * test_scale for pc in insertion_anchor]
-
-    stats_action = compute_extent_and_scale_stats(insertion_action)
-    stats_anchor = compute_extent_and_scale_stats(insertion_anchor)
-    stats_combined = compute_extent_and_scale_stats(
-        [np.concatenate((pc1, pc2), axis=0) for pc1, pc2 in zip(insertion_action, insertion_anchor)]
-    )
-    
-    
-    print_extent_stats("Action", stats_action)
-    print_extent_stats("Anchor", stats_anchor)
-    print_extent_stats("Combined", stats_combined)
+    main()
