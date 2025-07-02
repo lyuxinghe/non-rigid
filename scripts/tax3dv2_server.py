@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException
 import hydra
 from hydra.core.hydra_config import HydraConfig
 import lightning as L
-import omegaconf
+from omegaconf import OmegaConf
 import torch
 import wandb
 import os, os.path as osp
@@ -156,6 +156,7 @@ def main(cfg):
     # Manually setting eval-specific configs.
     ######################################################################
     cfg.dataset.num_demos = 1
+    cfg.dataset.augment_gt = False
     cfg.inference.batch_size = 1
     cfg.inference.val_batch_size = 1
     cfg.inference.batch_size = 1
@@ -168,7 +169,7 @@ def main(cfg):
     print("##################### Diffusion Config #####################")
     print(
         json.dumps(
-            omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
+            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
             sort_keys=True,
             indent=4,
         )
@@ -192,45 +193,46 @@ def main(cfg):
     ######################################################################
     # Load the GMM frame predictor, if necessary.
     ######################################################################
+    # Grab config file from saved run.
     if gmm_cfg.gmm is not None:
         # GMM can only be used with noisy goal models.
         if model_cfg.pred_frame != "noisy_goal":
             raise ValueError("GMM can only be used with noisy goal models.")
 
+        # Create a deep copy of the cfg        
+        cfg_copy = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+
+        gmm_epoch= gmm_cfg.gmm
+
         gmm_exp_path = os.path.join(
-            os.path.expanduser(gmm_cfg.gmm_log_dir),
-            f"gmm_{cfg.dataset.name}",
-            gmm_cfg.task_name,
-            f"epochs={gmm_cfg.gmm}_var={gmm_cfg.var}_unif={gmm_cfg.uniform_loss}_rr={gmm_cfg.regularize_residual}_enc={gmm_cfg.point_encoder}_pn2scale={gmm_cfg.pcd_scale}"
+            os.path.expanduser(cfg_copy.gmm.gmm_log_dir),
+            cfg_copy.gmm.task_name,
+            cfg_copy.gmm.run_id,
         )
+        if not os.path.exists(gmm_exp_path):
+            raise ValueError(f"Experiment directory {gmm_exp_path} does not exist - train this model first.")
+        
+        gmm_saved_cfg = OmegaConf.load(os.path.join(gmm_exp_path, "config.yaml"))
 
-        if os.path.exists(gmm_exp_path):
-            print(f"Found GMM experiment directory: {gmm_exp_path}")
-        else:
-            raise ValueError(f"GMM experiment directory does not exist: {gmm_exp_path}")
-
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-
-        gmm_yaml_path = os.path.join(script_dir, "..", "configs", "model", "df_cross.yaml")
-        gmm_model_spec = omegaconf.OmegaConf.load(os.path.abspath(gmm_yaml_path))
-        gmm_model_spec.rel_pos = True
-        gmm_model_spec.point_encoder = gmm_cfg.point_encoder
-        gmm_model_spec.pcd_scale = gmm_cfg.pcd_scale
-
-        print("##################### GMM Config #####################")
+        # Update config with run config.
+        OmegaConf.update(cfg_copy, "dataset", OmegaConf.select(gmm_saved_cfg, "dataset"), merge=True, force_add=True)
+        OmegaConf.update(cfg_copy, "model", OmegaConf.select(gmm_saved_cfg, "model"), merge=True, force_add=True)
         print(
             json.dumps(
-                omegaconf.OmegaConf.to_container(gmm_model_spec, resolve=True, throw_on_missing=False),
+                OmegaConf.to_container(cfg_copy, resolve=True, throw_on_missing=False),
                 sort_keys=True,
                 indent=4,
             )
         )
-        # Load GMM model config and checkpoint
-        #gmm_model_cfg = omegaconf.OmegaConf.load(os.path.join(hydra.utils.get_original_cwd(), "../configs/model/df_cross.yaml"))
-        gmm_model = FrameGMMPredictor(gmm_model_spec, device)
-        gmm_path = os.path.join(gmm_exp_path, "checkpoints", f"epoch_{gmm_cfg.gmm}.pt")
-        gmm_model.load_state_dict(torch.load(gmm_path))
-        print(f"Using GMM checkpoint: {gmm_path}")
+
+        cfg_copy, gmm_datamodule = create_datamodule(cfg_copy)
+        gmm_network, _ = create_model(cfg_copy)
+        gmm_model = FrameGMMPredictor(gmm_network, cfg_copy.model, device)
+        gmm_model.eval()
+
+        gmm_ckpt_path = os.path.join(gmm_exp_path, "checkpoints", f"epoch_{gmm_epoch}.pt")
+        gmm_model.load_state_dict(torch.load(gmm_ckpt_path))
+        print(f"Using GMM checkpoint: {gmm_ckpt_path}")
 
     else:
         gmm_model = None
@@ -377,9 +379,7 @@ def infer(payload: dict):
                 # Generate predictions.
                 if gmm_model is not None:
                     # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                    pred_batch = {key: expand_pcd(value, cfg.inference.num_gmm_trials) for key, value in batch.items()}
-                    pred_batch = model.update_batch_frames(pred_batch, update_labels=True, gmm_model=gmm_model)
-                    batch = model.update_batch_frames(batch, update_labels=True)
+                    pred_batch = model.update_batch_frames(batch, update_labels=True, gmm_model=gmm_model, num_gmm_trials=cfg.inference.num_gmm_trials)
                     pred_dict = model.predict(pred_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
                 else:
                     pred_batch = model.update_batch_frames(batch, update_labels=True)
@@ -398,15 +398,15 @@ def infer(payload: dict):
         with torch.no_grad():
             if gmm_model is not None:
                 # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                pred_batch = {key: expand_pcd(value, cfg.inference.num_gmm_trials) for key, value in batch.items()}
-                pred_batch = model.update_batch_frames(pred_batch, update_labels=True, gmm_model=gmm_model)
-                batch = model.update_batch_frames(batch, update_labels=True)
+                pred_batch = model.update_batch_frames(batch, update_labels=True, gmm_model=gmm_model)
                 pred_dict = model.predict(pred_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
             else:
                 pred_batch = model.update_batch_frames(batch, update_labels=True)
                 pred_dict = model.predict(pred_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
     
     elif infer_name == "direct":
+        raise NotImplementedError("Direct evaluation method is not updated from the legacy version yet")
+        '''
         demo = np.load(in_f, allow_pickle=True)
 
         parent_start_pcd = demo['multi_obj_start_pcd'].item()['parent']
@@ -457,22 +457,20 @@ def infer(payload: dict):
         with torch.no_grad():
             if gmm_model is not None:
                 # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                pred_batch = {key: expand_pcd(value, cfg.inference.num_gmm_trials) for key, value in batch.items()}
-                pred_batch = model.update_batch_frames(pred_batch, update_labels=False, gmm_model=gmm_model)
-                #batch = model.update_batch_frames(batch, update_labels=False)
+                pred_batch = model.update_batch_frames(batch, update_labels=True, gmm_model=gmm_model)
                 pred_dict = model.predict(pred_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
             else:
                 pred_batch = model.update_batch_frames(batch, update_labels=False)
                 pred_dict = model.predict(pred_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
-
+        '''
     else:
         raise HTTPException(404, f"{infer_name} is not supported")
 
 
     pred_T = pred_dict["pred_T"].cpu().numpy()
-    pred_frame_world = pred_dict["pred_frame_world"].cpu().numpy() / cfg.dataset.pcd_scale_factor
-    pred_point_world = pred_dict["point"]["pred_world"].cpu().numpy() / cfg.dataset.pcd_scale_factor
-    init_action_world = pred_dict["init_action_world"][0].cpu().numpy() / cfg.dataset.pcd_scale_factor
+    pred_frame_world = pred_dict["pred_frame_world"].cpu().numpy()
+    pred_point_world = pred_dict["point"]["pred_world"].cpu().numpy()
+    init_action_world = pred_dict["init_action_world"][0].cpu().numpy()
 
     log_str = f"Inference done: Pred_T shape {pred_T.shape}"
     log(log_str)
@@ -481,9 +479,7 @@ def infer(payload: dict):
     
     if save_pred:
         merged_dict = merge_and_move_to_cpu(pred_batch, pred_dict)
-        merged_dict['cfg'] = {
-            'pcd_scale_factor': cfg.dataset.pcd_scale_factor
-        }
+
         np.savez(out_f, **merged_dict)
 
         log_str = f"Inference saved: {out_f}"

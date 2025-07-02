@@ -197,7 +197,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         """
         raise NotImplementedError("This should be implemented in the derived class.")
     
-    def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
+    def update_batch_frames(self, batch, update_labels=False, gmm_model=None, num_gmm_trials=1):
         """
         Convert data batch from world frame to prediction frame.
         """
@@ -677,7 +677,7 @@ class TAX3Dv2MuFrameModule(TAX3Dv2BaseModule):
         ]
         return pred_flow_world, pred_point_world, pc_action_world, results_world
 
-    def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
+    def update_batch_frames(self, batch, update_labels=False, gmm_model=None, num_gmm_trials=1):
         # Using GMM model, if provided.
         if gmm_model is not None:
             assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
@@ -847,16 +847,28 @@ class TAX3Dv2FixedFrameModule(TAX3Dv2BaseModule):
 
         return pred_world_dict
 
-    def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
+    def update_batch_frames(self, batch, update_labels=False, gmm_model=None, num_gmm_trials=1):
         # Using GMM model, if provided.
         if gmm_model is not None:
             assert self.model_cfg.pred_frame == "noisy_goal", "GMM model can only be used with noisy goal prediction frame!"
             gmm_pred = gmm_model(batch)
             gmm_probs, gmm_means, gmm_anchor_frame = gmm_pred["probs"], gmm_pred["means"], gmm_pred["anchor_frame"]
-            idxs = torch.multinomial(gmm_probs.squeeze(-1), 1).squeeze()
-            sampled_noisy_goals = (
-                gmm_means[torch.arange(gmm_means.shape[0]), idxs] + gmm_anchor_frame.squeeze(1)
-            ).cpu()
+            idxs = torch.multinomial(gmm_probs.squeeze(-1), num_gmm_trials, replacement=False).squeeze()
+
+            if num_gmm_trials == 1:
+                idxs = idxs.squeeze(-1)  # Shape: [batch_size]
+                batch_indices = torch.arange(gmm_means.shape[0])
+                sampled_noisy_goals = (gmm_means[batch_indices, idxs] + gmm_anchor_frame.squeeze(1)).cpu()
+            else:
+                batch_size = gmm_means.shape[0]  # 32
+                batch_indices = torch.arange(batch_size).unsqueeze(1).expand(-1, num_gmm_trials)  # [32, 10]
+                sampled_noisy_goals = (gmm_means[batch_indices, idxs] + gmm_anchor_frame.squeeze(1).unsqueeze(1)).cpu()
+                # [32, 10, 3] -> [320, 3]
+                sampled_noisy_goals = sampled_noisy_goals.reshape(-1, sampled_noisy_goals.shape[-1])
+                
+                batch = {key: expand_pcd(value, num_gmm_trials) for key, value in batch.items()}
+
+            
             batch["noisy_goal"] = sampled_noisy_goals
 
             # Also add gmm predictions to batch for visualization.
