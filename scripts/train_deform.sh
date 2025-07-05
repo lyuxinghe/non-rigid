@@ -47,6 +47,14 @@ elif [ $MODEL_TYPE == "tax3dv2_corl2025" ]; then
   MODEL_PARAMS+=" model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.point_encoder=pn2"
   MODEL_PARAMS+=" model.diff_rotation_noise_scale=45 model.scene_anchor=True"
 
+elif [ $MODEL_TYPE == "tax3dv2_corl2025_no_track" ]; then
+echo "Training tax3dv2_corl2025_no_track model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=tax3dv2_no_track model.type=point"
+  MODEL_PARAMS+=" model.joint_encode=True"
+  MODEL_PARAMS+=" model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.point_encoder=pn2"
+  MODEL_PARAMS+=" model.diff_rotation_noise_scale=45 model.scene_anchor=True"
+
 fi
 
 WANDB_MODE=$WANDB_MODE python train.py \

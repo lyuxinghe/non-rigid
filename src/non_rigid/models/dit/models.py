@@ -19,7 +19,12 @@ from timm.layers import use_fused_attn
 from typing import Optional
 from functools import partial
 
-from non_rigid.models.encoders import DisjointFeatureEncoder, JointFeatureEncoder, mlp_encoder, pn2_encoder
+from non_rigid.models.encoders import (
+    DisjointFeatureEncoder, 
+    JointFeatureEncoder,
+    NoTrackJointFeatureEncoder,
+    mlp_encoder,
+    )
 
 torch.set_printoptions(precision=8, sci_mode=True)
 
@@ -1279,6 +1284,148 @@ class TAX3Dv2_FixedFrame_Dual_DiT(nn.Module):
 
         return xr, xs
 
+class TAX3Dv2_No_Track_DiT(nn.Module):
+    def __init__(
+            self,
+            in_channels=3,
+            hidden_size=1152,
+            depth=28,
+            num_heads=16,
+            mlp_ratio=4.0,
+            learn_sigma=True,
+            model_cfg=None,
+    ):
+        super().__init__()
+        self.learn_sigma = learn_sigma
+        self.in_channels = in_channels
+        # self.out_channels = in_channels * 2 if learn_sigma else in_channels
+        self.out_channels = 6 if learn_sigma else 3
+        self.num_heads = num_heads
+        self.model_cfg = model_cfg
+
+        # Point cloud feature encoder.
+        if self.model_cfg.joint_encode:
+            self.feature_encoder = NoTrackJointFeatureEncoder(in_channels, hidden_size, model_cfg)
+        else:
+            raise NotImplementedError("Disjoint feature encoding is not implemented for TAX3Dv2_No_Track.")
+
+        # Learnable frame embedding.
+        self.ref_frame_token = nn.Parameter(torch.randn(1, 1, hidden_size))
+
+        # Timestamp embedding.
+        self.t_embedder = TimestepEmbedder(hidden_size)
+
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            self.rel_pos_embedder = nn.Sequential(
+                nn.Linear(in_channels, hidden_size, bias=True),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size, bias=True),
+            )
+        else:
+            self.rel_pos_embedder = None
+
+        # Simple linear layer to reduce xy-features to hidden size after one-hot encoding.
+        self.xy_embedder = mlp_encoder(hidden_size + 1, hidden_size)
+
+        # DiT blocks.
+        self.blocks = nn.ModuleList(
+            [
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                for _ in range(depth)
+            ]
+        )
+
+        # Final layer; functionally setting patch size to 1 for a point cloud.
+        self.final_layer_r = FinalLayer(hidden_size, 1, self.out_channels)
+        self.final_layer_s = FinalLayer(hidden_size, 1, self.out_channels)
+        self.initialize_weights()
+    
+    def initialize_weights(self):
+        # Initialize transformer layers:
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
+        self.apply(_basic_init)
+
+        # Initialize timestep embedding MLP:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+
+        # Initialize relative position embedding MLP, if enabled:
+        if self.rel_pos_embedder is not None:
+            nn.init.normal_(self.rel_pos_embedder[0].weight, std=0.02)
+            nn.init.normal_(self.rel_pos_embedder[2].weight, std=0.02)
+
+        # Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.blocks:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+        # Zero-out output layers:
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_r.linear.weight, 0)
+        nn.init.constant_(self.final_layer_r.linear.bias, 0)
+
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_s.linear.weight, 0)
+        nn.init.constant_(self.final_layer_s.linear.bias, 0)
+
+    def forward(
+            self,
+            xr_t: torch.Tensor,
+            xs_t: torch.Tensor,
+            t: torch.Tensor,
+            y: torch.Tensor,
+            x0: torch.Tensor,
+            rel_pos: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        x = xr_t + xs_t
+        # Encode action, anchor, and x0 features.
+        x0_enc, x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0)
+
+        # One-hot for x0 and y, since they are both attended to.
+        x0_enc_onehot = torch.cat([x0_enc, torch.ones_like(x0_enc[:, :,  :1])], dim=2)
+        y_enc_onehot = torch.cat([y_enc, torch.zeros_like(y_enc[:, :,  :1])], dim=2)
+        xy_enc = torch.cat([x0_enc_onehot, y_enc_onehot], dim=1)
+
+        # Encode xy features.
+        xy_enc = self.xy_embedder(xy_enc.permute(0, 2, 1)).permute(0, 2, 1)
+
+        # Concatenating reference frame token to the action features.
+        x_enc = torch.cat(
+            [x_enc, self.ref_frame_token.expand(x_enc.shape[0], -1, -1)], dim=1
+        )
+
+        # Timestep embedding.
+        t_emb = self.t_embedder(t)
+
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            assert rel_pos is not None, "Relative position embedding requires rel_pos tensor."
+            rel_pos_emb = self.rel_pos_embedder(rel_pos.squeeze(1))
+            c = t_emb + rel_pos_emb
+        else:
+            c = t_emb
+
+        # Forward pass through DiT blocks.
+        for block in self.blocks:
+            x_enc = block(x_enc, y_enc, c)
+        
+        # Final layers.
+        xr_out = x_enc[:, -1:, :]
+        xs_out = x_enc[:, :-1, :]
+        xr_out = self.final_layer_r(xr_out, c).permute(0, 2, 1)
+        xs_out = self.final_layer_s(xs_out, c).permute(0, 2, 1)
+
+        return xr_out, xs_out
+
+        
 #################################################################################
 #                   Sine/Cosine Positional Embedding Functions                  #
 #################################################################################

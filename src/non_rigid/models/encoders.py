@@ -215,3 +215,76 @@ class JointFeatureEncoder(nn.Module):
         x_enc = self.action_mixer(x_enc).permute(0, 2, 1)
 
         return x_enc, anchor_pred_enc
+    
+class NoTrackJointFeatureEncoder(nn.Module):
+    """
+    TODO: fill this out
+    """
+    def __init__(self, in_channels, hidden_size, model_cfg):
+        super().__init__()
+        self.in_channels = in_channels
+        self.hidden_size = hidden_size
+        self.model_cfg = model_cfg
+
+        # Initializing point cloud encoder wrapper.
+        if self.model_cfg.point_encoder == "mlp":
+            encoder_fn = partial(mlp_encoder, in_channels=self.in_channels)
+        elif self.model_cfg.point_encoder == "pn2":
+            encoder_fn = partial(pn2_encoder, in_channels=self.in_channels, model_cfg=self.model_cfg)
+        else:
+            raise ValueError(f"Invalid point_encoder: {self.model_cfg.point_encoder}")
+
+        # Creating base encoders - action-frame, and prediction-frame.
+        self.action_encoder = encoder_fn(out_channels=hidden_size)
+        if self.model_cfg.one_hot_recon:
+            self.pred_encoder = encoder_fn(in_channels=self.in_channels + 1, out_channels=hidden_size)
+        else:
+            self.pred_encoder = encoder_fn(out_channels=hidden_size)
+
+        # # Creating extra feature encoders, if necessary.
+        # if self.model_cfg.feature:
+        #     self.feature_encoder = encoder_fn(in_channels=9, out_channels=hidden_size)
+        #     self.action_mixer = mlp_encoder(3 * hidden_size, hidden_size)
+        # else:
+        #     self.action_mixer = mlp_encoder(2 * hidden_size, hidden_size)
+    
+    def forward(self, x, y, x0):
+        """
+        TODO: fill this out
+        """
+        if self.model_cfg.type == "flow":
+            x_flow = x
+            x_recon = x + x0
+        else:
+            x_flow = x - x0
+            x_recon = x
+        
+        # Encode base features - action-frame, and prediction frame.
+        action_size = x0.shape[-1]
+        action_enc = self.action_encoder(x0)
+        if self.model_cfg.one_hot_recon:
+            x_recon_one_hot = torch.cat([x_recon, torch.ones_like(x_recon[:, :1, :])], dim=1)
+            y_one_hot = torch.cat([y, torch.zeros_like(y[:, :1, :])], dim=1)
+            pred_enc = self.pred_encoder(torch.cat([x_recon_one_hot, y_one_hot], dim=-1))
+        else:
+            pred_enc = self.pred_encoder(torch.cat([x_recon, y], dim=-1))
+        action_pred_enc, anchor_pred_enc = pred_enc[:, :, :action_size], pred_enc[:, :, action_size:]
+        # anchor_pred_enc = anchor_pred_enc.permute(0, 2, 1)
+
+        # # Encode extra features, if necessary.
+        # if self.model_cfg.feature:
+        #     shape = x_recon - torch.mean(x_recon, dim=2, keepdim=True)
+        #     flow_zeromean = x_flow - torch.mean(x_flow, dim=2, keepdim=True)
+        #     feature_enc = self.feature_encoder(
+        #         torch.cat([shape, x_flow, flow_zeromean], dim=1)
+        #     )
+        #     action_features = [action_enc, action_pred_enc, feature_enc]
+        # else:
+        #     action_features = [action_enc, action_pred_enc]
+        
+        # # Compress action features to hidden size through action mixer.
+        # x_enc = torch.cat(action_features, dim=1)
+        # x_enc = self.action_mixer(x_enc).permute(0, 2, 1)
+
+        # return x_enc, anchor_pred_enc
+        return action_enc.permute(0, 2, 1), action_pred_enc.permute(0, 2, 1), anchor_pred_enc.permute(0, 2, 1)
