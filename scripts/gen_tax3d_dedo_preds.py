@@ -168,6 +168,8 @@ def main(cfg):
     ######################################################################
     def generate_preds(dataset, save_path):
         batch_keys = ["pc_action", "pc_anchor", "pc", "T_action2world", "T_goal2world"]
+        if cfg.model.pred_frame == "noisy_goal":
+            batch_keys.append("noisy_goal")
         for i in tqdm(range(len(dataset))):
             item = dataset.__getitem__(i)
             batch = {key: item[key].unsqueeze(0) for key in batch_keys}
@@ -220,7 +222,11 @@ def main(cfg):
     # Generate predictions on the train/val sets.
     ######################################################################
     # Creating directory for model predictions.
-    pred_dir = datamodule.root / "tax3d_preds" / cfg.checkpoint.run_id
+    dir_name = cfg.checkpoint.run_id
+    if cfg.gmm_error > 0.0:
+        dir_name += f"_gmm_error={cfg.gmm_error:.1f}"
+    pred_dir = datamodule.root / "tax3d_preds" / dir_name
+
     if os.path.exists(pred_dir):
         print(f"Prediction directory {pred_dir} already exists. Delete first.")
         quit()
