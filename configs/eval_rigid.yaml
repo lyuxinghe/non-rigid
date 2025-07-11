@@ -21,11 +21,12 @@ defaults:
 
 seed: 42
 # task_type: null # Set during eval loop based on dataset.
-gmm: null # (None, num_epochs) If not None, use GMM for eval.
-gmm_pcd_scale: s3
-gmm_log_dir: "/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/gmm_outputs"
 
-exp_name: null
+gmm: 
+  gmm: null # (None, num_epochs) If not None, use GMM for eval.
+  gmm_log_dir: "/data/lyuxing/logs/tax3d/train/gmm"
+  task_name: null
+  run_id: ???
 
 # This is the checkpoint that we're evaluating. You can change this to whatever you need,
 # like if you want multiple checkpoints simultaneously, etc.

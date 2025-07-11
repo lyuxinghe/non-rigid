@@ -24,13 +24,9 @@ seed: 42
 
 gmm: 
   gmm: null # (None, num_epochs) If not None, use GMM for eval.
-  gmm_log_dir: "/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/gmm_outputs"
+  gmm_log_dir: "/data/lyuxing/logs/tax3d/train/gmm"
   task_name: null
-  var: 0.1
-  uniform_loss: 0.1
-  regularize_residual: 0.0
-  point_encoder: pn2
-  pcd_scale: 1.0
+  run_id: ???
 
 
 server:

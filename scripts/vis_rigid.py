@@ -2,7 +2,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 import lightning as L
 import json
-import omegaconf
+from omegaconf import OmegaConf
 import torch
 import wandb
 import os
@@ -18,7 +18,7 @@ from non_rigid.utils.script_utils import (
 from non_rigid.nets.dgcnn import DGCNN
 from non_rigid.metrics.flow_metrics import flow_rmse
 from non_rigid.utils.pointcloud_utils import expand_pcd
-from non_rigid.utils.vis_utils import visualize_sampled_predictions, visualize_diffusion_timelapse
+from non_rigid.utils.vis_utils import visualize_sampled_predictions, visualize_diffusion_timelapse, visualize_multimodality
 from non_rigid.models.gmm_predictor import FrameGMMPredictor
 
 from tqdm import tqdm
@@ -57,7 +57,7 @@ def main(cfg):
     )
     print(
         json.dumps(
-            omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
+            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
             sort_keys=True,
             indent=4,
         )
@@ -71,10 +71,13 @@ def main(cfg):
     torch.backends.cudnn.benchmark = False
 
     # Since most of us are training on 3090s+, we can use mixed precision.
-    torch.set_float32_matmul_precision("medium")
+    torch.set_float32_matmul_precision("highest")
 
     # Global seed for reproducibility.
     L.seed_everything(42)
+    torch.set_num_threads(1)
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+    torch.use_deterministic_algorithms(True, warn_only=True)
 
     device = f"cuda:{cfg.resources.gpus[0]}"
 
@@ -101,30 +104,49 @@ def main(cfg):
     ######################################################################
     # Load the reference frame predictor, if necessary.
     ######################################################################
-    if cfg.gmm is not None:
+    if cfg.gmm.gmm is not None:
         # GMM can only be used with noisy goal models.
         if cfg.model.pred_frame != "noisy_goal":
             raise ValueError("GMM can only be used with noisy goal models.")
+
+        # Create a deep copy of the cfg        
+        cfg_copy = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+
+        gmm_epoch= cfg.gmm.gmm
+
+        gmm_exp_path = os.path.join(
+            os.path.expanduser(cfg_copy.gmm.gmm_log_dir),
+            cfg_copy.gmm.task_name,
+            cfg_copy.gmm.run_id,
+        )
+        if not os.path.exists(gmm_exp_path):
+            raise ValueError(f"Experiment directory {gmm_exp_path} does not exist - train this model first.")
         
-        # Checking for GMM model directory.
-        #gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"gmm_{cfg.dataset.name}_{cfg.gmm}")
-        # Also adding pcd_scale
-        # gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.gmm_pcd_scale}", f"gmm_{cfg.exp_name}_{cfg.gmm}")
-        gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.gmm_pcd_scale}", f"{cfg.exp_name}")
-        if not os.path.exists(gmm_exp_name):
-            raise ValueError(f"GMM experiment directory {gmm_exp_name} does not exist - train this model first.")
-        
-        # Loading GMM frame predictor.
-        gmm_model_cfg = omegaconf.OmegaConf.load(os.path.join(hydra.utils.get_original_cwd(), "../configs/model/df_cross.yaml"))
-        gmm_model_cfg.rel_pos = True
-        gmm_model = FrameGMMPredictor(gmm_model_cfg, device)
-        gmm_model.load_state_dict(
-            torch.load(
-                os.path.join(gmm_exp_name, "checkpoints", f"epoch_{cfg.gmm}.pt")
+        gmm_saved_cfg = OmegaConf.load(os.path.join(gmm_exp_path, "config.yaml"))
+
+        # Update config with run config.
+        OmegaConf.update(cfg_copy, "dataset", OmegaConf.select(gmm_saved_cfg, "dataset"), merge=True, force_add=True)
+        OmegaConf.update(cfg_copy, "model", OmegaConf.select(gmm_saved_cfg, "model"), merge=True, force_add=True)
+        print(
+            json.dumps(
+                OmegaConf.to_container(cfg_copy, resolve=True, throw_on_missing=False),
+                sort_keys=True,
+                indent=4,
             )
         )
+
+        cfg_copy, gmm_datamodule = create_datamodule(cfg_copy)
+        gmm_network, _ = create_model(cfg_copy)
+        gmm_model = FrameGMMPredictor(gmm_network, cfg_copy.model, device)
+        gmm_model.eval()
+
+        gmm_ckpt_path = os.path.join(gmm_exp_path, "checkpoints", f"epoch_{gmm_epoch}.pt")
+        gmm_model.load_state_dict(torch.load(gmm_ckpt_path))
+        print(f"Using GMM checkpoint: {gmm_ckpt_path}")
+
     else:
         gmm_model = None
+        print(f"Using Noisy Oracle")
 
     ######################################################################
     # Create the datamodule. This is just to initialize the datasets - we are
@@ -185,23 +207,26 @@ def main(cfg):
     # set model to eval mode
     network.eval()
     model.eval()
+    model.to(device)
+
+    exp_name = cfg.gmm.task_name
+    save_dir = os.path.join(cfg.log_dir, "vis", exp_name)
+    os.makedirs(save_dir, exist_ok=True)
 
     ######################################################################
     # Helper function to run evals for a given dataset.
     ######################################################################
     def run_vis(dataset, model, indices):
-        scaling_factor = dataset.dataset_cfg.pcd_scale_factor
-        exp_name = cfg.exp_name
-        save_dir = os.path.join(cfg.log_dir, "vis", exp_name)
-        os.makedirs(save_dir, exist_ok=True)
-
-        num_samples = cfg.inference.num_wta_trials # // bs
+        num_samples = cfg.inference.num_wta_trials
         eval_keys = ["pc_action", "pc_anchor", "pc", "flow", "seg", "seg_anchor", "T_action2world", "T_goal2world"]
         if cfg.model.pred_frame == "noisy_goal":
             eval_keys.append("noisy_goal")
 
         for i in tqdm(indices):
             # Index and batchify item.
+            save_dir_i = os.path.join(save_dir, str(i))
+            os.makedirs(save_dir_i, exist_ok=True)
+
             item = dataset[i]
             batch = [{key: item[key] for key in eval_keys}]
             batch = {key: torch.stack([item[key] for item in batch]) for key in eval_keys}
@@ -209,27 +234,28 @@ def main(cfg):
             # Generate predictions.
             if gmm_model is not None:
                 # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                gmm_batch = {key: expand_pcd(value, num_samples) for key, value in batch.items()}
-                gmm_batch = model.update_batch_frames(gmm_batch, update_labels=True, gmm_model=gmm_model)
+                gmm_batch = model.update_batch_frames(batch, update_labels=True, gmm_model=gmm_model, num_gmm_trials=cfg.inference.num_gmm_trials)
                 batch = model.update_batch_frames(batch, update_labels=True)
-                pred_dict = model.predict(gmm_batch, 1, progress=False, full_prediction=True)
+                pred_dict = model.predict(gmm_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
             else:
                 batch = model.update_batch_frames(batch, update_labels=True)
                 pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
 
+            #batch = model.update_batch_frames(batch, update_labels=True)
+            #pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
             batch = {key: value.to(device) for key, value in batch.items()}
+
             viz_args = model.get_viz_args(batch, 0)
 
             # Get point clouds in world coordinates.
-            # pred_pc_world = pred_dict["point"]["pred_world"].cpu().numpy()
-            pred_ref_frame = pred_dict["pred_frame_world"].cpu().numpy()
-            # gt_pc_world = viz_args["pc_pos_viz"].cpu().numpy()
-            # action_pc_world = viz_args["pc_action_viz"].cpu().numpy()
-            # anchor_pc_world = viz_args["pc_anchor_viz"].cpu().numpy()
             pred_pc_world = pred_dict["point"]["pred_world"].cpu().numpy()
+            pred_frame_world = pred_dict["pred_frame_world"].cpu().numpy()
             gt_pc_world = viz_args["pc_pos_viz"].cpu().numpy()
             action_pc_world = viz_args["pc_action_viz"].cpu().numpy()
             anchor_pc_world = viz_args["pc_anchor_viz"].cpu().numpy()
+            # Another hack; if scene-as-anchor, revert back to just anchor.
+            if cfg.model.scene_anchor:
+                anchor_pc_world = anchor_pc_world[:anchor_pc_world.shape[0] // 2, :]
 
             # Create GMM viz args, if needed.
             if gmm_model is not None:
@@ -246,22 +272,18 @@ def main(cfg):
                 "Action": action_pc_world,
                 "Anchor": anchor_pc_world,
             }
-            # # For TAX3Dv2, also visualize reference frame predictions.
-            # if cfg.model.tax3dv2:
-            #     context["Ref Frame"] = pred_dict["ref_frame_world"].squeeze().cpu().numpy()
             fig = visualize_sampled_predictions(
                 ground_truth = gt_pc_world,
                 context = context,
                 predictions = pred_pc_world,
-                # gmm_viz = None,
                 gmm_viz = gmm_viz,
-                ref_predictions = pred_ref_frame,
+                ref_predictions=pred_frame_world,
             )
-            fig.write_html(os.path.join(save_dir, f"predictions_{i}.html"))
-            #fig.show()
-
-            # visualize diffusion timelapse
-            VIZ_IDX = 0 # 0
+            # fig.show()
+            fig.write_html(os.path.join(save_dir_i, f"visualize_sampled_predictions_{i}.html"))
+            
+            # Visualize diffusion timelapse.
+            VIZ_IDX = 4 # 0
             results = [res[VIZ_IDX].cpu().numpy() for res in pred_dict["results_world"]]
             # For TAX3Dv2, also grab logit/residual predictions.
             # if cfg.model.tax3dv2:
@@ -270,6 +292,7 @@ def main(cfg):
             # else:
             extras = None
             ref_frame_results = None
+            '''
             fig = visualize_diffusion_timelapse(
                 context = {
                     "Action": action_pc_world,
@@ -279,16 +302,33 @@ def main(cfg):
                 extras = extras,
                 ref_frame_results = ref_frame_results,
             )
-            #fig.show()
-            fig.write_html(os.path.join(save_dir, f"diff_time.html"))
+            # fig.show()
+            fig.write_html(os.path.join(save_dir_i, f"visualize_diffusion_timelapse_{i}.html"))
+            '''
+            
+            # Create multi-modal gif.
+            gif_results = [res.cpu().numpy() for res in pred_dict["results_world"]]
+            fig = visualize_multimodality(
+                context = {
+                    "Anchor": anchor_pc_world,
+                },
+                predictions = pred_pc_world,
+                results = gif_results,
+                # indices = [0, 1],
+                indices = [0, 1, 3, 4, 6, 9, 13, 16],
+                gif_path = os.path.join(save_dir_i, f"multimodality_animation_{i}.gif"),
+            )
+            # fig.show()
+            fig.write_html(os.path.join(save_dir_i, f"visualize_multimodality_{i}.html"))
+            
 
     ######################################################################
     # Run the model on the train/val/test sets.
     ######################################################################
-    train_indices = []
-    # val_indices = [10, 12, 14, 16, 18, 20, 24, 26, 28]
-    # val_indices = [10]
-    val_indices = np.arange(11, 50)
+    indices = [46]
+    print("Evaluating on indices: ", indices)
+    train_indices = indices
+    val_indices = []
     val_ood_indices = []
     model.to(device)
     run_vis(datamodule.train_dataset, model, train_indices)

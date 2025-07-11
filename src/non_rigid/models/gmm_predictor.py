@@ -46,8 +46,8 @@ class FrameGMMPredictor(nn.Module):
             # Computing scale factor.
             scale = self.model_cfg.pcd_scale
 
-            action_dists = pc_action - pc_action.mean(axis=1, keepdim=True)
-            anchor_dists = pc_anchor - pc_anchor.mean(axis=1, keepdim=True)
+            action_dists = pc_action - pc_action.mean(axis=2, keepdim=True)
+            anchor_dists = pc_anchor - pc_anchor.mean(axis=2, keepdim=True)
             
             action_scale = torch.linalg.norm(action_dists, dim=1, keepdim=True).max(dim=2, keepdim=True).values
             anchor_scale = torch.linalg.norm(anchor_dists, dim=1, keepdim=True).max(dim=2, keepdim=True).values
@@ -139,6 +139,7 @@ class GMMLoss(torch.nn.Module):
 
         # Computing GMM likelihood loss.
         diff = targets - means
+        diff = diff / pred["pc_scale"]
 
         if pred["pc_scale"] is not None:
             # var *= pred["pc_scale"].permute(0, 2, 1)

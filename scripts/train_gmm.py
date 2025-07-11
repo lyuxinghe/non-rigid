@@ -47,7 +47,7 @@ def main(cfg):
     train_dataset = datamodule.train_dataset
     val_dataset = datamodule.val_dataset
     train_loader = datamodule.train_dataloader()
-    val_loader = datamodule.val_dataloader()
+    val_loader, _ = datamodule.val_dataloader()
 
     ######################################################################
     # Create the network.

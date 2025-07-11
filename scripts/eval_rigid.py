@@ -2,7 +2,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 import lightning as L
 import json
-import omegaconf
+from omegaconf import OmegaConf
 import torch
 import wandb
 import os
@@ -35,7 +35,7 @@ def main(cfg):
     )
     print(
         json.dumps(
-            omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
+            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False),
             sort_keys=True,
             indent=4,
         )
@@ -79,29 +79,50 @@ def main(cfg):
     ######################################################################
     # Load the GMM frame predictor, if necessary.
     ######################################################################
-    if cfg.gmm is not None:
+    # Grab config file from saved run.
+    if cfg.gmm.gmm is not None:
         # GMM can only be used with noisy goal models.
         if cfg.model.pred_frame != "noisy_goal":
             raise ValueError("GMM can only be used with noisy goal models.")
+
+        # Create a deep copy of the cfg        
+        cfg_copy = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+
+        gmm_epoch= cfg.gmm.gmm
+
+        gmm_exp_path = os.path.join(
+            os.path.expanduser(cfg_copy.gmm.gmm_log_dir),
+            cfg_copy.gmm.task_name,
+            cfg_copy.gmm.run_id,
+        )
+        if not os.path.exists(gmm_exp_path):
+            raise ValueError(f"Experiment directory {gmm_exp_path} does not exist - train this model first.")
         
-        # Checking for GMM model directory.
-        #gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"gmm_{cfg.dataset.name}_{cfg.gmm}")
-        # Also adding pcd_scale
-        gmm_exp_name = os.path.join(os.path.expanduser(cfg.gmm_log_dir), f"{cfg.gmm_pcd_scale}", f"gmm_{cfg.exp_name}_{cfg.gmm}")
-        if not os.path.exists(gmm_exp_name):
-            raise ValueError(f"GMM experiment directory {gmm_exp_name} does not exist - train this model first.")
-        
-        # Loading GMM frame predictor.
-        gmm_model_cfg = omegaconf.OmegaConf.load(os.path.join(hydra.utils.get_original_cwd(), "../configs/model/df_cross.yaml"))
-        gmm_model_cfg.rel_pos = True
-        gmm_model = FrameGMMPredictor(gmm_model_cfg, device)
-        gmm_model.load_state_dict(
-            torch.load(
-                os.path.join(gmm_exp_name, "checkpoints", f"epoch_{cfg.gmm}.pt")
+        gmm_saved_cfg = OmegaConf.load(os.path.join(gmm_exp_path, "config.yaml"))
+
+        # Update config with run config.
+        OmegaConf.update(cfg_copy, "dataset", OmegaConf.select(gmm_saved_cfg, "dataset"), merge=True, force_add=True)
+        OmegaConf.update(cfg_copy, "model", OmegaConf.select(gmm_saved_cfg, "model"), merge=True, force_add=True)
+        print(
+            json.dumps(
+                OmegaConf.to_container(cfg_copy, resolve=True, throw_on_missing=False),
+                sort_keys=True,
+                indent=4,
             )
         )
+
+        cfg_copy, gmm_datamodule = create_datamodule(cfg_copy)
+        gmm_network, _ = create_model(cfg_copy)
+        gmm_model = FrameGMMPredictor(gmm_network, cfg_copy.model, device)
+        gmm_model.eval()
+
+        gmm_ckpt_path = os.path.join(gmm_exp_path, "checkpoints", f"epoch_{gmm_epoch}.pt")
+        gmm_model.load_state_dict(torch.load(gmm_ckpt_path))
+        print(f"Using GMM checkpoint: {gmm_ckpt_path}")
+
     else:
         gmm_model = None
+        print(f"Using Noisy Oracle")
 
     ######################################################################
     # Create the datamodule. This is just to initialize the datasets - we are
@@ -162,6 +183,7 @@ def main(cfg):
     # set model to eval mode
     network.eval()
     model.eval()
+    model.to(device)
 
     ######################################################################
     # Helper function to run evals for a given dataset.
@@ -169,7 +191,6 @@ def main(cfg):
     def run_eval(dataloader, model):
         # for RPDiff tasks, we also need to take care of the scaling issues
         dataset = dataloader.dataset
-        scaling_factor = dataset.dataset_cfg.pcd_scale_factor
 
         num_samples = cfg.inference.num_wta_trials # // bs
         eval_keys = ["pc_action", "pc_anchor", "pc", "flow", "seg", "seg_anchor", "T_action2world", "T_goal2world"]
@@ -187,64 +208,59 @@ def main(cfg):
         #coverage = []
         #precision = []
 
-        for batch in tqdm(dataloader):
+        with torch.no_grad():
+            for batch in tqdm(dataloader):
+                # Generate predictions.
+                if gmm_model is not None:
+                    # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
+                    pred_batch = model.update_batch_frames(batch, update_labels=True, gmm_model=gmm_model, num_gmm_trials=cfg.inference.num_gmm_trials)
+                    pred_dict = model.predict(pred_batch, cfg.inference.num_wta_trials, progress=True, full_prediction=True)
+                else:
+                    pred_batch = model.update_batch_frames(batch, update_labels=True)
+                    pred_dict = model.predict(pred_batch, cfg.inference.num_wta_trials, progress=True, full_prediction=True)
 
-            # Generate predictions.
-            if gmm_model is not None:
-                # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
-                gmm_batch = {key: expand_pcd(value, num_samples) for key, value in batch.items()}
-                gmm_batch = model.update_batch_frames(gmm_batch, update_labels=True, gmm_model=gmm_model)
-                batch = model.update_batch_frames(batch, update_labels=True)
-                pred_dict = model.predict(gmm_batch, 1, progress=False, full_prediction=True)
-            else:
-                batch = model.update_batch_frames(batch, update_labels=True)
-                pred_dict = model.predict(batch, num_samples, progress=False, full_prediction=True)
+                seg = pred_batch["seg"].to(device)
+                ground_truth_point_world = pred_batch["pc_world"].to(device)
 
-            seg = batch["seg"].to(device)
-            ground_truth_point_world = batch["pc_world"].to(device)
-            bs = ground_truth_point_world.shape[0]
-
-            seg = expand_pcd(seg, num_samples)
-            ground_truth_point_world = expand_pcd(ground_truth_point_world, num_samples)
-
-            pred_point_world = pred_dict["point"]["pred_world"]
-            pred_point_world_scaled = pred_point_world / scaling_factor
-            ground_truth_point_world_scaled = ground_truth_point_world / scaling_factor
-
-            # retrieve predicted translation and rotation (note that these are already properly scaled!)
-            # not used here, simply for test usages
-            pred_T = pred_dict["pred_T"]
-
-            # computing error metrics
-            seg = seg == 0
-
-            rmse = flow_rmse(pred_point_world_scaled, ground_truth_point_world_scaled, mask=True, seg=seg).reshape(bs, num_samples)
-            pred_point_world = pred_point_world.reshape(bs, num_samples, -1, 3)
-
-            # computing winner-take-all metrics
-            winner = torch.argmin(rmse, dim=-1)
-            rmse_wta = rmse[torch.arange(bs), winner]
-
-            translation_errs, rotation_errs = svd_estimation(source=pred_point_world_scaled.reshape(bs * num_samples, -1, 3), target=ground_truth_point_world_scaled, return_magnitude=True)
-
-            translation_errs = translation_errs.reshape(bs, num_samples)
-            rotation_errs = rotation_errs.reshape(bs, num_samples)
-
-            trans_winner = torch.argmin(translation_errs, dim=-1)
-            rot_winner = torch.argmin(rotation_errs, dim=-1)
-
-            translation_err_wta = translation_errs[torch.arange(bs), trans_winner]
-            rotation_err_wta = rotation_errs[torch.arange(bs), rot_winner]
+                bs = ground_truth_point_world.shape[0]
+                seg = expand_pcd(seg, num_samples)
+                ground_truth_point_world = expand_pcd(ground_truth_point_world, num_samples)
 
 
-            rmse_list.append(rmse.mean().item())
-            rmse_wta_list.append(rmse_wta.mean().item())
-            t_err_list.append(translation_errs.mean().item())
-            t_err_wta_list.append(translation_err_wta.mean().item())
-            r_err_list.append(rotation_errs.mean().item())
-            r_err_wta_list.append(rotation_err_wta.mean().item())
+                # pred = pred_dict[self.prediction_type]["pred"]
+                pred_point_world = pred_dict["point"]["pred_world"]
 
-            
+                pred_point_world_clone = pred_point_world.clone()
+                ground_truth_point_world_clone = ground_truth_point_world.clone()
+
+                # computing error metrics
+                seg = seg == 0
+                breakpoint()
+                rmse = flow_rmse(pred_point_world_clone, ground_truth_point_world_clone, mask=True, seg=seg).reshape(bs, num_samples)
+                pred_point_world = pred_point_world.reshape(bs, num_samples, -1, 3)
+
+                # computing winner-take-all metrics
+                winner = torch.argmin(rmse, dim=-1)
+                rmse_wta = rmse[torch.arange(bs), winner]
+
+                translation_errs, rotation_errs = svd_estimation(source=pred_point_world_clone, target=ground_truth_point_world_clone, return_magnitude=True)
+
+                translation_errs = translation_errs.reshape(bs, num_samples)
+                rotation_errs = rotation_errs.reshape(bs, num_samples)
+
+                trans_winner = torch.argmin(translation_errs, dim=-1)
+                rot_winner = torch.argmin(rotation_errs, dim=-1)
+
+                translation_err_wta = translation_errs[torch.arange(bs), trans_winner]
+                rotation_err_wta = rotation_errs[torch.arange(bs), rot_winner]
+
+                rmse_list.append(rmse.mean().item())
+                rmse_wta_list.append(rmse_wta.mean().item())
+                t_err_list.append(translation_errs.mean().item())
+                t_err_wta_list.append(translation_err_wta.mean().item())
+                r_err_list.append(rotation_errs.mean().item())
+                r_err_wta_list.append(rotation_err_wta.mean().item())
+
         rmse_ = np.mean(rmse_list)
         rmse_wta_ = np.mean(rmse_wta_list)
         t_err_ = np.mean(t_err_list)

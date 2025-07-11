@@ -323,17 +323,16 @@ class RigidDataModule(L.LightningModule):
         )
 
     def val_dataloader(self):
-        # val_dataloader = data.DataLoader(
-        #     self.val_dataset,
-        #     batch_size=self.val_batch_size,
-        #     shuffle=False,
-        #     num_workers=self.num_workers,
-        # )
+        val_dataloader = data.DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+        )
         val_ood_dataloader = data.DataLoader(
             self.val_ood_dataset,
             batch_size=self.val_batch_size,
             shuffle=False,
             num_workers=self.num_workers,
         )
-        # return val_dataloader, val_ood_dataloader
-        return val_ood_dataloader
+        return val_dataloader, val_ood_dataloader

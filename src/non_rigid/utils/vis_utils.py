@@ -27,12 +27,110 @@ def interpolate_colors(hex1, hex2, n):
         colors.append('#' + ''.join(f'{int(v):02X}' for v in rgb))
     return colors
 
+def generate_diverse_colors(num_colors, anchor_color, hue_threshold=30):
+    """
+    Generate diverse colors evenly distributed around HSV spectrum, avoiding anchor color.
+    
+    Args:
+        num_colors: Number of colors to generate
+        anchor_color: Hex color to avoid (e.g., "#ff8a00")
+        hue_threshold: Minimum hue distance in degrees from anchor color
+    
+    Returns:
+        List of hex color strings
+    """
+    if num_colors == 1:
+        return ["#2196f1"]  # Single blue color
+    
+    # Convert anchor color to RGB
+    anchor_rgb = np.array([int(anchor_color[1:3], 16), int(anchor_color[3:5], 16), int(anchor_color[5:7], 16)])
+    
+    # Convert anchor RGB to HSV to work in HSV space
+    r, g, b = anchor_rgb / 255.0
+    max_val = max(r, g, b)
+    min_val = min(r, g, b)
+    diff = max_val - min_val
+    
+    # Calculate anchor hue
+    if diff == 0:
+        anchor_hue = 0
+    elif max_val == r:
+        anchor_hue = (60 * ((g - b) / diff) + 360) % 360
+    elif max_val == g:
+        anchor_hue = (60 * ((b - r) / diff) + 120) % 360
+    else:
+        anchor_hue = (60 * ((r - g) / diff) + 240) % 360
+    
+    # First, try dividing by num_colors
+    division = num_colors
+    hue_step = 360 / division
+    
+    # Check if any generated hue is too close to anchor hue
+    hues_close_to_anchor = []
+    for i in range(num_colors):
+        hue = (i * hue_step) % 360
+        # Check if this hue is close to anchor hue
+        hue_distance = min(abs(hue - anchor_hue), 360 - abs(hue - anchor_hue))
+        if hue_distance < hue_threshold:
+            hues_close_to_anchor.append(i)
+    
+    # If any hues are close to anchor, use num_colors + 1 division and skip anchor-close hues
+    if hues_close_to_anchor:
+        division = num_colors + 1
+        hue_step = 360 / division
+        
+        # Generate all possible hues and filter out those close to anchor
+        available_hues = []
+        for i in range(division):
+            hue = (i * hue_step) % 360
+            hue_distance = min(abs(hue - anchor_hue), 360 - abs(hue - anchor_hue))
+            if hue_distance >= hue_threshold:  # Keep hues that are far from anchor
+                available_hues.append(hue)
+        
+        # Take the first num_colors from available hues
+        selected_hues = available_hues[:num_colors]
+    else:
+        # Use original division if no conflicts
+        selected_hues = [(i * hue_step) % 360 for i in range(num_colors)]
+    
+    # Generate colors from selected hues
+    colors = []
+    for i, hue in enumerate(selected_hues):
+        saturation = 0.8 + 0.2 * (i % 2)   # Alternate between high saturations
+        value = 0.7 + 0.3 * ((i + 1) % 2)  # Alternate brightness for more diversity
+        
+        # Convert HSV to RGB
+        c = value * saturation
+        x = c * (1 - abs((hue / 60) % 2 - 1))
+        m = value - c
+        
+        if 0 <= hue < 60:
+            r_prime, g_prime, b_prime = c, x, 0
+        elif 60 <= hue < 120:
+            r_prime, g_prime, b_prime = x, c, 0
+        elif 120 <= hue < 180:
+            r_prime, g_prime, b_prime = 0, c, x
+        elif 180 <= hue < 240:
+            r_prime, g_prime, b_prime = 0, x, c
+        elif 240 <= hue < 300:
+            r_prime, g_prime, b_prime = x, 0, c
+        else:
+            r_prime, g_prime, b_prime = c, 0, x
+        
+        rgb = np.array([(r_prime + m) * 255, (g_prime + m) * 255, (b_prime + m) * 255])
+        rgb = np.clip(rgb, 0, 255)
+        hex_color = f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}"
+        colors.append(hex_color)
+    
+    return colors
+
+
 def visualize_sampled_predictions(
     ground_truth,
     context,
     predictions,
     gmm_viz,
-    # ref_predictions,
+    ref_predictions,
 ):
     """
     Helper function to visualize sampled point cloud predictions with custom colors
@@ -144,7 +242,7 @@ def visualize_sampled_predictions(
     # 5) Predictions color‐interpolation
     P = predictions.shape[0]
     pred_colors = interpolate_colors(pred_base1, pred_base2, P)
-    
+    ref_predictions = ref_predictions.squeeze(1)    # [B, 1, 3] -> [B, 3]
     # MEGA HACK BECAUSE OF CORL
     # NOTE: for visualization purposes, can hardcode pred-specific colors here.
     pred_colors[0] = "#f12121"
@@ -166,7 +264,7 @@ def visualize_sampled_predictions(
         # Compute and draw centroid
         centroid = pts.mean(axis=0)
         traces.append(go.Scatter3d(
-            x=[centroid[0]], y=[centroid[1]], z=[centroid[2]],
+            x=[ref_predictions[i][0]], y=[ref_predictions[i][1]], z=[ref_predictions[i][2]],
             mode="markers",
             marker=dict(size=5, color=pred_colors[i], symbol="x"),
             name=f"Prediction Centroid {i + 1}"
@@ -468,6 +566,7 @@ def visualize_multimodality(context, predictions, results, indices=[0, 1, 2], gi
     gif_frames = []
     fig = go.Figure()
 
+    '''
     # Custom colors.
     anchor_color = "#ff8a00"
     color_0 = "#f12121"
@@ -475,6 +574,13 @@ def visualize_multimodality(context, predictions, results, indices=[0, 1, 2], gi
     color_2 = "#2145f1"
     color_3 = "#a12ef1" 
     colors = [color_0, color_1, color_2, color_3]
+    '''
+
+    # Custom colors.
+    anchor_color = "#ff8a00"
+    
+    # Generate diverse colors avoiding anchor color
+    colors = generate_diverse_colors(len(indices), anchor_color)
 
     # Add anchor points to the figure.
     anchor_pts = context["Anchor"]
@@ -557,7 +663,7 @@ def visualize_multimodality(context, predictions, results, indices=[0, 1, 2], gi
 
     # Create gif.
     gif_frames[0].save(
-        os.path.join(gif_path, "multimodality_animation_sh_33.gif"),
+        gif_path,
         save_all=True,
         append_images=gif_frames[1:],
         duration=33,  # milliseconds per frame
