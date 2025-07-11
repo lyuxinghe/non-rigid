@@ -120,8 +120,17 @@ class DedoRunner(BaseRunner):
 
             action_ds = action_pc[:, action_indices, :]
             anchor_ds = anchor_pc[:, anchor_indices, :]
+            # breakpoint()
             # goal_ds = goal_pc[action_indices, :] if goal_pc is not None else None
-            return action_ds, anchor_ds, goal_pc
+
+            if goal_pc is not None:
+                if self.goal_model is not None:
+                    goal_ds = goal_pc
+                else:
+                    goal_ds = goal_pc[action_indices, :]
+            else:
+                goal_ds = None
+            return action_ds, anchor_ds, goal_ds
 
     def run(self, policy: BasePolicy):
         # TODO: this can also take as input the specific environment settings to run on
@@ -194,19 +203,23 @@ class DedoRunner(BaseRunner):
         return log_data
     
     # def run_dataset(self, policy: BasePolicy, dataset: data.Dataset, dataset_name: str):
-    def run_dataset(self, policy: BasePolicy, dataset_dir: str, dataset_name: str):
+    def run_dataset(self, policy: BasePolicy, dataset_dir: str, dataset_name: str, seed: int, save_viz: bool):
         # TODO: this is a temporary hack to make evals work
         dataset_dir = dataset_dir.replace(' dp3', '')
 
         device = policy.device
         dtype = policy.dtype
         env = self.env
-        output_save_dir = os.path.join(self.output_dir, dataset_name + "2",)
+        # output_save_dir = os.path.join(self.output_dir, dataset_name + "2",)
+        output_save_dir = os.path.join(self.output_dir, f"{dataset_name}_seed{seed}")
         dataset = DedoDataset(dataset_dir + f"/{dataset_name}_tax3d")
         
-        breakpoint()
         # creating directory for outputs
         if os.path.exists(output_save_dir):
+            input_str = input(f"Output directory {output_save_dir} already exists. Overwrite? (y/n): ")
+            if input_str.lower() != 'y':
+                cprint(f"Exiting without running evaluation.", 'red')
+                return
             cprint(f"Output directory {output_save_dir} already exists. Overwriting...", 'red')
             os.system('rm -rf {}'.format(output_save_dir))
         os.makedirs(output_save_dir, exist_ok=True)
@@ -333,47 +346,51 @@ class DedoRunner(BaseRunner):
                 # step env
                 obs, reward, done, info = env.step(action)
 
+                # Ending episode.
                 if done:
-                    # saving rollout video
-                    vid_frames = info['vid_frames'].squeeze(0)
-                    vid_frames_list = [
-                        Image.fromarray(frame) for frame in vid_frames
-                    ]
-                    vid_tag = "success" if info['is_success'] else "fail"
-                    vid_save_path = os.path.join(output_save_dir, f'{id}_{vid_tag}.gif')
-                    vid_frames_list[0].save(vid_save_path, save_all=True,
-                                            append_images=vid_frames_list[self.vid_speed::self.vid_speed], 
-                                            duration=33, loop=0)
-                    # saving first frame
-                    vid_frames_list[0].save(os.path.join(output_save_dir, f'{id}_{vid_tag}_first_frame.png'))
-                    # saving last frame
-                    vid_frames_list[-1].save(os.path.join(output_save_dir, f'{id}_{vid_tag}_last_frame.png'))
-                    # saving pre-release frame
-                    pre_release_frame = Image.fromarray(info['pre_release_frame'].squeeze(0))
-                    pre_release_frame.save(os.path.join(output_save_dir, f'{id}_{vid_tag}_pre_release_frame.png'))
-
-
-                    # if tax3d, also save the diffusion visualization
-                    # grab the first frame, and then plot the time series of results
-                    if self.tax3d or self.goal_conditioning.startswith('tax3d'):
-                        color_key = info["color_key"].squeeze(0)[action_pc_indices]
-                        viewmat = info["viewmat"].squeeze(0)
-
-                        # get img from vid_frames
-                        # get results from action_dict
-                        img = vid_frames[0]
-                        if self.tax3d:
-                            results = policy.results_world
-                        else:
-                            results = [res for res in results]
-                        diffusion_frames = plot_diffusion(img, results, viewmat, color_key)
-                        diffusion_save_path = os.path.join(output_save_dir, f'{id}_{vid_tag}_diffusion.gif')
-                        diffusion_frames[0].save(diffusion_save_path, save_all=True,
-                                                append_images=diffusion_frames[self.diffusion_gif_speed::self.diffusion_gif_speed], 
+                    # Saving rollout visualizations, if necessary.
+                    if save_viz:
+                        # saving rollout video
+                        vid_frames = info['vid_frames'].squeeze(0)
+                        vid_frames_list = [
+                            Image.fromarray(frame) for frame in vid_frames
+                        ]
+                        vid_tag = "success" if info['is_success'] else "fail"
+                        vid_save_path = os.path.join(output_save_dir, f'{id}_{vid_tag}.gif')
+                        vid_frames_list[0].save(vid_save_path, save_all=True,
+                                                append_images=vid_frames_list[self.vid_speed::self.vid_speed], 
                                                 duration=33, loop=0)
-                        # saving last diffusion frame
-                        diffusion_frames[-1].save(os.path.join(output_save_dir, f'{id}_{vid_tag}_diffusion_last_frame.png'))
+                        # saving first frame
+                        vid_frames_list[0].save(os.path.join(output_save_dir, f'{id}_{vid_tag}_first_frame.png'))
+                        # saving last frame
+                        vid_frames_list[-1].save(os.path.join(output_save_dir, f'{id}_{vid_tag}_last_frame.png'))
+                        # saving pre-release frame
+                        pre_release_frame = Image.fromarray(info['pre_release_frame'].squeeze(0))
+                        pre_release_frame.save(os.path.join(output_save_dir, f'{id}_{vid_tag}_pre_release_frame.png'))
 
+
+                        # if tax3d, also save the diffusion visualization
+                        # grab the first frame, and then plot the time series of results
+                        if self.tax3d or self.goal_conditioning.startswith('tax3d'):
+                            color_key = info["color_key"].squeeze(0)[action_pc_indices]
+                            viewmat = info["viewmat"].squeeze(0)
+
+                            # get img from vid_frames
+                            # get results from action_dict
+                            img = vid_frames[0]
+                            if self.tax3d:
+                                results = policy.results_world
+                            else:
+                                results = [res for res in results]
+                            diffusion_frames = plot_diffusion(img, results, viewmat, color_key)
+                            diffusion_save_path = os.path.join(output_save_dir, f'{id}_{vid_tag}_diffusion.gif')
+                            diffusion_frames[0].save(diffusion_save_path, save_all=True,
+                                                    append_images=diffusion_frames[self.diffusion_gif_speed::self.diffusion_gif_speed], 
+                                                    duration=33, loop=0)
+                            # saving last diffusion frame
+                            diffusion_frames[-1].save(os.path.join(output_save_dir, f'{id}_{vid_tag}_diffusion_last_frame.png'))
+
+                    # Updating success count.
                     if info['is_success']:
                         num_successes += 1
                     break

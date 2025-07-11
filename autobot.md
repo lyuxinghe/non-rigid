@@ -90,5 +90,5 @@ singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B
 
 TRAINING DP3:
 ```
-singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/home/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && ./train_dedo_policy.sh dp3 dedo_proccloth none 1 0 easy"
+singularity exec --nv -B /home/eycai/code/non-rigid:/opt/eycai/code/non-rigid -B /scratch/eycai/data:/home/eycai/data -B /scratch/eycai/logs:/opt/eycai/logs /scratch/eycai/singularity/tax3d.sif bash -c "cd /opt/eycai/code/non-rigid/scripts && ./train_dedo_policy.sh dp3 dedo_proccloth none 1 0 easy medium"
 ```

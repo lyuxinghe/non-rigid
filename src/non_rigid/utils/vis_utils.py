@@ -472,6 +472,7 @@ def visualize_diffusion_timelapse(context, results, ref_frame_results=None, extr
                     y=ref_frame_res[:, 1],
                     z=ref_frame_res[:, 2],
                     marker={"size": 6, "color": "green", "line": {"width": 0}},
+                    name="Reference Frame",
                 )
             )
             query_pred_q = result_step - ref_frame_res
