@@ -22,6 +22,8 @@
 #------ Finetune (we dont keep the run id, and log to a new entry)------#
 #./train.sh 0 tax3dv2 online insertion model.frame_type=fixed model.pred_frame=anchor_center model.point_encoder=pn2 model.diff_rotation_noise_scale=45 dataset.connector_type=0428-wp-2 resources.num_workers=16 checkpoint.local_ckpt=/home/lyuxing/Desktop/tax3d_realworld/checkpoints/annia0md.ckpt dataset.action_rotation_variance=1.04 dataset.anchor_rotation_variance=0.262 training.epochs=22000
 
+#./train_realworld.sh 0 tax3dv2 online insertion model.point_encoder=pn2 model.pred_frame=noisy_goal model.noisy_goal_scale=3.0 model.one_hot_recon=True model.diff_rotation_noise_scale=45 dataset.connector_type=0629-wp-mixed-2 model.pcd_scale=5.0 dataset.pcd_scale=5.0 dataset.sample_size_action=2048 dataset.sample_size_anchor=2048 resources.num_workers=32 dataset.data_dir=/home/mfi/repos/rtc_vision_toolbox/data/tax3d-yk-creator/demonstrations
+
 GPU_INDEX=$1
 MODEL_TYPE=$2
 WANDB_MODE=$3
