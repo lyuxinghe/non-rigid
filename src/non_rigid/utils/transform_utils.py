@@ -45,6 +45,7 @@ def random_se3(
         "quat_uniform",
         "random_flat_upright",
         "random_upright",
+        "discrete_random_upright",
         "identity",
     ]
 
@@ -85,7 +86,7 @@ def random_se3(
             trans_var / torch.norm(random_translation, dim=1).max().item()
         )
         t = torch.rand(1).item() * translation_ratio * random_translation
-    if rot_sample_method == "quat_uniform":
+    elif rot_sample_method == "quat_uniform":
         # This true uniform SE(3) sampling tends to make it hard to train the models
         # In contrast, the axis angle sampling tends to leave the objects close to upright
         quat = torch.randn(N, 4, device=device)
@@ -97,7 +98,7 @@ def random_se3(
         )
         t = torch.rand(1).item() * translation_ratio * random_translation
     elif rot_sample_method == "random_upright":
-        # Random rotation around z axis and xy translation (no z translation)
+        # Random rotation around z axis and xy translation
         theta = torch.rand(N, 1, device=device) * 2 * np.pi
         axis_angle_z = torch.cat([torch.zeros(N, 2, device=device), theta], dim=1)
         R = axis_angle_to_matrix(axis_angle_z)
@@ -115,6 +116,19 @@ def random_se3(
 
         random_translation = torch.randn(N, 3, device=device)
         random_translation[:, 2] = 0
+        translation_ratio = (
+            trans_var / torch.norm(random_translation, dim=1).max().item()
+        )
+        t = torch.rand(1).item() * translation_ratio * random_translation
+    elif rot_sample_method == "discrete_random_upright":
+        # Discrete z-axis rotation with 0, 90, 180, 270 degrees
+        angles = torch.tensor([0, np.pi/2, np.pi, 3*np.pi/2], device=device)
+        theta_idx = torch.randint(0, 4, (N,), device=device)
+        theta = angles[theta_idx].unsqueeze(1)
+        axis_angle_z = torch.cat([torch.zeros(N, 2, device=device), theta], dim=1)
+        R = axis_angle_to_matrix(axis_angle_z)
+
+        random_translation = torch.randn(N, 3, device=device)
         translation_ratio = (
             trans_var / torch.norm(random_translation, dim=1).max().item()
         )

@@ -25,6 +25,7 @@ from non_rigid.models.tax3d_v2 import (
 from non_rigid.datasets.dedo import DedoDataModule
 from non_rigid.datasets.rigid import RigidDataModule
 from non_rigid.datasets.articulated import ArticulatedDataModule
+from non_rigid.datasets.real_world import RealWorldDataModule
 
 PROJECT_ROOT = str(pathlib.Path(__file__).parent.parent.parent.parent.resolve())
 
@@ -75,7 +76,10 @@ def create_datamodule(cfg):
         elif cfg.dataset.name == "articulated":
             datamodule_fn = ArticulatedDataModule
     elif cfg.dataset.material == "rigid":
-        datamodule_fn = RigidDataModule
+        if cfg.dataset.name == "rpdiff":
+            datamodule_fn = RigidDataModule
+        elif cfg.dataset.name == "insertion":
+            datamodule_fn = RealWorldDataModule
 
     # job-specific datamodule pre-processing
     if cfg.mode == "eval":
