@@ -122,8 +122,8 @@ def random_se3(
         t = torch.rand(1).item() * translation_ratio * random_translation
     elif rot_sample_method == "discrete_random_upright":
         # Discrete z-axis rotation with 0, 90, 180, 270 degrees
-        angles = torch.tensor([0, np.pi/2, np.pi, 3*np.pi/2], device=device)
-        theta_idx = torch.randint(0, 4, (N,), device=device)
+        angles = torch.tensor([0, np.pi/2], device=device)
+        theta_idx = torch.randint(0, 2, (N,), device=device)
         theta = angles[theta_idx].unsqueeze(1)
         axis_angle_z = torch.cat([torch.zeros(N, 2, device=device), theta], dim=1)
         R = axis_angle_to_matrix(axis_angle_z)

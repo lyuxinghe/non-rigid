@@ -336,8 +336,8 @@ class InsertionDataset(data.Dataset):
 
         # Update item.
         T_goal2world = Translate(scene_center.unsqueeze(0)).compose(T_scene.inverse())
-        T_action2world = Translate(scene_center.unsqueeze(0)).compose(T_scene.inverse()).compose(Translate(-action_center.unsqueeze(0))).compose(T_obj.inverse()).compose(Translate(action_center.unsqueeze(0)))
-        #T_action2world = Translate(scene_center.unsqueeze(0)).compose(T_scene.inverse())
+        #T_action2world = Translate(scene_center.unsqueeze(0)).compose(T_scene.inverse()).compose(Translate(-action_center.unsqueeze(0))).compose(T_obj.inverse()).compose(Translate(action_center.unsqueeze(0)))
+        T_action2world = Translate(scene_center.unsqueeze(0)).compose(T_scene.inverse())
 
         goal_flow = goal_action_pc - action_pc
 
