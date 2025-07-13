@@ -78,6 +78,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
         self.prediction_type = self.model_cfg.type # flow or point
         self.pred_frame = self.model_cfg.pred_frame
         self.noisy_goal_scale = self.model_cfg.noisy_goal_scale
+        self.zero_shape = self.model_cfg.zero_shape
         # self.model_name = self.model_cfg.name
 
         # prediction type-specific processing
@@ -166,6 +167,7 @@ class TAX3Dv2BaseModule(L.LightningModule):
                 diffusion_steps=self.diff_steps,
                 time_based_weighting=self.time_based_weighting,
                 rotation_noise_scale=self.diff_rotation_noise_scale,
+                zero_shape=self.zero_shape,
             )
 
             print("Initializing TAX3Dv2 Fixed-Frame Diffusion Transformer Network")
@@ -261,7 +263,9 @@ class TAX3Dv2BaseModule(L.LightningModule):
 
         # generating latents and running diffusion
         z_s = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
-
+        if self.zero_shape:
+            z_s = z_s - z_s.mean(dim=2, keepdim=True)
+            
         if self.model_cfg.frame_type == "mu":
             z_r = pred_frame.to(self.device).permute(0,2,1)
         elif self.model_cfg.frame_type == "fixed":

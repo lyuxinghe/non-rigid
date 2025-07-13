@@ -14,6 +14,7 @@ rel_pos: False # If True, encode relative position
 scene_anchor: False # If True, use scene as the anchor
 frame_type: fixed # (fixed, mu) Type of frame-prediction for the model
 one_hot_recon: False # If True, use one-hot encoding for reconstruction
+zero_shape: False
 
 #####################################################
 # Model-specific Dataset/Data-processing Parameters
