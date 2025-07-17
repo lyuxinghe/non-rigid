@@ -172,6 +172,7 @@ class GaussianDiffusionDDRDSeparate:
         self.var_s = 1.0
 
         self.zero_shape = zero_shape
+        self.zero_posterior = False
 
         # diffusion noise scale
         self.rotation_noise_scale = rotation_noise_scale
@@ -242,7 +243,7 @@ class GaussianDiffusionDDRDSeparate:
             + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def q_posterior_mean_variance(self, x_start, x_t, t):
+    def q_posterior_mean_variance(self, x_start, x_t, t, zero_posterior=False):
         """
         Compute the mean and variance of the diffusion posterior:
             q(x_{t-1} | x_t, x_0)
@@ -262,6 +263,10 @@ class GaussianDiffusionDDRDSeparate:
             == posterior_log_variance_clipped.shape[0]
             == x_start.shape[0]
         )
+
+        if zero_posterior:
+            posterior_mean = posterior_mean - posterior_mean.mean(dim=2, keepdim=True)
+
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
     def p_mean_variance(self, model, xr_t, xs_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
@@ -323,7 +328,7 @@ class GaussianDiffusionDDRDSeparate:
         else:
             pred_xstart_r = process_xstart(self._predict_xstart_from_eps(x_t=xr_t, t=t, eps=ref_noise))
         # Compute the branch's posterior mean using its own noisy input.
-        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_r, x_t=xr_t, t=t)
+        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_r, x_t=xr_t, t=t, zero_posterior=False)
         out_r = {
             "mean": out_r_mean,
             "variance": model_variance_r,
@@ -349,7 +354,7 @@ class GaussianDiffusionDDRDSeparate:
             pred_xstart_s = process_xstart(shape_noise)
         else:
             pred_xstart_s = process_xstart(self._predict_xstart_from_eps(x_t=xs_t, t=t, eps=shape_noise))
-        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t)
+        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t, zero_posterior=self.zero_posterior)
         out_s = {
             "mean": out_s_mean,
             "variance": model_variance_s,
@@ -816,7 +821,7 @@ class GaussianDiffusionDDRDSeparate:
 
         # vb for r (reference)
         true_mean_r, _, true_log_variance_clipped_r = self.q_posterior_mean_variance(
-            x_start=xr_start, x_t=xr_t, t=t)
+            x_start=xr_start, x_t=xr_t, t=t, zero_posterior=False)
         
 
         kl_r = normal_kl(
@@ -836,7 +841,7 @@ class GaussianDiffusionDDRDSeparate:
 
         # vb for s (shape)
         true_mean_s, _, true_log_variance_clipped_s = self.q_posterior_mean_variance(
-            x_start=xs_start, x_t=xs_t, t=t)
+            x_start=xs_start, x_t=xs_t, t=t, zero_posterior=self.zero_posterior)
         
         kl_s = normal_kl(
             true_mean_s, true_log_variance_clipped_s, out_s["mean"], out_s["log_variance"]
