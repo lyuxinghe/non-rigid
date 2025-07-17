@@ -47,7 +47,11 @@ def main(cfg):
     train_dataset = datamodule.train_dataset
     val_dataset = datamodule.val_dataset
     train_loader = datamodule.train_dataloader()
-    val_loader, _ = datamodule.val_dataloader()
+    val_loaders = datamodule.val_dataloader()
+    if isinstance(val_loaders, (tuple, list)):
+        val_loader, _ = val_loaders
+    else:
+        val_loader = val_loaders
 
     ######################################################################
     # Create the network.

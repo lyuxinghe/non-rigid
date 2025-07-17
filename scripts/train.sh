@@ -20,6 +20,9 @@
 ### Book_Bookshelf ###
 # ./train.sh 0 tax3dv2 online rpdiff model.frame_type=fixed model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.object_scale=3.0 model.point_encoder=pn2 model.diff_rotation_noise_scale=45 model.one_hot_recon=True dataset.rpdiff_task_name=book_on_bookshelf_double_view_rnd_ori dataset.rpdiff_task_type=task_name_book_in_bookshelf dataset.sample_size_anchor=1024 dataset.train_dataset_size=1600 dataset.val_dataset_size=200 dataset.test_dataset_size=200 training.batch_size=16 training.val_batch_size=16 resources.num_workers=32
 
+########## Real World ##########
+# ./train.sh 0 tax3dv2 online insertion model.frame_type=fixed model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.object_scale=3.0 model.point_encoder=pn2 model.diff_rotation_noise_scale=45 model.one_hot_recon=True dataset.connector_type=0629-wp-mixed resources.num_workers=32
+
 #------ Run On AutoBot with Singularity ------#
 # singularity exec --nv -B /home/lyuxingh/code/tax3dv2:/opt/lyuxingh/code/tax3dv2 -B /scratch/lyuxingh/data:/opt/lyuxingh/data -B /scratch/lyuxingh/logs:/opt/lyuxingh/logs /scratch/lyuxingh/singularity/tax3dv2_lyuxing.sif bash -c "cd /opt/lyuxingh/code/tax3dv2/scripts && CUDA_VISIBLE_DEVICES=？ ./train.sh <YOUR TRAIN COMMAND HERE> dataset.data_dir=/opt/lyuxingh/data/rpdiff/data/task_demos/ log_dir=/opt/lyuxingh/logs"
 

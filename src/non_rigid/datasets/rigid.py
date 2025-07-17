@@ -119,12 +119,12 @@ class RPDiffDataset(data.Dataset):
                     ball_occlusion_param={
                         "ball_occlusion": self.dataset_cfg.action_ball_occlusion,
                         "ball_radius": self.dataset_cfg.action_ball_radius
-                        / action_point_scale,
+                        * action_point_scale,
                     },
                     plane_occlusion_param={
                         "plane_occlusion": self.dataset_cfg.action_plane_occlusion,
                         "plane_standoff": self.dataset_cfg.action_plane_standoff
-                        / action_point_scale,
+                        * action_point_scale,
                     },
                 )
                 action_seg = action_seg[action_pc_indices.squeeze(0)]
@@ -136,12 +136,12 @@ class RPDiffDataset(data.Dataset):
                     ball_occlusion_param={
                         "ball_occlusion": self.dataset_cfg.anchor_ball_occlusion,
                         "ball_radius": self.dataset_cfg.anchor_ball_radius
-                        / anchor_point_scale,
+                        * anchor_point_scale,
                     },
                     plane_occlusion_param={
                         "plane_occlusion": self.dataset_cfg.anchor_plane_occlusion,
                         "plane_standoff": self.dataset_cfg.anchor_plane_standoff
-                        / anchor_point_scale,
+                        * anchor_point_scale,
                     },
                 )
 

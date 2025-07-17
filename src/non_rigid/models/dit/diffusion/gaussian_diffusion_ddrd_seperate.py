@@ -159,6 +159,7 @@ class GaussianDiffusionDDRDSeparate:
         loss_type,
         time_based_weighting,
         rotation_noise_scale,
+        zero_shape,
     ):
 
         self.model_mean_type = model_mean_type
@@ -170,6 +171,9 @@ class GaussianDiffusionDDRDSeparate:
         self.var_r = 1.0
         self.var_s = 1.0
         self.zero_shape = True
+
+        self.zero_shape = zero_shape
+        self.zero_posterior = False
 
         # diffusion noise scale
         self.rotation_noise_scale = rotation_noise_scale
@@ -240,7 +244,7 @@ class GaussianDiffusionDDRDSeparate:
             + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def q_posterior_mean_variance(self, x_start, x_t, t):
+    def q_posterior_mean_variance(self, x_start, x_t, t, zero_posterior=False):
         """
         Compute the mean and variance of the diffusion posterior:
             q(x_{t-1} | x_t, x_0)
@@ -260,6 +264,10 @@ class GaussianDiffusionDDRDSeparate:
             == posterior_log_variance_clipped.shape[0]
             == x_start.shape[0]
         )
+
+        if zero_posterior:
+            posterior_mean = posterior_mean - posterior_mean.mean(dim=2, keepdim=True)
+
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
     def p_mean_variance(self, model, xr_t, xs_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
@@ -321,7 +329,7 @@ class GaussianDiffusionDDRDSeparate:
         else:
             pred_xstart_r = process_xstart(self._predict_xstart_from_eps(x_t=xr_t, t=t, eps=ref_noise))
         # Compute the branch's posterior mean using its own noisy input.
-        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_r, x_t=xr_t, t=t)
+        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_r, x_t=xr_t, t=t, zero_posterior=False)
         out_r = {
             "mean": out_r_mean,
             "variance": model_variance_r,
@@ -347,7 +355,7 @@ class GaussianDiffusionDDRDSeparate:
             pred_xstart_s = process_xstart(shape_noise)
         else:
             pred_xstart_s = process_xstart(self._predict_xstart_from_eps(x_t=xs_t, t=t, eps=shape_noise))
-        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t)
+        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t, zero_posterior=self.zero_posterior)
         out_s = {
             "mean": out_s_mean,
             "variance": model_variance_s,
@@ -355,6 +363,7 @@ class GaussianDiffusionDDRDSeparate:
             "pred_xstart": pred_xstart_s,
             "extra": extra,
         }
+        #out_s["mean"] = out_s["mean"] - out_s["mean"].mean(dim=2, keepdim=True)  # Center the shape mean
 
         out_s["mean"] = out_s["mean"] - out_s["mean"].mean(dim=2, keepdim=True)  # Center the shape mean
         return out_r, out_s
@@ -448,6 +457,10 @@ class GaussianDiffusionDDRDSeparate:
         
         noise_r = th.randn_like(x_r)
         noise_s = th.randn_like(x_s)
+
+        if self.zero_shape:
+            noise_s = noise_s - noise_s.mean(dim=2, keepdim=True)
+
         nonzero_mask_r = (
             (t != 0).float().view(-1, *([1] * (len(x_r.shape) - 1)))
         )  # no noise when t == 0
@@ -550,6 +563,8 @@ class GaussianDiffusionDDRDSeparate:
             img_s = noise_s
         else:
             img_s = th.randn(*shape_s, device=device)
+            if self.zero_shape:
+                img_s = img_s - img_s.mean(dim=2, keepdim=True)
 
         indices = list(range(self.num_timesteps))[::-1]
 
@@ -808,7 +823,7 @@ class GaussianDiffusionDDRDSeparate:
 
         # vb for r (reference)
         true_mean_r, _, true_log_variance_clipped_r = self.q_posterior_mean_variance(
-            x_start=xr_start, x_t=xr_t, t=t)
+            x_start=xr_start, x_t=xr_t, t=t, zero_posterior=False)
         
 
         kl_r = normal_kl(
@@ -828,7 +843,7 @@ class GaussianDiffusionDDRDSeparate:
 
         # vb for s (shape)
         true_mean_s, _, true_log_variance_clipped_s = self.q_posterior_mean_variance(
-            x_start=xs_start, x_t=xs_t, t=t)
+            x_start=xs_start, x_t=xs_t, t=t, zero_posterior=self.zero_posterior)
         
         kl_s = normal_kl(
             true_mean_s, true_log_variance_clipped_s, out_s["mean"], out_s["log_variance"]
@@ -962,6 +977,9 @@ class GaussianDiffusionDDRDSeparate:
             # 10. The rotation noise is the difference between the rotated and original points.
             rotation_noise = rotated_pc - x_start
             noise_s = noise_s + rotation_noise
+
+        if self.zero_shape:
+            noise_s = noise_s - noise_s.mean(dim=2, keepdim=True)
 
         # Compute the forward noising for each branch.
         xr_t = self.q_sample(xr_start, t, noise=noise_r)  # [B, C, 1]

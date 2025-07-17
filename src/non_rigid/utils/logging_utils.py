@@ -46,15 +46,17 @@ def viz_predicted_vs_gt(
         predicted_vs_gt_tensors = [
             pc_pos_viz,
             pred_action_viz,
+            pc_action_viz,
         ]
-        predicted_vs_gt_colors = ["green", "blue"]
+        predicted_vs_gt_colors = ["green", "blue", "yellow"]
     else:
         predicted_vs_gt_tensors = [
             pc_pos_viz,
             pc_anchor_viz,
             pred_action_viz,
+            pc_action_viz,
         ]
-        predicted_vs_gt_colors = ["green", "red", "blue"]
+        predicted_vs_gt_colors = ["green", "red", "blue", "yellow"]
 
     predicted_vs_gt = get_color(
         tensor_list=predicted_vs_gt_tensors,
