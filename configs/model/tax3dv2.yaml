@@ -7,14 +7,14 @@ type: point # (flow, point) Type of model
 size: xS # (xs, s, ...) Architecture of DiT
 in_channels: 3 # Number of input channels
 learn_sigma: True # Learn sigma for diffusion
-point_encoder: mlp # (mlp, pn2) Point cloud encoder architecture
+point_encoder: pn2 # (mlp, pn2) Point cloud encoder architecture
 feature: True # If True, encode additional features
 joint_encode: True # If True, use joint encoding for point cloud feature
 rel_pos: False # If True, encode relative position
 scene_anchor: False # If True, use scene as the anchor
 frame_type: fixed # (fixed, mu) Type of frame-prediction for the model
-one_hot_recon: False # If True, use one-hot encoding for reconstruction
-zero_shape: False
+one_hot_recon: True # If True, use one-hot encoding for reconstruction
+zero_shape: True
 
 #####################################################
 # Model-specific Dataset/Data-processing Parameters
@@ -43,5 +43,5 @@ diff_noise_schedule: linear # (linear, cosine) Noise schedule for diffusion
 diff_noise_scale: 1.0 # Scale of noise for diffusion
 diff_type: gaussian
 diff_translation_noise_scale: False # Scale of translation noise (in meter) for diffusion, or False for disable  
-diff_rotation_noise_scale: False # scale of rotation noise (in degreee) for diffusion, or False for disable
+diff_rotation_noise_scale: 45.0 # scale of rotation noise (in degreee) for diffusion, or False for disable
 time_based_weighting: even # (False, 'even', 'linear', 'sigmoid')
