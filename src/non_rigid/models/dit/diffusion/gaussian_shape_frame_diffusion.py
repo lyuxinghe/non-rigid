@@ -141,7 +141,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
     return np.array(betas)
 
 
-class GaussianDiffusionMuFrame:
+class GaussianShapeFrameDiffusion:
     """
     Utilities for training and sampling diffusion models.
     Original ported from this codebase:
@@ -159,6 +159,7 @@ class GaussianDiffusionMuFrame:
         loss_type,
         time_based_weighting,
         rotation_noise_scale,
+        zero_shape,
     ):
 
         self.model_mean_type = model_mean_type
@@ -169,6 +170,10 @@ class GaussianDiffusionMuFrame:
         # TODO: custom variance for each?
         self.var_r = 1.0
         self.var_s = 1.0
+        self.zero_shape = True
+
+        self.zero_shape = zero_shape
+        self.zero_posterior = False
 
         # diffusion noise scale
         self.rotation_noise_scale = rotation_noise_scale
@@ -239,7 +244,7 @@ class GaussianDiffusionMuFrame:
             + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def q_posterior_mean_variance(self, x_start, x_t, t):
+    def q_posterior_mean_variance(self, x_start, x_t, t, zero_posterior=False):
         """
         Compute the mean and variance of the diffusion posterior:
             q(x_{t-1} | x_t, x_0)
@@ -259,6 +264,10 @@ class GaussianDiffusionMuFrame:
             == posterior_log_variance_clipped.shape[0]
             == x_start.shape[0]
         )
+
+        if zero_posterior:
+            posterior_mean = posterior_mean - posterior_mean.mean(dim=2, keepdim=True)
+
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
     def p_mean_variance(self, model, xr_t, xs_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
@@ -315,16 +324,12 @@ class GaussianDiffusionMuFrame:
         else:
             raise NotImplementedError("Non-variance learning not implemented for reference branch.")
 
-        ##################### BUG: Below is Wrong! #####################
-        # For getting pred_xstart_r, since now xr_t=denoised(GMM_pred), 
-        # this is not strictly a diffusion objective, and you cannot use
-        # the noise equation to revert the xstart !!!
         if self.model_mean_type == ModelMeanType.START_X:
             pred_xstart_r = process_xstart(ref_noise)
         else:
             pred_xstart_r = process_xstart(self._predict_xstart_from_eps(x_t=xr_t, t=t, eps=ref_noise))
         # Compute the branch's posterior mean using its own noisy input.
-        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_r, x_t=xr_t, t=t)
+        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_r, x_t=xr_t, t=t, zero_posterior=False)
         out_r = {
             "mean": out_r_mean,
             "variance": model_variance_r,
@@ -350,7 +355,7 @@ class GaussianDiffusionMuFrame:
             pred_xstart_s = process_xstart(shape_noise)
         else:
             pred_xstart_s = process_xstart(self._predict_xstart_from_eps(x_t=xs_t, t=t, eps=shape_noise))
-        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t)
+        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t, zero_posterior=self.zero_posterior)
         out_s = {
             "mean": out_s_mean,
             "variance": model_variance_s,
@@ -361,217 +366,8 @@ class GaussianDiffusionMuFrame:
 
         return out_r, out_s
 
-    def p_mean_variance_finetune(self, model, xr_t, xs_t, t, finetune_frame, clip_denoised=True, denoised_fn=None, model_kwargs=None):
-        """
-        Apply the model to get p(x_{t-1} | x_t) and a prediction of x₀ separately for the
-        reference and shape branches.
-        
-        Inputs:
-        - xr_t: the noisy reference input, shape [B, C, 1]
-        - xs_t: the noisy shape input, shape [B, C, N]
-        - t: timesteps, shape [B]
-        - model: callable that takes (xr_t, xs_t, t, **model_kwargs) and returns a tuple:
-                    (model_output_r, model_output_s)
-        - model_kwargs: extra keyword arguments for the model.
-        
-        Each model_output is expected to have 2*C channels (if learning variance), where the first C
-        channels predict the noise (or x₀ if ModelMeanType.START_X is used) and the next C channels are raw
-        variance predictions.
-        
-        Returns:
-        A tuple (out_r, out_s), where:
-            out_r: dict with keys {"mean", "variance", "log_variance", "pred_xstart", "extra"}
-                corresponding to the reference branch (shape [B, C, 1]).
-            out_s: dict with the same keys for the shape branch (shape [B, C, N]).
-        """
-        if model_kwargs is None:
-            model_kwargs = {}
 
-        # Get the model outputs for each branch.
-        # Expected shapes:
-        #   model_output_r: [B, 2C, 1]  for reference branch
-        #   model_output_s: [B, 2C, N]  for shape branch
-        model_kwargs["finetune_frame"] = finetune_frame
-        model_output_r, model_output_s = model(xr_t, xs_t, t, **model_kwargs)
-        extra = None
 
-        def process_xstart(x):
-            if denoised_fn is not None:
-                x = denoised_fn(x)
-            if clip_denoised:
-                return x.clamp(-1, 1)
-            return x
-
-        # Process the reference branch.
-        B, C = xr_t.shape[:2]
-        if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
-            assert model_output_r.shape[1] == 2 * C, f"Expected 2C channels for reference, got {model_output_r.shape[1]}"
-            ref_noise, ref_var_raw = th.split(model_output_r, C, dim=1)
-            # Use the spatial shape of xr_t ([B, C, 1]).
-            min_log_r = _extract_into_tensor(self.posterior_log_variance_clipped, t, xr_t.shape) + math.log(self.var_r)
-            max_log_r = _extract_into_tensor(np.log(self.betas), t, xr_t.shape) + math.log(self.var_r)
-            frac_r = (ref_var_raw + 1) / 2  # Map from [-1, 1] to [0, 1].
-            model_log_variance_r = frac_r * max_log_r + (1 - frac_r) * min_log_r
-            model_variance_r = th.exp(model_log_variance_r)
-        else:
-            raise NotImplementedError("Non-variance learning not implemented for reference branch.")
-
-        ##################### BUG: Below is Wrong! #####################
-        # For getting pred_xstart_r, since now xr_t=denoised(GMM_pred), 
-        # this is not strictly a diffusion objective, and you cannot use
-        # the noise equation to revert the xstart !!!
-        if self.model_mean_type == ModelMeanType.START_X:
-            pred_xstart_r = process_xstart(ref_noise)
-        else:
-            pred_xstart_r = process_xstart(self._predict_xstart_from_eps(x_t=xr_t, t=t, eps=ref_noise))
-        # Compute the branch's posterior mean using its own noisy input.
-        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_r, x_t=xr_t, t=t)
-        out_r = {
-            "mean": out_r_mean,
-            "variance": model_variance_r,
-            "log_variance": th.log(model_variance_r + 1e-8),
-            "pred_xstart": pred_xstart_r,
-            "extra": extra,
-        }
-
-        # Process the shape branch.
-        B, C, N = xs_t.shape
-        if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
-            assert model_output_s.shape[1] == 2 * C, f"Expected 2C channels for shape, got {model_output_s.shape[1]}"
-            shape_noise, shape_var_raw = th.split(model_output_s, C, dim=1)
-            min_log_s = _extract_into_tensor(self.posterior_log_variance_clipped, t, xs_t.shape) + math.log(self.var_s)
-            max_log_s = _extract_into_tensor(np.log(self.betas), t, xs_t.shape) + math.log(self.var_s)
-            frac_s = (shape_var_raw + 1) / 2
-            model_log_variance_s = frac_s * max_log_s + (1 - frac_s) * min_log_s
-            model_variance_s = th.exp(model_log_variance_s)
-        else:
-            raise NotImplementedError("Non-variance learning not implemented for shape branch.")
-
-        if self.model_mean_type == ModelMeanType.START_X:
-            pred_xstart_s = process_xstart(shape_noise)
-        else:
-            pred_xstart_s = process_xstart(self._predict_xstart_from_eps(x_t=xs_t, t=t, eps=shape_noise))
-        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t)
-        out_s = {
-            "mean": out_s_mean,
-            "variance": model_variance_s,
-            "log_variance": th.log(model_variance_s + 1e-8),
-            "pred_xstart": pred_xstart_s,
-            "extra": extra,
-        }
-
-        return out_r, out_s
-        
-    # p_mean_variance_reverse for forward noising deltat
-    def p_mean_variance_reverse(self, model, pred_ref, xr_t, xs_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
-        """
-        Apply the model to get p(x_{t-1} | x_t) and a prediction of x₀ separately for the
-        reference and shape branches.
-        
-        Inputs:
-        - xr_t: the noisy reference input, shape [B, C, 1]
-        - xs_t: the noisy shape input, shape [B, C, N]
-        - t: timesteps, shape [B]
-        - model: callable that takes (xr_t, xs_t, t, **model_kwargs) and returns a tuple:
-                    (model_output_r, model_output_s)
-        - model_kwargs: extra keyword arguments for the model.
-        
-        Each model_output is expected to have 2*C channels (if learning variance), where the first C
-        channels predict the noise (or x₀ if ModelMeanType.START_X is used) and the next C channels are raw
-        variance predictions.
-        
-        Returns:
-        A tuple (out_r, out_s), where:
-            out_r: dict with keys {"mean", "variance", "log_variance", "pred_xstart", "extra"}
-                corresponding to the reference branch (shape [B, C, 1]).
-            out_s: dict with the same keys for the shape branch (shape [B, C, N]).
-        """
-        if model_kwargs is None:
-            model_kwargs = {}
-
-        # Get the model outputs for each branch.
-        # Expected shapes:
-        #   model_output_r: [B, 2C, 1]  for reference branch
-        #   model_output_s: [B, 2C, N]  for shape branch
-        model_output_r, model_output_s = model(pred_ref, xs_t, t, **model_kwargs)
-        extra = None
-
-        def process_xstart(x):
-            if denoised_fn is not None:
-                x = denoised_fn(x)
-            if clip_denoised:
-                return x.clamp(-1, 1)
-            return x
-
-        # Process the reference branch.
-        B, C = xr_t.shape[:2]
-        if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
-            assert model_output_r.shape[1] == 2 * C, f"Expected 2C channels for reference, got {model_output_r.shape[1]}"
-            ref_noise, ref_var_raw = th.split(model_output_r, C, dim=1)
-            # Use the spatial shape of xr_t ([B, C, 1]).
-            min_log_r = _extract_into_tensor(self.posterior_log_variance_clipped, t, xr_t.shape) + math.log(self.var_r)
-            max_log_r = _extract_into_tensor(np.log(self.betas), t, xr_t.shape) + math.log(self.var_r)
-            frac_r = (ref_var_raw + 1) / 2  # Map from [-1, 1] to [0, 1].
-            model_log_variance_r = frac_r * max_log_r + (1 - frac_r) * min_log_r
-            model_variance_r = th.exp(model_log_variance_r)
-        else:
-            raise NotImplementedError("Non-variance learning not implemented for reference branch.")
-
-        if self.model_mean_type == ModelMeanType.START_X:
-            raise NotImplementedError
-            #pred_xstart_r = process_xstart(ref_noise)
-        else:
-            #pred_xstart_r = process_xstart(self._predict_xstart_from_eps(x_t=xr_t, t=t, eps=ref_noise))
-            # NOTE: we inpaint delta_0 = 0 here, and we re-calculate delta_t using q_sample
-            pred_deltastart = th.zeros_like(xr_t)
-            pred_delta_t = self.q_sample(x_start=pred_deltastart, t=t, noise=ref_noise)
-            
-            
-        # Compute the branch's posterior mean using its own noisy input.
-        # NOTE: so here, the output is for the delta, not z!
-        out_r_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_deltastart, x_t=pred_delta_t, t=t)
-
-        if (t == self.num_timesteps - 1).any():
-            prev_delta_t = pred_delta_t
-        else:
-            prev_delta_t = xr_t
-
-        out_r = {
-            "mean": out_r_mean,
-            "variance": model_variance_r,
-            "log_variance": th.log(model_variance_r + 1e-8),
-            "pred_xstart": pred_deltastart,
-            "extra": extra,
-            "prev_delta_t": prev_delta_t
-        }
-
-        # Process the shape branch.
-        B, C, N = xs_t.shape
-        if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
-            assert model_output_s.shape[1] == 2 * C, f"Expected 2C channels for shape, got {model_output_s.shape[1]}"
-            shape_noise, shape_var_raw = th.split(model_output_s, C, dim=1)
-            min_log_s = _extract_into_tensor(self.posterior_log_variance_clipped, t, xs_t.shape) + math.log(self.var_s)
-            max_log_s = _extract_into_tensor(np.log(self.betas), t, xs_t.shape) + math.log(self.var_s)
-            frac_s = (shape_var_raw + 1) / 2
-            model_log_variance_s = frac_s * max_log_s + (1 - frac_s) * min_log_s
-            model_variance_s = th.exp(model_log_variance_s)
-        else:
-            raise NotImplementedError("Non-variance learning not implemented for shape branch.")
-
-        if self.model_mean_type == ModelMeanType.START_X:
-            pred_xstart_s = process_xstart(shape_noise)
-        else:
-            pred_xstart_s = process_xstart(self._predict_xstart_from_eps(x_t=xs_t, t=t, eps=shape_noise))
-        out_s_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart_s, x_t=xs_t, t=t)
-        out_s = {
-            "mean": out_s_mean,
-            "variance": model_variance_s,
-            "log_variance": th.log(model_variance_s + 1e-8),
-            "pred_xstart": pred_xstart_s,
-            "extra": extra,
-        }
-
-        return out_r, out_s
 
     def _predict_xstart_from_eps(self, x_t, t, eps):
         assert x_t.shape == eps.shape, f"Error: x_t.shape {x_t.shape} != eps.shape {eps.shape}"
@@ -618,7 +414,6 @@ class GaussianDiffusionMuFrame:
     def p_sample(
         self,
         model,
-        pred_ref,
         x_r,
         x_s,
         t,
@@ -648,9 +443,8 @@ class GaussianDiffusionMuFrame:
         import torch as th
 
         # Obtain separate outputs for the reference and shape branches.
-        out_r, out_s = self.p_mean_variance_reverse(
+        out_r, out_s = self.p_mean_variance(
             model,
-            pred_ref,
             x_r,
             x_s,
             t,
@@ -661,6 +455,10 @@ class GaussianDiffusionMuFrame:
         
         noise_r = th.randn_like(x_r)
         noise_s = th.randn_like(x_s)
+
+        if self.zero_shape:
+            noise_s = noise_s - noise_s.mean(dim=2, keepdim=True)
+
         nonzero_mask_r = (
             (t != 0).float().view(-1, *([1] * (len(x_r.shape) - 1)))
         )  # no noise when t == 0
@@ -672,68 +470,9 @@ class GaussianDiffusionMuFrame:
             out_s["mean"] = self.condition_mean(cond_fn, out_s, x_s, t, model_kwargs=model_kwargs)
 
         sample_r = out_r["mean"] + nonzero_mask_r * th.exp(0.5 * out_r["log_variance"]) * noise_r
+        # ample_r = out_r["mean"]
         sample_s = out_s["mean"] + nonzero_mask_s * th.exp(0.5 * out_s["log_variance"]) * noise_s
-
-        return {"sample_r": sample_r, "sample_s": sample_s, "prev_sample_r": out_r["prev_delta_t"]}
-
-    def p_sample_finetune(
-        self,
-        model,
-        finetune_frame,
-        x_r,
-        x_s,
-        t,
-        clip_denoised=True,
-        denoised_fn=None,
-        cond_fn=None,
-        model_kwargs=None,
-    ):
-        """
-        Sample x_{t-1} from the model at the given timestep.
-        
-        Inputs:
-        - model: the model to sample from.
-        - x_r: the current noisy reference input, shape [B, C, 1]
-        - x_s: the current noisy shape input, shape [B, C, N]
-        - t: timesteps, shape [B]
-        - clip_denoised: if True, clip the x_start prediction to [-1, 1].
-        - denoised_fn: optional function to post-process the x_start prediction.
-        - cond_fn: an optional conditioning function (e.g. for guidance).
-        - model_kwargs: additional keyword arguments for the model.
-        
-        Returns:
-        A dict containing:
-            - 'sample': a sample from p(x_{t-1} | x_t).
-            - 'pred_xstart': the combined prediction for x₀.
-        """
-        import torch as th
-
-        # Obtain separate outputs for the reference and shape branches.
-        out_r, out_s = self.p_mean_variance_finetune(
-            model,
-            x_r,
-            x_s,
-            t,
-            finetune_frame,
-            clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
-            model_kwargs=model_kwargs,
-        )
-        
-        noise_r = th.randn_like(x_r)
-        noise_s = th.randn_like(x_s)
-        nonzero_mask_r = (
-            (t != 0).float().view(-1, *([1] * (len(x_r.shape) - 1)))
-        )  # no noise when t == 0
-        nonzero_mask_s = (
-            (t != 0).float().view(-1, *([1] * (len(x_s.shape) - 1)))
-        )  # no noise when t == 0
-        if cond_fn is not None:
-            out_r["mean"] = self.condition_mean(cond_fn, out_r, x_r, t, model_kwargs=model_kwargs)
-            out_s["mean"] = self.condition_mean(cond_fn, out_s, x_s, t, model_kwargs=model_kwargs)
-
-        sample_r = out_r["mean"] + nonzero_mask_r * th.exp(0.5 * out_r["log_variance"]) * noise_r
-        sample_s = out_s["mean"] + nonzero_mask_s * th.exp(0.5 * out_s["log_variance"]) * noise_s
+        # sample_s = out_s["mean"]
 
         return {"sample_r": sample_r, "sample_s": sample_s, "pred_xstart": out_r["pred_xstart"]+out_s["pred_xstart"]}
 
@@ -770,14 +509,13 @@ class GaussianDiffusionMuFrame:
         :return: a non-differentiable batch of samples.
         """
         final = None
-        results = [{"sample_r": noise_r, "sample_s": noise_s}]  # NOTE: for t=T, samplr_r is actually in global frame
-        pred_ref = noise_r.clone()
+        results = [{"sample_r": noise_r, "sample_s": noise_s}]
         for out in self.p_sample_loop_progressive(
             model,
             shape_r,
             shape_s,
-            noise_r=noise_r,
-            noise_s=noise_s,
+            noise_r=None,   # BUG!
+            noise_s=None,   # BUG!
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             cond_fn=cond_fn,
@@ -786,9 +524,8 @@ class GaussianDiffusionMuFrame:
             progress=progress,
         ):
             final = out
-            # NOTE: from t=T-1, sample_r will be the action_mean_err
-            results.append({"sample_r": final["sample_r"], "sample_s": final["sample_s"], "prev_sample_r":final["prev_sample_r"]})
-        final_dict = {"sample_r": final["sample_r"], "sample_s": final["sample_s"], "prev_sample_r":final["prev_sample_r"]}
+            results.append({"sample_r": final["sample_r"], "sample_s": final["sample_s"]})
+        final_dict = {"sample_r": final["sample_r"], "sample_s": final["sample_s"]}
         return final_dict, results
 
     def p_sample_loop_progressive(
@@ -824,25 +561,10 @@ class GaussianDiffusionMuFrame:
             img_s = noise_s
         else:
             img_s = th.randn(*shape_s, device=device)
+            if self.zero_shape:
+                img_s = img_s - img_s.mean(dim=2, keepdim=True)
 
         indices = list(range(self.num_timesteps))[::-1]
-        
-        pred_ref = noise_r.clone()
-
-        # 1. delta_t = 0
-        #img_r = th.zeros_like(pred_ref)
-        # 2. delta_t ~ N(0,1)
-        # TODO
-        # 3. delta_t ~ N(0,1) but is included within GMM_pred
-        # Initial delta_t from q(δ_T | δ₀=0)
-        '''
-        t_init = th.tensor([self.num_timesteps - 1] * pred_ref.shape[0], device=pred_ref.device)
-        eps = th.randn_like(pred_ref)
-        delta_t = self.q_sample(x_start=th.zeros_like(pred_ref), t=t_init, noise=eps)
-        img_r = delta_t.clone()
-        img_s = noise_s if noise_s is not None else th.randn(*shape_s, device=device)
-        '''
-        img_r = th.zeros_like(pred_ref)
 
         if progress:
             # Lazy import so that we don't depend on tqdm.
@@ -855,129 +577,6 @@ class GaussianDiffusionMuFrame:
             with th.no_grad():
                 out = self.p_sample(
                     model,
-                    pred_ref,
-                    img_r,
-                    img_s,
-                    t,
-                    clip_denoised=clip_denoised,
-                    denoised_fn=denoised_fn,
-                    cond_fn=cond_fn,
-                    model_kwargs=model_kwargs,
-                )
-                delta_t_prev = out["prev_sample_r"]  # This is delta_{t-1}
-                delta_t = out["sample_r"]
-                pred_ref = pred_ref - delta_t_prev + delta_t   # z_{t-1} = z_t - δ_t + δ_{t-1}
-
-                img_s = out["sample_s"]
-                img_r = out["sample_r"]
-                out["sample_r"] = pred_ref
-
-                yield out
-
-    def p_sample_loop_finetune(
-        self,
-        model,
-        shape_r,
-        shape_s,
-        noise_r=None,
-        noise_s=None,
-        finetune_frame=None,
-        clip_denoised=True,
-        denoised_fn=None,
-        cond_fn=None,
-        model_kwargs=None,
-        device=None,
-        progress=False,
-    ):
-        """
-        Generate samples from the model.
-        :param model: the model module.
-        :param shape: the shape of the samples, (N, C, H, W).
-        :param noise: if specified, the noise from the encoder to sample.
-                      Should be of the same shape as `shape`.
-        :param clip_denoised: if True, clip x_start predictions to [-1, 1].
-        :param denoised_fn: if not None, a function which applies to the
-            x_start prediction before it is used to sample.
-        :param cond_fn: if not None, this is a gradient function that acts
-                        similarly to the model.
-        :param model_kwargs: if not None, a dict of extra keyword arguments to
-            pass to the model. This can be used for conditioning.
-        :param device: if specified, the device to create the samples on.
-                       If not specified, use a model parameter's device.
-        :param progress: if True, show a tqdm progress bar.
-        :return: a non-differentiable batch of samples.
-        """
-        assert finetune_frame is not None, "Please set finetune frame!"
-        final = None
-        results = [{"sample_r": noise_r, "sample_s": noise_s}]  # NOTE: for t=T, samplr_r is actually in global frame
-        pred_ref = noise_r.clone()
-        for out in self.p_sample_loop_progressive_finetune(
-            model,
-            shape_r,
-            shape_s,
-            noise_r=noise_r,
-            noise_s=noise_s,
-            finetune_frame=finetune_frame,
-            clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
-            cond_fn=cond_fn,
-            model_kwargs=model_kwargs,
-            device=device,
-            progress=progress,
-        ):
-            final = out
-            # NOTE: from t=T-1, sample_r will be the action_mean_err
-            results.append({"sample_r": final["sample_r"], "sample_s": final["sample_s"]})
-        final_dict = {"sample_r": final["sample_r"], "sample_s": final["sample_s"]}
-        return final_dict, results
-
-    def p_sample_loop_progressive_finetune(
-        self,
-        model,
-        shape_r,
-        shape_s,
-        noise_r=None,
-        noise_s=None,
-        finetune_frame=None,
-        clip_denoised=True,
-        denoised_fn=None,
-        cond_fn=None,
-        model_kwargs=None,
-        device=None,
-        progress=False,
-    ):
-        """
-        Generate samples from the model and yield intermediate samples from
-        each timestep of diffusion.
-        Arguments are the same as p_sample_loop().
-        Returns a generator over dicts, where each dict is the return value of
-        p_sample().
-        """
-        assert finetune_frame is not None, "Please set finetune frame!"
-        assert noise_r is not None, "Please set img_r!"
-        assert noise_s is not None, "Please set img_s!"
-
-        if device is None:
-            device = next(model.parameters()).device
-        assert isinstance(shape_r, (tuple, list))
-        assert isinstance(shape_s, (tuple, list))
-
-        img_r = noise_r
-        img_s = noise_s
-
-        finetune_steps = range(10)
-        if progress:
-            # Lazy import so that we don't depend on tqdm.
-            from tqdm.auto import tqdm
-
-            finetune_steps = tqdm(finetune_steps)
-
-        for i in finetune_steps:
-            t = th.tensor([0] * shape_s[0], device=device)
-            with th.no_grad():
-                out = self.p_sample_finetune(
-                    model,
-                    finetune_frame,
                     img_r,
                     img_s,
                     t,
@@ -989,12 +588,12 @@ class GaussianDiffusionMuFrame:
                 yield out
                 img_r = out["sample_r"]
                 img_s = out["sample_s"]
-
 
     def ddim_sample(
         self,
         model,
-        x,
+        x_r,
+        x_s,
         t,
         clip_denoised=True,
         denoised_fn=None,
@@ -1006,39 +605,61 @@ class GaussianDiffusionMuFrame:
         Sample x_{t-1} from the model using DDIM.
         Same usage as p_sample().
         """
-        out = self.p_mean_variance(
+        out_r, out_s = self.p_mean_variance(
             model,
-            x,
+            x_r,
+            x_s,
             t,
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
         )
         if cond_fn is not None:
-            out = self.condition_score(cond_fn, out, x, t, model_kwargs=model_kwargs)
+            out_r = self.condition_score(cond_fn, out_r, x_r, t, model_kwargs=model_kwargs)
+            out_s = self.condition_score(cond_fn, out_s, x_s, t, model_kwargs=model_kwargs)
 
         # Usually our model outputs epsilon, but we re-derive it
         # in case we used x_start or x_prev prediction.
-        eps = self._predict_eps_from_xstart(x, t, out["pred_xstart"])
+        # eps = self._predict_eps_from_xstart(x, t, out["pred_xstart"])
+        eps_r = self._predict_eps_from_xstart(x_r, t, out_r["pred_xstart"])
+        eps_s = self._predict_eps_from_xstart(x_s, t, out_s["pred_xstart"])
 
-        alpha_bar = _extract_into_tensor(self.alphas_cumprod, t, x.shape)
-        alpha_bar_prev = _extract_into_tensor(self.alphas_cumprod_prev, t, x.shape)
-        sigma = (
+        alpha_bar_r = _extract_into_tensor(self.alphas_cumprod, t, x_r.shape)
+        alpha_bar_s = _extract_into_tensor(self.alphas_cumprod, t, x_s.shape)
+        alpha_bar_prev_r = _extract_into_tensor(self.alphas_cumprod_prev, t, x_r.shape)
+        alpha_bar_prev_s = _extract_into_tensor(self.alphas_cumprod_prev, t, x_s.shape)
+        sigma_r = (
             eta
-            * th.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar))
-            * th.sqrt(1 - alpha_bar / alpha_bar_prev)
+            * th.sqrt((1 - alpha_bar_prev_r) / (1 - alpha_bar_r))
+            * th.sqrt(1 - alpha_bar_r / alpha_bar_prev_r)
+        )
+        sigma_s = (
+            eta
+            * th.sqrt((1 - alpha_bar_prev_s) / (1 - alpha_bar_s))
+            * th.sqrt(1 - alpha_bar_s / alpha_bar_prev_s)
         )
         # Equation 12.
-        noise = th.randn_like(x)
-        mean_pred = (
-            out["pred_xstart"] * th.sqrt(alpha_bar_prev)
-            + th.sqrt(1 - alpha_bar_prev - sigma ** 2) * eps
+        noise_r = th.randn_like(x_r)
+        noise_s = th.randn_like(x_s)
+        mean_pred_r = (
+            out_r["pred_xstart"] * th.sqrt(alpha_bar_prev_r)
+            + th.sqrt(1 - alpha_bar_prev_r - sigma_r ** 2) * eps_r
         )
-        nonzero_mask = (
-            (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
+        mean_pred_s = (
+            out_s["pred_xstart"] * th.sqrt(alpha_bar_prev_s)
+            + th.sqrt(1 - alpha_bar_prev_s - sigma_s ** 2) * eps_s
+        )
+        nonzero_mask_r = (
+            (t != 0).float().view(-1, *([1] * (len(x_r.shape) - 1)))
         )  # no noise when t == 0
-        sample = mean_pred + nonzero_mask * sigma * noise
-        return {"sample": sample, "pred_xstart": out["pred_xstart"]}
+        nonzero_mask_s = (
+            (t != 0).float().view(-1, *([1] * (len(x_s.shape) - 1)))
+        )
+        sample_r = mean_pred_r + nonzero_mask_r * sigma_r * noise_r
+        sample_s = mean_pred_s + nonzero_mask_s * sigma_s * noise_s
+
+        # return {"sample": sample, "pred_xstart": out["pred_xstart"]}
+        return {"sample_r": sample_r, "sample_s": sample_s, "pred_xstart": out_r["pred_xstart"] + out_s["pred_xstart"]}
 
     def ddim_reverse_sample(
         self,
@@ -1081,8 +702,10 @@ class GaussianDiffusionMuFrame:
     def ddim_sample_loop(
         self,
         model,
-        shape,
-        noise=None,
+        shape_r,
+        shape_s,
+        noise_r=None,
+        noise_s=None,
         clip_denoised=True,
         denoised_fn=None,
         cond_fn=None,
@@ -1096,10 +719,13 @@ class GaussianDiffusionMuFrame:
         Same usage as p_sample_loop().
         """
         final = None
-        for sample in self.ddim_sample_loop_progressive(
+        results = [{"sample_r": noise_r, "sample_s": noise_s}]
+        for out in self.ddim_sample_loop_progressive(
             model,
-            shape,
-            noise=noise,
+            shape_r,
+            shape_s,
+            noise_r=None,  # BUG!
+            noise_s=None,  # BUG!
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             cond_fn=cond_fn,
@@ -1108,14 +734,18 @@ class GaussianDiffusionMuFrame:
             progress=progress,
             eta=eta,
         ):
-            final = sample
-        return final["sample"]
+            final = out
+            results.append({"sample_r": final["sample_r"], "sample_s": final["sample_s"]})
+        final_dict = {"sample_r": final["sample_r"], "sample_s": final["sample_s"]}
+        return final_dict, results
 
     def ddim_sample_loop_progressive(
         self,
         model,
-        shape,
-        noise=None,
+        shape_r,
+        shape_s,
+        noise_r=None,
+        noise_s=None,
         clip_denoised=True,
         denoised_fn=None,
         cond_fn=None,
@@ -1131,11 +761,17 @@ class GaussianDiffusionMuFrame:
         """
         if device is None:
             device = next(model.parameters()).device
-        assert isinstance(shape, (tuple, list))
-        if noise is not None:
-            img = noise
+        assert isinstance(shape_r, (tuple, list))
+        assert isinstance(shape_s, (tuple, list))
+        if noise_r is not None:
+            img_r = noise_r
         else:
-            img = th.randn(*shape, device=device)
+            img_r = th.randn(*shape_r, device=device)
+        if noise_s is not None:
+            img_s = noise_s
+        else:
+            img_s = th.randn(*shape_s, device=device)
+
         indices = list(range(self.num_timesteps))[::-1]
 
         if progress:
@@ -1145,11 +781,12 @@ class GaussianDiffusionMuFrame:
             indices = tqdm(indices)
 
         for i in indices:
-            t = th.tensor([i] * shape[0], device=device)
+            t = th.tensor([i] * shape_s[0], device=device)
             with th.no_grad():
                 out = self.ddim_sample(
                     model,
-                    img,
+                    img_r,
+                    img_s,
                     t,
                     clip_denoised=clip_denoised,
                     denoised_fn=denoised_fn,
@@ -1158,7 +795,8 @@ class GaussianDiffusionMuFrame:
                     eta=eta,
                 )
                 yield out
-                img = out["sample"]
+                img_r = out["sample_r"]
+                img_s = out["sample_s"]
 
     def _vb_terms_bpd(self, model, xr_start, xs_start, xr_t, xs_t, t, clip_denoised=True, model_kwargs=None):
         """
@@ -1183,7 +821,7 @@ class GaussianDiffusionMuFrame:
 
         # vb for r (reference)
         true_mean_r, _, true_log_variance_clipped_r = self.q_posterior_mean_variance(
-            x_start=xr_start, x_t=xr_t, t=t)
+            x_start=xr_start, x_t=xr_t, t=t, zero_posterior=False)
         
 
         kl_r = normal_kl(
@@ -1203,7 +841,7 @@ class GaussianDiffusionMuFrame:
 
         # vb for s (shape)
         true_mean_s, _, true_log_variance_clipped_s = self.q_posterior_mean_variance(
-            x_start=xs_start, x_t=xs_t, t=t)
+            x_start=xs_start, x_t=xs_t, t=t, zero_posterior=self.zero_posterior)
         
         kl_s = normal_kl(
             true_mean_s, true_log_variance_clipped_s, out_s["mean"], out_s["log_variance"]
@@ -1221,11 +859,10 @@ class GaussianDiffusionMuFrame:
         output_s = th.where((t == 0), decoder_nll_s, kl_s)
 
         # combine outputs
-        #pred_xstart_combined = out_r["pred_xstart"].expand(-1, -1, xs_t.shape[-1]) + out_s["pred_xstart"]
+        pred_xstart_combined = out_r["pred_xstart"].expand(-1, -1, xs_t.shape[-1]) + out_s["pred_xstart"]
 
-        #return {"output_r": output_r, "output_s": output_s, "pred_xstart": pred_xstart_combined}
-        return {"output_r": output_r, "output_s": output_s}
-
+        return {"output_r": output_r, "output_s": output_s, "pred_xstart": pred_xstart_combined}
+    
     def _time_based_weights(self, t, T, func="sigmoid", k=10.0, m=0.5):
         """
         Compute time-based weights using a sigmoid function.
@@ -1288,10 +925,9 @@ class GaussianDiffusionMuFrame:
         # Here, we take the reference as the mean (global translation), and the shape as the residual.
         xr_start = x_start.mean(dim=-1, keepdim=True)  # [B, C, 1]
         xs_start = x_start - xr_start                    # [B, C, N]
-        xr_start_err = th.zeros_like(xr_start)
 
         # Sample independent noise terms for each branch.
-        noise_r_err = th.randn_like(xr_start_err)  # noise for R: [B, C, 1]
+        noise_r = th.randn_like(xr_start)  # noise for R: [B, C, 1]
         noise_s = th.randn_like(xs_start)  # noise for S: [B, C, N]
 
         if self.rotation_noise_scale:
@@ -1340,13 +976,12 @@ class GaussianDiffusionMuFrame:
             rotation_noise = rotated_pc - x_start
             noise_s = noise_s + rotation_noise
 
-        # Compute the forward noising for each branch.
-        xr_err_t = self.q_sample(xr_start_err, t, noise=noise_r_err)  # [B, C, 1]
-        xs_t = self.q_sample(xs_start, t, noise=noise_s)  # [B, C, N]
+        if self.zero_shape:
+            noise_s = noise_s - noise_s.mean(dim=2, keepdim=True)
 
-        # Center our anchor on the noised goal
-        pred_ref = xr_err_t + xr_start
-        #model_kwargs["y"] = model_kwargs["y"] - pred_ref
+        # Compute the forward noising for each branch.
+        xr_t = self.q_sample(xr_start, t, noise=noise_r)  # [B, C, 1]
+        xs_t = self.q_sample(xs_start, t, noise=noise_s)  # [B, C, N]
 
         terms = {}
         if self.loss_type in [LossType.KL, LossType.RESCALED_KL]:
@@ -1355,11 +990,11 @@ class GaussianDiffusionMuFrame:
         elif self.loss_type in [LossType.MSE, LossType.RESCALED_MSE]:
             # For MSE training, assume that the model is designed to process each branch separately.
             # Here we feed the branch-specific noisy inputs to the model.
-            model_output_r, model_output_s = model(pred_ref, xs_t, t, **model_kwargs)
+            model_output_r, model_output_s = model(xr_t, xs_t, t, **model_kwargs)
 
             if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
                 # Process branch R: split into mean prediction and variance.
-                B, C = xr_err_t.shape[:2]
+                B, C = xr_t.shape[:2]
                 assert model_output_r.shape == (B, C * 2, 1), f"model_output_r: {model_output_r.shape}"
                 model_output_r, model_var_values_r = th.split(model_output_r, C, dim=1)
                 frozen_out_r = th.cat([model_output_r.detach(), model_var_values_r], dim=1)
@@ -1375,9 +1010,9 @@ class GaussianDiffusionMuFrame:
 
                 vb_bpd_dict = self._vb_terms_bpd(
                     model=lambda *args, r=frozen_out: r,
-                    xr_start=xr_start_err,
+                    xr_start=xr_start,
                     xs_start=xs_start,
-                    xr_t=xr_err_t,
+                    xr_t=xr_t,
                     xs_t=xs_t,
                     t=t,
                     clip_denoised=False,
@@ -1393,10 +1028,10 @@ class GaussianDiffusionMuFrame:
 
 
             # Ensure that the shapes of the model outputs match the noise targets.
-            assert model_output_r.shape == noise_r_err.shape, f"model_output_r {model_output_r.shape} not equal to noise_r {noise_r_err.shape}"
+            assert model_output_r.shape == noise_r.shape, f"model_output_r {model_output_r.shape} not equal to noise_r {noise_r.shape}"
             assert model_output_s.shape == noise_s.shape, f"model_output_s {model_output_s.shape} not equal to noise_s {noise_s.shape}"
 
-            loss_r = ((noise_r_err - model_output_r) ** 2).mean()
+            loss_r = ((noise_r - model_output_r) ** 2).mean()
             loss_s = ((noise_s - model_output_s) ** 2).mean()
 
             # Optionally, apply time-based weighting.

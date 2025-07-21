@@ -4,11 +4,8 @@
 #     IDDPM: https://github.com/openai/improved-diffusion/blob/main/improved_diffusion/gaussian_diffusion.py
 
 from . import gaussian_diffusion as gd
-from . import gaussian_diffusion_ddrd_joint as gd_ddrd_joint
-from . import gaussian_diffusion_ddrd_seperate as gd_ddrd_separate
-from . import gaussian_diffusion_mu as gd_mu
-from . import gaussian_diffusion_v2 as gd_v2
-from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, SpacedDiffusionMuFrame, SpacedDiffusionv2, space_timesteps
+from . import gaussian_shape_frame_diffusion as gd_separate
+from .respace import SpacedDiffusion, SpacedShapeFrameDiffusion, space_timesteps
 
 def create_diffusion(
     timestep_respacing,
@@ -48,47 +45,7 @@ def create_diffusion(
         # rescale_timesteps=rescale_timesteps,
     )
 
-def create_diffusion_ddrd_joint(
-    timestep_respacing,
-    noise_schedule="linear", 
-    use_kl=False,
-    sigma_small=False,
-    predict_xstart=False,
-    learn_sigma=True,
-    rescale_learned_sigmas=False,
-    diffusion_steps=1000,
-    time_based_weighting=False,
-):
-    betas = gd_ddrd_joint.get_named_beta_schedule(noise_schedule, diffusion_steps)
-    if use_kl:
-        loss_type = gd_ddrd_joint.LossType.RESCALED_KL
-    elif rescale_learned_sigmas:
-        loss_type = gd_ddrd_joint.LossType.RESCALED_MSE
-    else:
-        loss_type = gd_ddrd_joint.LossType.MSE
-    if timestep_respacing is None or timestep_respacing == "":
-        timestep_respacing = [diffusion_steps]
-    return SpacedDiffusionDDRDJoint(
-        use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
-        betas=betas,
-        model_mean_type=(
-            gd_ddrd_joint.ModelMeanType.EPSILON if not predict_xstart else gd_ddrd_joint.ModelMeanType.START_X
-        ),
-        model_var_type=(
-            (
-                gd_ddrd_joint.ModelVarType.FIXED_LARGE
-                if not sigma_small
-                else gd_ddrd_joint.ModelVarType.FIXED_SMALL
-            )
-            if not learn_sigma
-            else gd_ddrd_joint.ModelVarType.LEARNED_RANGE
-        ),
-        loss_type=loss_type,
-        time_based_weighting=time_based_weighting,
-        # rescale_timesteps=rescale_timesteps,
-    )
-
-def create_diffusion_ddrd_separate(
+def create_shape_frame_diffusion(
     timestep_respacing,
     noise_schedule="linear", 
     use_kl=False,
@@ -101,115 +58,33 @@ def create_diffusion_ddrd_separate(
     rotation_noise_scale=False,
     zero_shape=False,
 ):
-    betas = gd_ddrd_separate.get_named_beta_schedule(noise_schedule, diffusion_steps)
+    betas = gd_separate.get_named_beta_schedule(noise_schedule, diffusion_steps)
     if use_kl:
-        loss_type = gd_ddrd_separate.LossType.RESCALED_KL
+        loss_type = gd_separate.LossType.RESCALED_KL
     elif rescale_learned_sigmas:
-        loss_type = gd_ddrd_separate.LossType.RESCALED_MSE
+        loss_type = gd_separate.LossType.RESCALED_MSE
     else:
-        loss_type = gd_ddrd_separate.LossType.MSE
+        loss_type = gd_separate.LossType.MSE
     if timestep_respacing is None or timestep_respacing == "":
         timestep_respacing = [diffusion_steps]
-    return SpacedDiffusionDDRDSeparate(
+    return SpacedShapeFrameDiffusion(
         use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
         betas=betas,
         model_mean_type=(
-            gd_ddrd_separate.ModelMeanType.EPSILON if not predict_xstart else gd_ddrd_separate.ModelMeanType.START_X
+            gd_separate.ModelMeanType.EPSILON if not predict_xstart else gd_separate.ModelMeanType.START_X
         ),
         model_var_type=(
             (
-                gd_ddrd_separate.ModelVarType.FIXED_LARGE
+                gd_separate.ModelVarType.FIXED_LARGE
                 if not sigma_small
-                else gd_ddrd_separate.ModelVarType.FIXED_SMALL
+                else gd_separate.ModelVarType.FIXED_SMALL
             )
             if not learn_sigma
-            else gd_ddrd_separate.ModelVarType.LEARNED_RANGE
+            else gd_separate.ModelVarType.LEARNED_RANGE
         ),
         loss_type=loss_type,
         time_based_weighting=time_based_weighting,
         rotation_noise_scale=rotation_noise_scale,
         zero_shape=zero_shape,
-        # rescale_timesteps=rescale_timesteps,
-    )
-
-def create_diffusion_mu(
-    timestep_respacing,
-    noise_schedule="linear", 
-    use_kl=False,
-    sigma_small=False,
-    predict_xstart=False,
-    learn_sigma=True,
-    rescale_learned_sigmas=False,
-    diffusion_steps=1000,
-    time_based_weighting=False,
-    rotation_noise_scale=False,
-):
-    betas = gd_mu.get_named_beta_schedule(noise_schedule, diffusion_steps)
-    if use_kl:
-        loss_type = gd_mu.LossType.RESCALED_KL
-    elif rescale_learned_sigmas:
-        loss_type = gd_mu.LossType.RESCALED_MSE
-    else:
-        loss_type = gd_mu.LossType.MSE
-    if timestep_respacing is None or timestep_respacing == "":
-        timestep_respacing = [diffusion_steps]
-    return SpacedDiffusionMuFrame(
-        use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
-        betas=betas,
-        model_mean_type=(
-            gd_mu.ModelMeanType.EPSILON if not predict_xstart else gd_mu.ModelMeanType.START_X
-        ),
-        model_var_type=(
-            (
-                gd_mu.ModelVarType.FIXED_LARGE
-                if not sigma_small
-                else gd_mu.ModelVarType.FIXED_SMALL
-            )
-            if not learn_sigma
-            else gd_mu.ModelVarType.LEARNED_RANGE
-        ),
-        loss_type=loss_type,
-        time_based_weighting=time_based_weighting,
-        rotation_noise_scale=rotation_noise_scale,
-        # rescale_timesteps=rescale_timesteps,
-    )
-
-def create_diffusion_v2(
-    timestep_respacing,
-    noise_schedule="linear", 
-    use_kl=False,
-    sigma_small=False,
-    predict_xstart=False,
-    learn_sigma=True,
-    rescale_learned_sigmas=False,
-    diffusion_steps=1000,
-    time_based_weighting=False,
-):
-    betas = gd_v2.get_named_beta_schedule(noise_schedule, diffusion_steps)
-    if use_kl:
-        loss_type = gd_v2.LossType.RESCALED_KL
-    elif rescale_learned_sigmas:
-        loss_type = gd_v2.LossType.RESCALED_MSE
-    else:
-        loss_type = gd_v2.LossType.MSE
-    if timestep_respacing is None or timestep_respacing == "":
-        timestep_respacing = [diffusion_steps]
-    return SpacedDiffusionv2(
-        use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
-        betas=betas,
-        model_mean_type=(
-            gd_v2.ModelMeanType.EPSILON if not predict_xstart else gd_v2.ModelMeanType.START_X
-        ),
-        model_var_type=(
-            (
-                gd_v2.ModelVarType.FIXED_LARGE
-                if not sigma_small
-                else gd_v2.ModelVarType.FIXED_SMALL
-            )
-            if not learn_sigma
-            else gd_v2.ModelVarType.LEARNED_RANGE
-        ),
-        loss_type=loss_type,
-        time_based_weighting=time_based_weighting,
         # rescale_timesteps=rescale_timesteps,
     )

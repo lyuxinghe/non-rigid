@@ -8,10 +8,9 @@ from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
 from torch import nn, optim
 
-from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
-from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
-from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
-from non_rigid.models.dit.diffusion import create_diffusion_mu, create_diffusion_ddrd_separate
+from non_rigid.metrics.flow_metrics import flow_rmse
+from non_rigid.metrics.rigid_metrics import svd_estimation
+from non_rigid.models.dit.diffusion import create_shape_frame_diffusion
 from non_rigid.models.dit.models import TAX3Dv2_DiT
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt
 from non_rigid.utils.pointcloud_utils import expand_pcd
@@ -117,22 +116,15 @@ class DensePointDiffusionModule(L.LightningModule):
         # data params
         self.batch_size = self.run_cfg.batch_size
         self.val_batch_size = self.run_cfg.val_batch_size
-        # TODO: it is debatable if the module needs to know about the sample size
-        self.sample_size = self.run_cfg.sample_size
-        self.sample_size_anchor = self.run_cfg.sample_size_anchor
 
         # diffusion params
         self.diff_steps = self.model_cfg.diff_train_steps
         self.num_wta_trials = self.run_cfg.num_wta_trials
         self.time_based_weighting = self.model_cfg.time_based_weighting
-
-        # TODO: have 3 different noise scale for per-point, translation, and rotation
-        self.diff_translation_noise_scale = self.model_cfg.diff_translation_noise_scale 
         self.diff_rotation_noise_scale = self.model_cfg.diff_rotation_noise_scale
 
-
-        # TODO: rename this diffusion code to create_diffusion_fixed
-        self.diffusion = create_diffusion_ddrd_separate(
+        # create diffusion utilities
+        self.diffusion = create_shape_frame_diffusion(
             timestep_respacing=None,
             diffusion_steps=self.diff_steps,
             time_based_weighting=self.time_based_weighting,
