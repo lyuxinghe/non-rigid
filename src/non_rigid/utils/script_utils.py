@@ -18,8 +18,7 @@ from non_rigid.models.tax3d import (
 )
 from non_rigid.models.tax3d_v2 import (
     TAX3Dv2Network,
-    TAX3Dv2MuFrameModule,
-    TAX3Dv2FixedFrameModule
+    TAX3Dv2Module,
 )
 
 from non_rigid.datasets.dedo import DedoDataModule
@@ -40,20 +39,12 @@ def create_model(cfg):
         cfg.model.pcd_scale = cfg.model.object_scale
     elif cfg.model.scene_scale is not None:
         cfg.model.pcd_scale = cfg.model.scene_scale
-
     if cfg.model.name == "df_cross":
         network_fn = DiffusionTransformerNetwork
         module_fn = CrossDisplacementModule
-
     elif cfg.model.name == "tax3dv2":
         network_fn = TAX3Dv2Network
-        if cfg.model.frame_type == "fixed":
-            module_fn = TAX3Dv2FixedFrameModule
-        elif cfg.model.frame_type == "mu":
-            module_fn = TAX3Dv2MuFrameModule
-        else:
-            raise ValueError(f"Invalid frame type: {cfg.model.frame_type}")
-        
+        module_fn = TAX3Dv2Module
     else:
         raise ValueError(f"Invalid model name: {cfg.model.name}")
 

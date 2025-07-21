@@ -9,8 +9,7 @@
 
 # Example usage:
 # ./train_rigid.sh 0 cross_flow offline rpdiff
-# ./train_rigid.sh 0 tax3dv2 offline rpdiff frame_type=fixed pred_frame=noisy_goal noisy_goal_scale=1.0 diff_rotation_noise_scale=45
-# ./train_rigid.sh 0 tax3dv2 offline rpdiff frame_type=mu pred_frame=noisy_goal noisy_goal_scale=1.0 diff_rotation_noise_scale=45
+# ./train_rigid.sh 0 tax3dv2 offline rpdiff pred_frame=noisy_goal noisy_goal_scale=1.0 diff_rotation_noise_scale=45
 
 # Resuming from a crashed run:
 #./train_rigid.sh 0 ddrd_flow_separate rpdiff_fit online checkpoint.run_id=k8iy8vfo checkpoint.local_ckpt='/home/lyuxing/Desktop/tax3d_upgrade/scripts/logs/train_rpdiff_feature_df_cross/2025-03-02/17-41-55/checkpoints/last.ckpt'
