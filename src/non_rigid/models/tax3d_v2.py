@@ -210,7 +210,6 @@ class DensePointDiffusionModule(L.LightningModule):
         pred_frame = batch["pred_frame"].clone()
         pred_frame = expand_pcd(pred_frame, num_samples)
 
-        # TODO: replace bs with batch_size?
         bs, sample_size = batch["pc_action"].shape[:2]
         model_kwargs = self.get_model_kwargs(batch, num_samples)
 

@@ -41,7 +41,6 @@ class FrameGMMPredictor(nn.Module):
         pc_action = batch["pc_action"].to(self.device).permute(0, 2, 1).float()
         pc_anchor = batch["pc_anchor"].to(self.device).permute(0, 2, 1).float()
 
-        # TODO: handle point cloud scaling.
         if self.model_cfg.object_scale is not None or self.model_cfg.scene_scale is not None:
             # Computing scale factor.
             scale = self.model_cfg.pcd_scale

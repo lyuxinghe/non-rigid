@@ -135,19 +135,12 @@ def load_checkpoint_config_from_wandb(current_cfg, task_overrides, entity, proje
     
     # small edge case - if 'eval', ignore 'train_size'/'val_size'
     if current_cfg.mode == "eval":
-        # TODO: unify the following
-        # For DEDO
         if "train_size" in current_cfg.dataset.keys():
             current_cfg.dataset.train_size = None
         if "val_size" in current_cfg.dataset.keys():
             current_cfg.dataset.val_size = None
-        # For RPDiff
-        if "train_dataset_size" in current_cfg.dataset.keys():
-            current_cfg.dataset.train_dataset_size = None
-        if "val_dataset_size" in current_cfg.dataset.keys():
-            current_cfg.dataset.val_dataset_size = None
-        if "test_dataset_size" in current_cfg.dataset.keys():
-            current_cfg.dataset.test_dataset_size = None
+        if "test_size" in current_cfg.dataset.keys():
+            current_cfg.dataset.test_size = None
 
     current_cfg.dataset.data_dir = current_data_dir
 

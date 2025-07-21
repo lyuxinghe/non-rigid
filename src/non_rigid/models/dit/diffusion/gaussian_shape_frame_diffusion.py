@@ -170,7 +170,6 @@ class GaussianShapeFrameDiffusion:
         # TODO: custom variance for each?
         self.var_r = 1.0
         self.var_s = 1.0
-        self.zero_shape = True
 
         self.zero_shape = zero_shape
         self.zero_posterior = False

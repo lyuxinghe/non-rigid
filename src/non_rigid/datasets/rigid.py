@@ -76,11 +76,11 @@ class RPDiffDataset(data.Dataset):
 
     def __len__(self):
         if self.type == "train":
-            return self.dataset_cfg.train_dataset_size if self.dataset_cfg.train_dataset_size is not None else len(self.demo_files)
+            return self.dataset_cfg.train_size if self.dataset_cfg.train_size is not None else len(self.demo_files)
         elif self.type == "val":
-            return self.dataset_cfg.val_dataset_size if self.dataset_cfg.val_dataset_size is not None else len(self.demo_files)
+            return self.dataset_cfg.val_size if self.dataset_cfg.val_size is not None else len(self.demo_files)
         elif self.type == "test":
-            return self.dataset_cfg.test_dataset_size if self.dataset_cfg.test_dataset_size is not None else len(self.demo_files)
+            return self.dataset_cfg.test_size if self.dataset_cfg.test_size is not None else len(self.demo_files)
         else:
             raise ValueError(f"Unknown dataset type: {self.type}")
 
