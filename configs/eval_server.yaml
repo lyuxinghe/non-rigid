@@ -24,7 +24,7 @@ seed: 42
 
 gmm: 
   gmm: null # (None, num_epochs) If not None, use GMM for eval.
-  gmm_log_dir: "/data/lyuxing/logs/tax3d/train/gmm"
+  gmm_log_dir: "/data/lyuxing/logs/tax3dv2/train/gmm"
   task_name: null
   run_id: ???
 

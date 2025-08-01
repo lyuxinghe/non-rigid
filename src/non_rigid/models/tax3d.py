@@ -97,6 +97,12 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         else:
             raise ValueError(f"Invalid mode: {self.mode}")
         
+        # Model cannot have both object and scene scale
+        if self.model_cfg.object_scale is not None and self.model_cfg.scene_scale is not None:
+            raise ValueError("Model cannot have both object and scene scale.")
+        self.object_scale = self.model_cfg.object_scale
+        self.scene_scale = self.model_cfg.scene_scale
+
         # data params
         self.batch_size = self.run_cfg.batch_size
         self.val_batch_size = self.run_cfg.val_batch_size
@@ -202,59 +208,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
 
         # generating latents and running diffusion
         z = torch.randn(bs * num_samples, 3, sample_size, device=self.device)
-        '''
-        # test: in inference, if we trained with rotation noise we ought to also sample from it
-        if self.model_cfg.diff_rotation_noise_scale:
-            pc = batch["pc_action"].permute(0,2,1)
-            pc = expand_pcd(pc, num_samples)
-            N, _, _ = z.shape  # e.g. [batch_size, 3, num_points]
-
-            # 1. Sample random rotation axes and normalize them.
-            random_axis = torch.randn(N, 3, device=pc.device)
-            random_axis = random_axis / random_axis.norm(dim=1, keepdim=True)
-
-            # 2. Sample random rotation angles (in degrees) and convert to radians.
-            random_angle = torch.randn(N, device=pc.device) * self.model_cfg.diff_rotation_noise_scale
-            random_angle_rad = random_angle * (np.pi / 180)
-
-            # 3. Compute sin and cos for each angle.
-            sin_theta = torch.sin(random_angle_rad)
-            cos_theta = torch.cos(random_angle_rad)
-            one_minus_cos = 1 - cos_theta
-
-            # 4. Extract axis components.
-            x_axis = random_axis[:, 0]
-            y_axis = random_axis[:, 1]
-            z_axis = random_axis[:, 2]
-            zeros = torch.zeros_like(x_axis)
-
-            # 5. Construct the skew-symmetric cross-product matrices for each axis.
-            #    Each K is of shape (3,3), and K will have shape (N, 3, 3)
-            K = torch.stack([torch.stack([zeros, -z_axis, y_axis], dim=1),
-                        torch.stack([z_axis, zeros, -x_axis], dim=1),
-                        torch.stack([-y_axis, x_axis, zeros], dim=1)], dim=1)
-
-            # 6. Compute K squared (batched matrix multiplication)
-            K2 = torch.bmm(K, K)
-
-            # 7. Create the identity matrix for each batch element.
-            I = torch.eye(3, device=pc.device).unsqueeze(0).repeat(N, 1, 1)
-
-            # 8. Compute the rotation matrices using the Rodrigues formula:
-            #    R = I + sin(theta)*K + (1-cos(theta))*(K^2)
-            R = I + sin_theta.view(N, 1, 1) * K + one_minus_cos.view(N, 1, 1) * K2
-
-            # 9. Apply the rotation matrices to the point clouds.
-            #    x_start: [N, 3, P] -> rotated_pc: [N, 3, P]
-            rotated_pc = torch.bmm(R, pc)
-
-            # 10. The rotation noise is the difference between the rotated and original points.
-            rotation_noise = rotated_pc - pc
-            z = z + rotation_noise
-        '''
-        # test: in inference, if we trained with translation noise with scale=t, we sample noise from N(0, 1+t)
-        #trans_noise_scale = torch.tensor(0.6, device=self.device)
-        #z = torch.randn(bs * num_samples, 3, sample_size, device=self.device) * torch.sqrt(1 + trans_noise_scale)
 
         pred, results, _ = self.diffusion.p_sample_loop(
             self.network,
@@ -300,19 +253,18 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
             }
 
             # compute world frame predictions
-            pred_flow_world, pred_point_world, pc_action_world, results_world = self.get_world_preds(
-                batch, num_samples, pc_action, pred_dict
-            )
-            pred_dict["flow"]["pred_world"] = pred_flow_world
-            pred_dict["point"]["pred_world"] = pred_point_world
-            pred_dict["results_world"] = results_world
+            pred_world_dict = self.get_world_preds(batch, num_samples, pc_action, pred_dict)
+
+            pred_dict["flow"]["pred_world"] = pred_world_dict['pred_flow_world']
+            pred_dict["point"]["pred_world"] = pred_world_dict['pred_point_world']
+            pred_dict["pred_frame_world"] = pred_world_dict['pred_frame_world']
+            pred_dict["init_action_world"] = pred_world_dict['pc_action_world']
+            pred_dict["results_world"] = pred_world_dict['results_world']
 
             # if the material is rigid, we also output estimated translation and rotation
             if self.dataset_cfg.material == "rigid":
-                scaling_factor = self.dataset_cfg.pcd_scale_factor
-
-                action_world_scaled = pc_action_world / scaling_factor
-                pred_world_scaled = pred_point_world / scaling_factor
+                action_world_scaled = pred_world_dict['pc_action_world'].clone()
+                pred_world_scaled = pred_world_dict['pred_point_world'].clone()
 
                 T = svd_estimation(source=action_world_scaled, target=pred_world_scaled, return_magnitude=False)
                 pred_dict["pred_T"] = T
@@ -332,7 +284,6 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         
         seg = batch["seg"].to(self.device)
         ground_truth_point_world = batch["pc_world"].to(self.device)
-        scaling_factor = self.dataset_cfg.pcd_scale_factor
 
         # re-shaping and expanding for winner-take-all
         bs = ground_truth_point_world.shape[0]
@@ -345,14 +296,13 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         )
         pred_point_world = pred_dict["point"]["pred_world"]
 
-        # TODO: this should happen inside get model kwargs
-        pred_point_world_scaled = pred_point_world / scaling_factor
-        ground_truth_point_world_scaled = ground_truth_point_world / scaling_factor
+        pred_point_world_clone = pred_point_world.clone()
+        ground_truth_point_world_clone = ground_truth_point_world.clone()
 
         # computing error metrics
         seg = seg == 0
 
-        rmse = flow_rmse(pred_point_world_scaled, ground_truth_point_world_scaled, mask=True, seg=seg).reshape(bs, num_samples)
+        rmse = flow_rmse(pred_point_world_clone, ground_truth_point_world_clone, mask=True, seg=seg).reshape(bs, num_samples)
         pred_point_world = pred_point_world.reshape(bs, num_samples, -1, 3)
 
         # computing winner-take-all metrics
@@ -361,7 +311,7 @@ class DenseDisplacementDiffusionModule(L.LightningModule):
         pred_point_world_wta = pred_point_world[torch.arange(bs), winner]
 
         if self.dataset_cfg.material == "rigid":
-            translation_errs, rotation_errs = svd_estimation(source=pred_point_world_scaled.reshape(bs * num_samples, -1, 3), target=ground_truth_point_world_scaled, return_magnitude=True)
+            translation_errs, rotation_errs = svd_estimation(source=pred_point_world_clone, target=ground_truth_point_world_clone, return_magnitude=True)
 
             translation_errs = translation_errs.reshape(bs, num_samples)
             rotation_errs = rotation_errs.reshape(bs, num_samples)
@@ -620,13 +570,32 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         pred_frame = expand_pcd(batch["pred_frame"].to(self.device), num_samples)
         action_context_frame = expand_pcd(batch["action_context_frame"].to(self.device), num_samples)
 
-        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"] + pred_frame)
-        pc_action_world = T_action2world.transform_points(pc_action + action_context_frame)
+        # Scale point clouds, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            scale = expand_pcd(batch["pc_scale"].to(self.device), num_samples)
+            pred_frame = pred_frame * scale
+            action_context_frame = action_context_frame * scale
+        else:
+            scale = 1.0
+            
+        pred_frame_world = T_goal2world.transform_points(pred_frame)
+        pred_point_world = T_goal2world.transform_points(pred_dict["point"]["pred"]*scale + pred_frame)
+        pc_action_world = T_action2world.transform_points(pc_action*scale + action_context_frame)
+
         pred_flow_world = pred_point_world - pc_action_world
         results_world = [
-            T_goal2world.transform_points(res + pred_frame) for res in pred_dict["results"]
+            T_goal2world.transform_points(res*scale + pred_frame) for res in pred_dict["results"]
         ]
-        return pred_flow_world, pred_point_world, pc_action_world, results_world
+
+        pred_world_dict = {
+            "pred_flow_world": pred_flow_world,
+            "pred_point_world": pred_point_world,
+            "pc_action_world": pc_action_world,
+            "pred_frame_world": pred_frame_world,
+            "results_world": results_world,
+        }
+
+        return pred_world_dict
 
     def update_batch_frames(self, batch, update_labels=False, gmm_model=None):
         # Using GMM model, if provided.
@@ -659,6 +628,22 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         else:
             raise ValueError(f"Invalid action context frame: {self.model_cfg.action_context_frame}")
         
+        # Re-scale point cloud inputs, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            # Computing scale factor.
+            scale = self.object_scale if self.object_scale is not None else self.scene_scale
+            points = batch["pc_action"] if self.object_scale is not None else torch.cat([batch["pc_action"], batch["pc_anchor"]], dim=1)
+            point_dists = points - points.mean(axis=1, keepdim=True)
+            # point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).mean(dim=1, keepdim=True)
+            point_scale = torch.linalg.norm(point_dists, dim=2, keepdim=True).max(dim=1, keepdim=True).values
+
+            # Updating point clouds.
+            batch["pc_action"] = batch["pc_action"] * scale / point_scale
+            batch["pc_anchor"] = batch["pc_anchor"] * scale / point_scale
+            pred_frame = pred_frame * scale / point_scale
+            action_context_frame = action_context_frame * scale / point_scale
+            batch["pc_scale"] = point_scale / scale
+
         # Update scene-as-anchor, if necessary.
         if self.model_cfg.scene_anchor:
             batch["pc_anchor"] = torch.cat(
@@ -675,8 +660,13 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
                 matrix=batch["T_goal2world"]#.to(self.device)
             )
             batch["pc_world"] = T_goal2world.transform_points(batch["pc"])
+            
+            # Scale ground truth point cloud, if necessary.
+            if self.object_scale is not None or self.scene_scale is not None:
+                batch[self.label_key] = batch[self.label_key] * scale / point_scale
 
             # Put point and flow labels in prediction frame.
+            # TODO: the flow computation is technically bugged here, should also be scaled
             batch["pc"] = batch["pc"] - pred_frame
             batch["flow"] = batch["flow"] - pred_frame + action_context_frame
         
@@ -709,6 +699,14 @@ class CrossDisplacementModule(DenseDisplacementDiffusionModule):
         T_goal2world = Transform3d(
             matrix=batch["T_goal2world"][viz_idx].to(self.device)
         )
+
+        # Scale point clouds, if necessary.
+        if self.object_scale is not None or self.scene_scale is not None:
+            scale = batch["pc_scale"][viz_idx]
+            pc_action_viz = pc_action_viz * scale
+            pc_anchor_viz = pc_anchor_viz * scale
+            pred_frame = pred_frame * scale
+            action_context_frame = action_context_frame * scale
 
         pc_action_viz = T_action2world.transform_points(pc_action_viz + action_context_frame)
         pc_anchor_viz = T_goal2world.transform_points(pc_anchor_viz + pred_frame)
