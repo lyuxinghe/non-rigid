@@ -8,8 +8,8 @@ from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
 from torch import nn, optim
 
-from non_rigid.metrics.flow_metrics import flow_rmse
-from non_rigid.metrics.rigid_metrics import svd_estimation
+from src.non_rigid.metrics.pointcloud_metrics import flow_rmse
+from src.non_rigid.metrics.tramsformation_metrics import svd_estimation
 from non_rigid.models.dit.diffusion import create_shape_frame_diffusion
 from non_rigid.models.dit.models import TAX3Dv2_DiT
 from non_rigid.utils.logging_utils import viz_predicted_vs_gt

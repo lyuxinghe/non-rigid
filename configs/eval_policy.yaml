@@ -7,7 +7,7 @@ time: '09-44-17'
 
 defaults:
   - dataset: proc_cloth_overfit
-  - model: df_base
+  - model: df_cross
   - inference: ${dataset}_${model}
   - _logging
   - _self_

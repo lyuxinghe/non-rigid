@@ -8,9 +8,8 @@ from diffusers import get_cosine_schedule_with_warmup
 from pytorch3d.transforms import Transform3d
 from torch import nn, optim
 
-from non_rigid.metrics.error_metrics import get_pred_pcd_rigid_errors
-from non_rigid.metrics.flow_metrics import flow_cos_sim, flow_rmse, pc_nn
-from non_rigid.metrics.rigid_metrics import svd_estimation, translation_err, rotation_err
+from src.non_rigid.metrics.pointcloud_metrics import flow_cos_sim, flow_rmse, pc_nn
+from src.non_rigid.metrics.tramsformation_metrics import svd_estimation, translation_err, rotation_err
 from non_rigid.models.dit.diffusion import create_diffusion
 from non_rigid.models.dit.models import (
     DiT_PointCloud_Cross

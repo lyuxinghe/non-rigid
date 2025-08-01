@@ -55,6 +55,15 @@ elif [ $MODEL_TYPE == "tax3dv2" ]; then
 
   MODEL_PARAMS="model=tax3dv2 model.type=point"
 
+elif [ $MODEL_TYPE == "tax3dv2_corl2025" ]; then
+  echo "Training tax3dv2_corl2025 model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=tax3dv2 model.type=point"
+  MODEL_PARAMS+=" model.joint_encode=True model.feature=True"
+  MODEL_PARAMS+=" model.pred_frame=noisy_goal model.noisy_goal_scale=1.0 model.point_encoder=pn2"
+  MODEL_PARAMS+=" model.diff_rotation_noise_scale=45 model.scene_anchor=True"
+  MODEL_PARAMS+=" model.one_hot_recon=False model.zero_shape=False"
+
 fi
 
 

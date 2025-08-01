@@ -119,35 +119,3 @@ def rotation_err(gt_rotation: torch.Tensor,
         raise ValueError("Incorrect metrics type")
 
     return translation_error
-
-'''
-def calculate_errors(
-    gt_translation: torch.Tensor,
-    gt_rotation: torch.Tensor,
-    estimated_translation: torch.Tensor,
-    estimated_rotation: torch.Tensor,
-):
-    """
-    Calculate translation and rotation errors.
-
-    Args:
-        gt_translation (torch.Tensor): Ground truth translation, shape (3,).
-        gt_rotation (torch.Tensor): Ground truth rotation matrix, shape (3, 3).
-        estimated_translation (torch.Tensor): Estimated translation, shape (3,).
-        estimated_rotation (torch.Tensor): Estimated rotation matrix, shape (3, 3).
-
-    Returns:
-        translation_error (float): Translation error (Euclidean distance).
-        rotation_error_deg (float): Rotation error in degrees.
-    """
-    # Translation error
-    translation_error = torch.norm(gt_translation - estimated_translation).item()
-
-    # Rotation error (angle between rotation matrices)
-    R_diff = gt_rotation @ estimated_rotation.T
-    trace = torch.trace(R_diff)  # Tr(R)
-    rotation_error_rad = torch.arccos((trace - 1) / 2)
-    rotation_error_deg = torch.rad2deg(rotation_error_rad).item()
-
-    return translation_error, rotation_error_deg
-'''
