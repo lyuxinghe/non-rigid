@@ -54,7 +54,54 @@ class TAX3Dv2RigidNetwork(nn.Module):
     def forward(self, xr_t, xs_t, t, **kwargs):
         return self.dit(xr_t, xs_t, t, **kwargs)
     
-
+def compute_svd_transformation_batch(source_points, target_points):
+    """
+    Compute rigid transformation from source to target using SVD (Kabsch algorithm) - batch version
+    
+    Args:
+        source_points: (B, N, 3) tensor of source point clouds
+        target_points: (B, N, 3) tensor of target point clouds
+    
+    Returns:
+        T_matrix: (B, 4, 4) tensor of transformation matrices
+    """
+    batch_size = source_points.shape[0]
+    
+    # Center the point clouds - (B, 3)
+    source_centroid = source_points.mean(dim=1)  # (B, 3)
+    target_centroid = target_points.mean(dim=1)  # (B, 3)
+    
+    # Center the points - (B, N, 3)
+    source_centered = source_points - source_centroid.unsqueeze(1)
+    target_centered = target_points - target_centroid.unsqueeze(1)
+    
+    # Compute cross-covariance matrix - (B, 3, 3)
+    H = torch.bmm(source_centered.transpose(1, 2), target_centered)
+    
+    # Batch SVD - (B, 3, 3) each
+    U, S, Vt = torch.linalg.svd(H)
+    
+    # Compute rotation matrix - (B, 3, 3)
+    R = torch.bmm(Vt.transpose(1, 2), U.transpose(1, 2))
+    
+    # Ensure proper rotation (det(R) = 1) for each batch
+    det_R = torch.det(R)  # (B,)
+    
+    # For batches where det(R) < 0, flip the last column of Vt
+    flip_mask = det_R < 0  # (B,)
+    Vt_corrected = Vt.clone()
+    Vt_corrected[flip_mask, -1, :] *= -1
+    R = torch.bmm(Vt_corrected.transpose(1, 2), U.transpose(1, 2))
+    
+    # Compute translation - (B, 3)
+    t = target_centroid - torch.bmm(R, source_centroid.unsqueeze(2)).squeeze(2)
+    
+    # Construct 4x4 transformation matrices - (B, 4, 4)
+    T_matrix = torch.eye(4, device=source_points.device, dtype=source_points.dtype).unsqueeze(0).repeat(batch_size, 1, 1)
+    T_matrix[:, :3, :3] = R
+    T_matrix[:, :3, 3] = t
+    
+    return T_matrix
 
 class TAX3Dv2RigidBaseModule(L.LightningModule):
     """
@@ -763,23 +810,30 @@ class TAX3Dv2RigidFixedFrameModule(TAX3Dv2RigidBaseModule):
             batch["pc"] = batch["pc"] - pred_frame
             batch["flow"] = batch["flow"] - pred_frame + action_context_frame
 
+            '''
             # Update t vector            
             # Squeeze the frame vectors to match the function's expected input shape (bs, 3)
             c_A = action_context_frame.squeeze(1)
             c_B = pred_frame.squeeze(1)
 
             # Call the function to get the updated transformation components
+            # BUG: this is definitely wrong, the ground truth t should not be from centered c_A to c_b (?)
             R_new, t_new = update_rt_transformation(
                 R=batch["R"], 
                 t=batch["t"], 
                 c_A=c_A, 
                 c_B=c_B
             )
-
+            
             # Update batch
             batch["R"] = R_new
             batch["t"] = t_new
-        
+            '''
+            T_new = compute_svd_transformation_batch(source_points=batch["pc_action"], target_points=batch["pc"])
+            # Update batch
+            batch["R"] = T_new[:, :3, :3]
+            batch["t"] = T_new[:, :3, 3]
+
         # Compute relative position, if necessary.
         if self.model_cfg.rel_pos:
             batch["rel_pos"] = action_context_frame - pred_frame
