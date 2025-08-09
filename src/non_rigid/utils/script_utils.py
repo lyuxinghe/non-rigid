@@ -21,6 +21,11 @@ from non_rigid.models.tax3d_v2 import (
     TAX3Dv2MuFrameModule,
     TAX3Dv2FixedFrameModule
 )
+from non_rigid.models.tax3d_v2_rigid import (
+    TAX3Dv2RigidNetwork,
+    TAX3Dv2RigidFixedFrameModule
+)
+
 
 from non_rigid.datasets.dedo import DedoDataModule
 from non_rigid.datasets.rigid import RigidDataModule
@@ -53,7 +58,9 @@ def create_model(cfg):
             module_fn = TAX3Dv2MuFrameModule
         else:
             raise ValueError(f"Invalid frame type: {cfg.model.frame_type}")
-        
+    elif cfg.model.name == "tax3dv2_rigid":
+        network_fn = TAX3Dv2RigidNetwork
+        module_fn = TAX3Dv2RigidFixedFrameModule
     else:
         raise ValueError(f"Invalid model name: {cfg.model.name}")
 

@@ -311,3 +311,144 @@ def matrix_from_list(pose_list: List[float]) -> np.ndarray:
     T[:-1, :-1] = R.from_quat(quat).as_matrix()
     T[:-1, -1] = trans
     return T
+
+def update_rt_transformation(
+    R: torch.Tensor,
+    t: torch.Tensor,
+    c_A: torch.Tensor,
+    c_B: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Updates a batch of rotations (R) and translations (t) for separate source and destination coordinate shifts.
+
+    Args:
+        R (torch.Tensor): The original batch of 3x3 rotation matrices.
+                          Shape: (batch_size, 3, 3)
+        t (torch.Tensor): The original batch of 3D translation vectors.
+                          Shape: (batch_size, 3)
+        c_A (torch.Tensor): The batch of 3D translation vectors for the source point clouds (A).
+                            Shape: (batch_size, 3)
+        c_B (torch.Tensor): The batch of 3D translation vectors for the destination point clouds (B).
+                            Shape: (batch_size, 3)
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            - R_new (torch.Tensor): The updated batch of 3x3 rotation matrices (which is the same as R).
+            - t_new (torch.Tensor): The updated batch of 3D translation vectors.
+    """
+    # Ensure all tensors are on the same device and have the same dtype
+    device = R.device
+    dtype = R.dtype
+    t = t.to(device=device, dtype=dtype)
+    c_A = c_A.to(device=device, dtype=dtype)
+    c_B = c_B.to(device=device, dtype=dtype)
+
+    # 1. The new rotation is the same as the original rotation
+    R_new = R
+
+    # 2. Calculate the new translation: t_new = R @ c_A + t - c_B
+    # We need to reshape c_A for batched matrix-vector multiplication
+    # (B, 3, 3) @ (B, 3, 1) -> (B, 3, 1) -> squeeze to (B, 3)
+    rotated_c_A = torch.bmm(R, c_A.unsqueeze(-1)).squeeze(-1)
+    t_new = rotated_c_A + t - c_B
+
+    return R_new, t_new
+
+# batch*n
+def normalize_vector( v):
+    batch=v.shape[0]
+    v_mag = torch.sqrt(v.pow(2).sum(1))# batch
+    v_mag = torch.max(v_mag, torch.autograd.Variable(torch.FloatTensor([1e-8]).cuda()))
+    v_mag = v_mag.view(batch,1).expand(batch,v.shape[1])
+    v = v/v_mag
+    return v
+    
+# u, v batch*n
+def cross_product( u, v):
+    batch = u.shape[0]
+    #print (u.shape)
+    #print (v.shape)
+    i = u[:,1]*v[:,2] - u[:,2]*v[:,1]
+    j = u[:,2]*v[:,0] - u[:,0]*v[:,2]
+    k = u[:,0]*v[:,1] - u[:,1]*v[:,0]
+        
+    out = torch.cat((i.view(batch,1), j.view(batch,1), k.view(batch,1)),1)#batch*3
+        
+    return out
+        
+#poses batch*6
+#poses
+def compute_rotation_matrix_from_ortho6d(poses):
+    x_raw = poses[:,0:3]#batch*3
+    y_raw = poses[:,3:6]#batch*3
+        
+    x = normalize_vector(x_raw) #batch*3
+    z = cross_product(x,y_raw) #batch*3
+    z = normalize_vector(z)#batch*3
+    y = cross_product(z,x)#batch*3
+        
+    x = x.view(-1,3,1)
+    y = y.view(-1,3,1)
+    z = z.view(-1,3,1)
+    matrix = torch.cat((x,y,z), 2) #batch*3*3
+    return matrix
+
+def transform_pointcloud(pc: torch.Tensor, 
+                         T: torch.Tensor = None, 
+                         R: torch.Tensor = None, 
+                         t: torch.Tensor = None) -> torch.Tensor:
+    """
+    Transforms a batched point cloud by a batched transformation matrix.
+
+    Args:
+        pc (torch.Tensor): The point cloud to transform. Shape: (bs, 3, N)
+        T (torch.Tensor): The transformation matrix. Shape: (bs, 4, 4)
+        R (torch.Tensor): The rotation matrix. Shape: (bs, 3, 3)
+        t (torch.Tensor): The translation vector. Shape: (bs, 3)
+
+    Returns:
+        torch.Tensor: The transformed point cloud. Shape: (bs, 3, N)
+    """
+    # Decompose the transformation matrix
+    assert (T is not None) or (R is not None and t is not None), \
+        "Either T must be provided, or both R and t must be provided"
+    
+    if T is not None:
+        R = T[:, :3, :3]  # Rotation matrix (bs, 3, 3)
+        t = T[:, :3, 3]   # Translation vector (bs, 3)
+
+    # Apply rotation
+    # (bs, 3, 3) @ (bs, 3, N) -> (bs, 3, N)
+    rotated_pc = torch.bmm(R, pc)
+
+    # Apply translation using broadcasting
+    # (bs, 3, N) + (bs, 3, 1) -> (bs, 3, N)
+    transformed_pc = rotated_pc + t.unsqueeze(-1)
+    
+    return transformed_pc
+
+def compute_transformed_pointcloud_from_diffusion(pred_r: torch.Tensor, 
+                                                  pred_s: torch.Tensor,
+                                                  pc_action: torch.Tensor) -> torch.Tensor:
+    # Assert same batch dimensions
+    assert pred_r.shape[0] == pred_s.shape[0] == pc_action.shape[0], \
+        f"Batch dimensions must match: pred_r {pred_r.shape[0]}, pred_s {pred_s.shape[0]}, pc_action {pc_action.shape[0]}"
+    
+    # Assert pred_r has last two dimensions of (3, 1)
+    assert pred_r.shape[-2:] == (3, 1), \
+        f"pred_r must have shape (..., 3, 1), got {pred_r.shape}"
+
+    # Assert pred_s has last two dimensions of (6, 1)
+    assert pred_s.shape[-2:] == (6, 1), \
+        f"pred_r must have shape (..., 6, 1), got {pred_s.shape}"
+    
+
+    t = pred_r.squeeze(-1)
+    R = compute_rotation_matrix_from_ortho6d(pred_s.squeeze(-1))
+
+    if pc_action.shape[-1] == 3:
+        pc_action = pc_action.permute(0, 2, 1)
+
+    transformed_pc = transform_pointcloud(pc=pc_action, R=R, t=t)
+
+    return transformed_pc

@@ -55,6 +55,11 @@ elif [ $MODEL_TYPE == "tax3dv2" ]; then
 
   MODEL_PARAMS="model=tax3dv2 model.type=point"
 
+elif [ $MODEL_TYPE == "tax3dv2_rigid" ]; then
+  echo "Training tax3dv2_rigid model on dataset $DATASET_NAME with command: $COMMAND."
+
+  MODEL_PARAMS="model=tax3dv2_rigid model.type=point"
+
 fi
 
 

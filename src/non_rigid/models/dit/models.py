@@ -20,6 +20,7 @@ from typing import Optional
 from functools import partial
 
 from non_rigid.models.encoders import DisjointFeatureEncoder, JointFeatureEncoder, mlp_encoder, pn2_encoder
+from non_rigid.utils.transform_utils import transform_pointcloud, compute_rotation_matrix_from_ortho6d
 
 torch.set_printoptions(precision=8, sci_mode=True)
 
@@ -1066,6 +1067,313 @@ class TAX3Dv2_FixedFrame_Token_DiT(nn.Module):
 
         return xr_out, xs_out
 
+class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
+    """
+    Diffusion Transformer that uses attention pooling to predict rotation and 
+    translation noise from the full sequence of processed point cloud tokens.
+    """
+    def __init__(
+            self,
+            in_channels=3,
+            hidden_size=1152,
+            depth=28,
+            num_heads=16,
+            mlp_ratio=4.0,
+            learn_sigma=True,
+            model_cfg=None,
+    ):
+        super().__init__()
+        self.learn_sigma = learn_sigma
+        self.in_channels = in_channels
+        self.out_channels_r = 6 if learn_sigma else 3  # For translation
+        self.out_channels_s = 12 if learn_sigma else 6 # For rotation
+        self.num_heads = num_heads
+        self.model_cfg = model_cfg
+
+        # Learnable query tokens for the attention pooling step
+        self.translation_query = nn.Parameter(torch.randn(1, 1, hidden_size))
+        self.rotation_query = nn.Parameter(torch.randn(1, 1, hidden_size))
+
+        # Point cloud feature encoder.
+        if self.model_cfg.joint_encode:
+            self.feature_encoder = JointFeatureEncoder(in_channels, hidden_size, model_cfg)
+        else:
+            self.feature_encoder = DisjointFeatureEncoder(in_channels, hidden_size, model_cfg)
+
+        # Timestamp embedding.
+        self.t_embedder = TimestepEmbedder(hidden_size)
+
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            self.rel_pos_embedder = nn.Sequential(
+                nn.Linear(in_channels, hidden_size, bias=True),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size, bias=True),
+            )
+        else:
+            self.rel_pos_embedder = None
+
+        # DiT blocks.
+        self.blocks = nn.ModuleList(
+            [
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                for _ in range(depth)
+            ]
+        )
+
+        # Attention pooling layers
+        self.pooler_t = CrossAttention(dim_x=hidden_size, dim_y=hidden_size, num_heads=num_heads, qkv_bias=True)
+        self.pooler_s = CrossAttention(dim_x=hidden_size, dim_y=hidden_size, num_heads=num_heads, qkv_bias=True)
+        
+        # Final linear projection heads
+        self.translation_head = nn.Linear(hidden_size, self.out_channels_r)
+        self.rotation_head = nn.Linear(hidden_size, self.out_channels_s)
+        
+        self.initialize_weights()
+    
+    def initialize_weights(self):
+        # Initialize transformer layers:
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
+        self.apply(_basic_init)
+
+        # Initialize learnable query tokens
+        nn.init.normal_(self.translation_query, std=0.02)
+        nn.init.normal_(self.rotation_query, std=0.02)
+
+        # Initialize timestep embedding MLP:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+
+        # Initialize relative position embedding MLP, if enabled:
+        if self.rel_pos_embedder is not None:
+            nn.init.normal_(self.rel_pos_embedder[0].weight, std=0.02)
+            nn.init.normal_(self.rel_pos_embedder[2].weight, std=0.02)
+
+        # Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.blocks:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+        # Zero-out final projection heads for stability at the start of training
+        nn.init.constant_(self.translation_head.weight, 0)
+        nn.init.constant_(self.translation_head.bias, 0)
+        nn.init.constant_(self.rotation_head.weight, 0)
+        nn.init.constant_(self.rotation_head.bias, 0)
+
+    def forward(
+            self,
+            xr_t: torch.Tensor,
+            xs_t: torch.Tensor,
+            t: torch.Tensor,
+            y: torch.Tensor,
+            x0: torch.Tensor,
+            rel_pos: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass using attention pooling for prediction.
+        """
+        # 1. Apply noise and encode point clouds
+        rot = compute_rotation_matrix_from_ortho6d(xs_t.squeeze(-1))
+        trans = xr_t
+        x = torch.bmm(rot, x0) + trans
+        x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0)
+
+        # 2. Prepare conditioning vector
+        t_emb = self.t_embedder(t)
+        if self.model_cfg.rel_pos:
+            assert rel_pos is not None, "Relative position embedding requires rel_pos tensor."
+            rel_pos_emb = self.rel_pos_embedder(rel_pos.squeeze(1))
+            c = t_emb + rel_pos_emb
+        else:
+            c = t_emb
+
+        # 3. Process tokens through DiT blocks
+        # x_enc starts as the sequence of point cloud tokens
+        for block in self.blocks:
+            x_enc = block(x_enc, y_enc, c)
+        # After the loop, x_enc contains the deeply processed point cloud features
+
+        # 4. Perform Attention Pooling
+        b = x_enc.shape[0]
+        trans_q = self.translation_query.expand(b, -1, -1)
+        rot_q = self.rotation_query.expand(b, -1, -1)
+        
+        # Each query attends to the full sequence of processed point cloud tokens
+        trans_summary = self.pooler_t(trans_q, x_enc).squeeze(1) # [B, D]
+        rot_summary = self.pooler_s(rot_q, x_enc).squeeze(1)     # [B, D]
+
+        # 5. Predict from summarized features
+        xr_out = self.translation_head(trans_summary).unsqueeze(-1)
+        xs_out = self.rotation_head(rot_summary).unsqueeze(-1)
+
+        # 6. Apply zero-shaping if configured
+        if self.model_cfg.zero_shape:
+            xs_out = torch.cat([
+            xs_out[:, :3, :] - xs_out[:, :3, :].mean(dim=2, keepdim=True),
+            xs_out[:, 3:, :]
+        ], dim=1)
+
+        return xr_out, xs_out
+
+'''
+class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
+    def __init__(
+            self,
+            in_channels=3,
+            hidden_size=1152,
+            depth=28,
+            num_heads=16,
+            mlp_ratio=4.0,
+            learn_sigma=True,
+            model_cfg=None,
+    ):
+        super().__init__()
+        self.learn_sigma = learn_sigma
+        self.in_channels = in_channels
+        # self.out_channels = in_channels * 2 if learn_sigma else in_channels
+        self.out_channels_r = 6 if learn_sigma else 3
+        self.out_channels_s = 12 if learn_sigma else 6
+        self.num_heads = num_heads
+        self.model_cfg = model_cfg
+
+        # Point cloud feature encoder.
+        if self.model_cfg.joint_encode:
+            self.feature_encoder = JointFeatureEncoder(in_channels, hidden_size, model_cfg)
+        else:
+            self.feature_encoder = DisjointFeatureEncoder(in_channels, hidden_size, model_cfg)
+
+        # Learnable frame embedding.
+        self.ref_frame_token = nn.Parameter(torch.randn(1, 1, hidden_size))
+        self.shape_frame_token = nn.Parameter(torch.randn(1, 1, hidden_size))
+
+        # Timestamp embedding.
+        self.t_embedder = TimestepEmbedder(hidden_size)
+
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            self.rel_pos_embedder = nn.Sequential(
+                nn.Linear(in_channels, hidden_size, bias=True),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size, bias=True),
+            )
+        else:
+            self.rel_pos_embedder = None
+
+        # DiT blocks.
+        self.blocks = nn.ModuleList(
+            [
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                for _ in range(depth)
+            ]
+        )
+
+        # Final layer; functionally setting patch size to 1 for a point cloud.
+        self.final_layer_r = FinalLayer(hidden_size, 1, self.out_channels_r)
+        self.final_layer_s = FinalLayer(hidden_size, 1, self.out_channels_s)
+        self.initialize_weights()
+    
+    def initialize_weights(self):
+        # Initialize transformer layers:
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
+        self.apply(_basic_init)
+
+        # Initialize timestep embedding MLP:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+
+        # Initialize relative position embedding MLP, if enabled:
+        if self.rel_pos_embedder is not None:
+            nn.init.normal_(self.rel_pos_embedder[0].weight, std=0.02)
+            nn.init.normal_(self.rel_pos_embedder[2].weight, std=0.02)
+
+        # Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.blocks:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+        # Zero-out output layers:
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_r.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_r.linear.weight, 0)
+        nn.init.constant_(self.final_layer_r.linear.bias, 0)
+
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer_s.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer_s.linear.weight, 0)
+        nn.init.constant_(self.final_layer_s.linear.bias, 0)
+
+    # 514 tokens
+    def forward(
+            self,
+            xr_t: torch.Tensor, # bs, 6, 1
+            xs_t: torch.Tensor, # bs, 3, 1
+            t: torch.Tensor,
+            y: torch.Tensor,
+            x0: torch.Tensor,
+            rel_pos: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass of DiT with scene cross attention.
+
+        Args:
+            x (torch.Tensor): (B, D, N) tensor of batched current timestep x (e.g. noised action) features
+            t (torch.Tensor): (B,) tensor of diffusion timesteps
+            y (torch.Tensor): (B, D, N) tensor of un-noised scene (e.g. anchor) features
+            x0 (torch.Tensor): (B, D, N) tensor of un-noised x (e.g. action) features
+        """
+        # check xr_t and xs_t shape
+        rot = compute_rotation_matrix_from_ortho6d(xs_t.squeeze(-1))  # bs, 3, 3
+        trans = xr_t
+        
+        x = torch.bmm(rot, x0)
+        x = x + trans
+
+        # Encode action and anchor features.
+        x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0)
+
+        # Concatenating reference frame token to the action features.
+        x_enc = torch.cat([x_enc, self.ref_frame_token.expand(x_enc.shape[0], -1, -1)], dim=1)
+        x_enc = torch.cat([x_enc, self.shape_frame_token.expand(x_enc.shape[0], -1, -1)], dim=1)
+
+        # Timestep embedding.
+        t_emb = self.t_embedder(t)
+
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            assert rel_pos is not None, "Relative position embedding requires rel_pos tensor."
+            rel_pos_emb = self.rel_pos_embedder(rel_pos.squeeze(1))
+            c = t_emb + rel_pos_emb
+        else:
+            c = t_emb
+
+        # Forward pass through DiT blocks.
+        for block in self.blocks:
+            x_enc = block(x_enc, y_enc, c)
+
+        # Final layers.
+        xr_out = x_enc[:, -2:-1, :]
+        xs_out = x_enc[:, -1:, :]
+        xr_out = self.final_layer_r(xr_out, c).permute(0, 2, 1)        
+        xs_out = self.final_layer_s(xs_out, c).permute(0, 2, 1)
+
+        if self.model_cfg.zero_shape:
+            xs_out = torch.cat([
+            xs_out[:, :3, :] - xs_out[:, :3, :].mean(dim=2, keepdim=True),  # First 3 channels zero-meaned
+            xs_out[:, 3:, :]  # Last 3 channels unchanged
+        ], dim=1)
+
+        return xr_out, xs_out
+'''
 class TAX3Dv2_FixedFrame_Dual_DiT(nn.Module):
     """
     Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention, 

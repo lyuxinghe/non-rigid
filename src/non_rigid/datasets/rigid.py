@@ -27,6 +27,47 @@ def matrix_from_list(pose_list: List[float]) -> np.ndarray:
     T[:-1, -1] = trans
     return T
 
+def compute_svd_transformation(source_points, target_points):
+    """
+    Compute rigid transformation from source to target using SVD (Kabsch algorithm)
+    Returns 4x4 transformation matrix
+    """
+    # Center the point clouds
+    source_centroid = source_points.mean(dim=0)
+    target_centroid = target_points.mean(dim=0)
+    
+    source_centered = source_points - source_centroid
+    target_centered = target_points - target_centroid
+    
+    # Compute cross-covariance matrix
+    H = source_centered.T @ target_centered
+    
+    # SVD
+    U, S, Vt = torch.linalg.svd(H)
+    
+    # Compute rotation matrix
+    R = Vt.T @ U.T
+    
+    # Ensure proper rotation (det(R) = 1)
+    if torch.det(R) < 0:
+        Vt[-1, :] *= -1
+        R = Vt.T @ U.T
+    
+    # Compute translation
+    t = target_centroid - R @ source_centroid
+    
+    # Construct 4x4 transformation matrix
+    T_matrix = torch.eye(4)
+    T_matrix[:3, :3] = R
+    T_matrix[:3, 3] = t
+    
+    return T_matrix
+
+# NOTE:
+# 1. We start from T_action2goal [4x4], that can be written as [[R, t], [0, 1]], where x = action and y = goal
+# 2. For any frame transformation for x (x - c_x) or y (y - c_y), we should just update t by: t′=t + c_x @ R.T −c_y
+# 3. Note that t= mean(y) - mean(x) @ R.T
+
 class RPDiffDataset(data.Dataset):
     def __init__(self, root, dataset_cfg, type):
         super().__init__()
@@ -97,6 +138,9 @@ class RPDiffDataset(data.Dataset):
         anchor_pc = torch.as_tensor(parent_start_pcd).float()
         goal_action_pc = torch.as_tensor(child_final_pcd).float()
         goal_anchor_pc = torch.as_tensor(parent_final_pcd).float()  # same as anchor_pc
+
+        T_action2goal = compute_svd_transformation(action_pc, goal_action_pc)
+
 
         action_seg = torch.zeros_like(action_pc[:, 0]).int()
         anchor_seg = torch.ones_like(anchor_pc[:, 0]).int()
@@ -233,6 +277,9 @@ class RPDiffDataset(data.Dataset):
         # Update item.
         T_goal2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
         T_action2world = Translate(scene_center.unsqueeze(0)).compose(T.inverse())
+        T_transform = compute_svd_transformation(action_pc, goal_action_pc)
+        R = T_transform[:3, :3]
+        t = T_transform[:3, 3]
 
         goal_flow = goal_action_pc - action_pc
 
@@ -243,12 +290,15 @@ class RPDiffDataset(data.Dataset):
         item["seg_anchor"] = anchor_seg
         item["T_goal2world"] = T_goal2world.get_matrix().squeeze(0) # Transform from goal action frame to world frame
         item["T_action2world"] = T_action2world.get_matrix().squeeze(0) # Transform from action frame to world frame
-        
+        item["T_action2goal"] = T_action2goal # Transform from action point cloud to goal point cloud (in world frame)
+
         # Training-specific labels.
         # TODO: eventually, rename this key to "point"
         item["pc"] = goal_action_pc # Ground-truth goal action points in the scene frame
         item["flow"] = goal_flow # Ground-truth flow (cross-frame) to action points
-        
+        item["R"] = R
+        item["t"] = t
+
         if self.dataset_cfg.pred_frame == "noisy_goal":
             # "Simulate" the GMM prediction as noisy goal.
             goal_center = goal_action_pc.mean(axis=0)

@@ -8,7 +8,8 @@ from . import gaussian_diffusion_ddrd_joint as gd_ddrd_joint
 from . import gaussian_diffusion_ddrd_seperate as gd_ddrd_separate
 from . import gaussian_diffusion_mu as gd_mu
 from . import gaussian_diffusion_v2 as gd_v2
-from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, SpacedDiffusionMuFrame, SpacedDiffusionv2, space_timesteps
+from . import gaussian_diffusion_rigid as gd_rigid
+from .respace import SpacedDiffusion, SpacedDiffusionDDRDJoint, SpacedDiffusionDDRDSeparate, SpacedDiffusionMuFrame, SpacedDiffusionv2, SpacedDiffusionRigid, space_timesteps
 
 def create_diffusion(
     timestep_respacing,
@@ -85,6 +86,50 @@ def create_diffusion_ddrd_joint(
         ),
         loss_type=loss_type,
         time_based_weighting=time_based_weighting,
+        # rescale_timesteps=rescale_timesteps,
+    )
+
+def create_diffusion_rigid(
+    timestep_respacing,
+    noise_schedule="linear", 
+    use_kl=False,
+    sigma_small=False,
+    predict_xstart=False,
+    learn_sigma=True,
+    rescale_learned_sigmas=False,
+    diffusion_steps=1000,
+    time_based_weighting=False,
+    rotation_noise_scale=False,
+    zero_shape=False,
+):
+    betas = gd_rigid.get_named_beta_schedule(noise_schedule, diffusion_steps)
+    if use_kl:
+        loss_type = gd_rigid.LossType.RESCALED_KL
+    elif rescale_learned_sigmas:
+        loss_type = gd_rigid.LossType.RESCALED_MSE
+    else:
+        loss_type = gd_rigid.LossType.MSE
+    if timestep_respacing is None or timestep_respacing == "":
+        timestep_respacing = [diffusion_steps]
+    return SpacedDiffusionRigid(
+        use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
+        betas=betas,
+        model_mean_type=(
+            gd_rigid.ModelMeanType.EPSILON if not predict_xstart else gd_rigid.ModelMeanType.START_X
+        ),
+        model_var_type=(
+            (
+                gd_rigid.ModelVarType.FIXED_LARGE
+                if not sigma_small
+                else gd_rigid.ModelVarType.FIXED_SMALL
+            )
+            if not learn_sigma
+            else gd_rigid.ModelVarType.LEARNED_RANGE
+        ),
+        loss_type=loss_type,
+        time_based_weighting=time_based_weighting,
+        rotation_noise_scale=rotation_noise_scale,
+        zero_shape=zero_shape,
         # rescale_timesteps=rescale_timesteps,
     )
 
