@@ -733,9 +733,6 @@ class TAX3Dv2RigidFixedFrameModule(TAX3Dv2RigidBaseModule):
             action_context_frame = action_context_frame * scale / point_scale
             batch["pc_scale"] = point_scale / scale
 
-            # Updating t
-            batch["t"] = batch["t"] * scale / point_scale
-
         # Update scene-as-anchor, if necessary.
         if self.model_cfg.scene_anchor:
             batch["pc_anchor"] = torch.cat(
@@ -759,8 +756,8 @@ class TAX3Dv2RigidFixedFrameModule(TAX3Dv2RigidBaseModule):
             # Scale ground truth point cloud, if necessary.
             if self.object_scale is not None or self.scene_scale is not None:
                 batch[self.label_key] = batch[self.label_key] * scale / point_scale
-                batch["t"] = batch["t"] * scale / point_scale
-
+                batch["t"] = batch["t"] * scale / point_scale.squeeze(-1)
+                
             # Put point and flow labels in prediction frame.
             # TODO: the flow computation is technically bugged here, should also be scaled
             batch["pc"] = batch["pc"] - pred_frame
