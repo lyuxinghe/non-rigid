@@ -1067,7 +1067,7 @@ class TAX3Dv2_FixedFrame_Token_DiT(nn.Module):
 
         return xr_out, xs_out
 
-
+'''
 class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
     def __init__(
             self,
@@ -1218,6 +1218,168 @@ class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
             xs_out[:, :3, :] - xs_out[:, :3, :].mean(dim=2, keepdim=True),  # First 3 channels zero-meaned
             xs_out[:, 3:, :]  # Last 3 channels unchanged
         ], dim=1)
+
+        return xr_out, xs_out
+'''
+class _PooledHead(nn.Module):
+    """z -> concatenated [mu, logvar] with size 2*D."""
+    def __init__(self, in_dim: int, hidden: int, out_dim_d: int, learn_sigma=True):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.LayerNorm(in_dim),
+            nn.Linear(in_dim, hidden),
+            nn.SiLU(),
+            nn.Linear(hidden, hidden),
+            nn.SiLU(),
+        )
+        out_dim_D = out_dim_d * 2 if learn_sigma else out_dim_d
+        self.proj = nn.Linear(hidden, out_dim_D)  # [mu | logvar]
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        h = self.net(z)
+        o = self.proj(h)                # (B, 2D)
+        return o.unsqueeze(-1)          # (B, 2D, 1)
+
+
+class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
+    """
+    Token-free DiT for rigid placement with Gaussian outputs.
+
+    Inputs:
+      xr_t : (B, 3, 1)     current noised translation
+      xs_t : (B, 6, 1)     current noised 6D rotation
+      t    : (B,)          diffusion timestep
+      y    : (B, 3, 512)   anchor (centered at goal centroid)
+      x0   : (B, 3, 512)   original action
+      rel_pos: optional; if cfg.rel_pos=True, expected shape (B, 1, 3)
+
+    Outputs:
+      xr_out : (B, 6, 1)   = [mu_r(3), logvar_r(3)]
+      xs_out : (B, 12, 1)  = [mu_s(6), logvar_s(6)]
+    """
+    def __init__(
+        self,
+        in_channels=3,
+        hidden_size=1152,
+        depth=28,
+        num_heads=16,
+        mlp_ratio=4.0,
+        learn_sigma=True,
+        model_cfg=None,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.hidden_size = hidden_size
+        self.model_cfg = model_cfg
+
+        # feature encoders
+        if self.model_cfg.joint_encode:
+            self.feature_encoder = JointFeatureEncoder(in_channels, hidden_size, model_cfg)
+        else:
+            self.feature_encoder = DisjointFeatureEncoder(in_channels, hidden_size, model_cfg)
+
+        # timestep embedding
+        self.t_embedder = TimestepEmbedder(hidden_size)
+
+        # optional rel-pos embed (kept consistent with your original API)
+        if self.model_cfg.rel_pos:
+            self.rel_pos_embedder = nn.Sequential(
+                nn.Linear(in_channels, hidden_size, bias=True),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size, bias=True),
+            )
+        else:
+            self.rel_pos_embedder = None
+
+        # DiT blocks (operate on token sets; no learnable tokens)
+        self.blocks = nn.ModuleList(
+            [DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)]
+        )
+
+        # pooled descriptor: [mean(x)|max(x)|mean(y)|max(y)|cond] -> dim = 5*hidden
+        self.z_dim = 5 * hidden_size
+
+        # heads: r (3D) -> 6, s (6D) -> 12
+        self.r_head = _PooledHead(self.z_dim, hidden_size, out_dim_d=3, learn_sigma=learn_sigma)
+        self.s_head = _PooledHead(self.z_dim, hidden_size, out_dim_d=6, learn_sigma=learn_sigma)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        def _basic_init(m):
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        self.apply(_basic_init)
+
+        # t-embed
+        if hasattr(self.t_embedder, "mlp"):
+            if isinstance(self.t_embedder.mlp[0], nn.Linear):
+                nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+            if isinstance(self.t_embedder.mlp[-1], nn.Linear):
+                nn.init.normal_(self.t_embedder.mlp[-1].weight, std=0.02)
+
+        # rel-pos
+        if self.rel_pos_embedder is not None:
+            nn.init.normal_(self.rel_pos_embedder[0].weight, std=0.02)
+            nn.init.normal_(self.rel_pos_embedder[-1].weight, std=0.02)
+
+        # zero adaLN end, if present inside blocks
+        for blk in self.blocks:
+            if hasattr(blk, "adaLN_modulation"):
+                nn.init.constant_(blk.adaLN_modulation[-1].weight, 0)
+                nn.init.constant_(blk.adaLN_modulation[-1].bias, 0)
+
+    @staticmethod
+    def _pool(tokens: torch.Tensor) -> torch.Tensor:
+        """(B, N, C) -> concat(mean, max) = (B, 2C)."""
+        mean = tokens.mean(dim=1)
+        mx = tokens.max(dim=1).values
+        return torch.cat([mean, mx], dim=-1)
+
+    def forward(
+        self,
+        xr_t: torch.Tensor,   # (B, 3, 1)
+        xs_t: torch.Tensor,   # (B, 6, 1)
+        t: torch.Tensor,      # (B,)
+        y: torch.Tensor,      # (B, 3, 512)
+        x0: torch.Tensor,     # (B, 3, 512)
+        rel_pos: torch.Tensor = None,
+    ):
+        # build current hypothesis and transform x0
+        R_t = compute_rotation_matrix_from_ortho6d(xs_t.squeeze(-1))  # (B,3,3)
+        x = torch.bmm(R_t, x0) + xr_t                                 # (B,3,512)
+
+        # encode to tokens
+        x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0)          # (B,Nx,C),(B,Ny,C)
+
+        # conditioning vector
+        t_emb = self.t_embedder(t)                                    # (B,C)
+        if self.model_cfg.rel_pos:
+            assert rel_pos is not None, "rel_pos is required when cfg.rel_pos=True"
+            # follow your original API: expect rel_pos (B,1,3) -> (B,3)
+            rel_pos_emb = self.rel_pos_embedder(rel_pos.squeeze(1))   # (B,C)
+            cond = t_emb + rel_pos_emb                                # (B,C)
+        else:
+            cond = t_emb
+
+        # DiT cross-attention stack
+        for blk in self.blocks:
+            x_enc = blk(x_enc, y_enc, cond)
+
+        # global pooling
+        x_pool = self._pool(x_enc)                                     # (B,2C)
+        y_pool = self._pool(y_enc)                                     # (B,2C)
+
+        # fused scene descriptor
+        z = torch.cat([x_pool, y_pool, cond], dim=-1)                  # (B,5C)
+
+        # heads -> concatenated [mu | logvar]
+        xr_out = self.r_head(z)                                        # (B, 6, 1)
+        xs_out = self.s_head(z)                                        # (B, 12, 1)
 
         return xr_out, xs_out
 

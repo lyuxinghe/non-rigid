@@ -322,6 +322,11 @@ class TAX3Dv2RigidBaseModule(L.LightningModule):
         pred_r = final_dict["sample_r"]
         pred_s = final_dict["sample_s"]
 
+        gt_clone = batch["R"].clone()
+        gt_clone = gt_clone[:, :, :2].reshape(batch["R"].shape[0], 6).unsqueeze(-1)
+        print("Ground Truth: ", gt_clone[0].squeeze(-1))
+        print("Predicted: ", pred_s[0].squeeze(-1))
+
         #pred = pred_s + pred_r        
         pred = compute_transformed_pointcloud_from_diffusion(pred_r=pred_r, pred_s=pred_s, pc_action=pc_action_expanded)
         results_r = [res["sample_r"] for res in results]
