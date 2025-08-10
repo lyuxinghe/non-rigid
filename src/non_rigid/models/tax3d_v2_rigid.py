@@ -251,7 +251,10 @@ class TAX3Dv2RigidBaseModule(L.LightningModule):
         # run diffusion
         # noise = torch.randn_like(ground_truth) * self.noise_scale
         xr_start = batch["t"].unsqueeze(-1)   # [bs, 3, 1]
-        xs_start = batch["R"][:, :, :2].reshape(batch["R"].shape[0], 6).unsqueeze(-1)  # [bs, 6, 1]
+        xs_start = batch["R"][:, :, :2]                # (B, 3, 2)
+        xs_start = xs_start.permute(0, 2, 1)           # (B, 2, 3)  (cols first)
+        xs_start = xs_start.contiguous().view(xr_start.shape[0], 6, 1) # (B, 6, 1)
+
 
         loss_dict = self.diffusion.training_losses(
             model=self.network,

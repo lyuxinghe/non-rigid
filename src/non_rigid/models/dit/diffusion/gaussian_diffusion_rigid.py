@@ -106,7 +106,9 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
     if schedule_name == "linear":
         # Linear schedule from Ho et al, extended to work for any number of
         # diffusion steps.
-        scale = 1000 / num_diffusion_timesteps
+        # NOTE: diving the scale by 10, since for SE3 diffusion orthogonal 6d representation
+        #       for rotation is small in magnitude, thus we tune down the beta scheduler accordingly
+        scale = 100 / num_diffusion_timesteps
         return get_beta_schedule(
             "linear",
             beta_start=scale * 0.0001,
