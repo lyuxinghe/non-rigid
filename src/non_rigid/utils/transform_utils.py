@@ -376,12 +376,15 @@ def cross_product( u, v):
         
     return out
         
-#poses batch*6
+#poses batch*6/batch*3*2
 #poses
 def compute_rotation_matrix_from_ortho6d(poses):
-    x_raw = poses[:,0:3]#batch*3
-    y_raw = poses[:,3:6]#batch*3
-        
+    #x_raw = poses[:,0:3]#batch*3
+    #y_raw = poses[:,3:6]#batch*3
+
+    x_raw = poses[:,:,0]#batch*3
+    y_raw = poses[:,:,1]#batch*3
+
     x = normalize_vector(x_raw) #batch*3
     z = cross_product(x,y_raw) #batch*3
     z = normalize_vector(z)#batch*3
@@ -439,12 +442,15 @@ def compute_transformed_pointcloud_from_diffusion(pred_r: torch.Tensor,
         f"pred_r must have shape (..., 3, 1), got {pred_r.shape}"
 
     # Assert pred_s has last two dimensions of (6, 1)
+    '''
     assert pred_s.shape[-2:] == (6, 1), \
         f"pred_r must have shape (..., 6, 1), got {pred_s.shape}"
-    
+    '''
+    assert pred_s.shape[-2:] == (3, 2), \
+        f"pred_s must have shape (..., 3, 2), got {pred_s.shape}"
 
     t = pred_r.squeeze(-1)
-    R = compute_rotation_matrix_from_ortho6d(pred_s.squeeze(-1))
+    R = compute_rotation_matrix_from_ortho6d(pred_s)
 
     if pc_action.shape[-1] == 3:
         pc_action = pc_action.permute(0, 2, 1)

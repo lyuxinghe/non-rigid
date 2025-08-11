@@ -251,10 +251,10 @@ class TAX3Dv2RigidBaseModule(L.LightningModule):
         # run diffusion
         # noise = torch.randn_like(ground_truth) * self.noise_scale
         xr_start = batch["t"].unsqueeze(-1)   # [bs, 3, 1]
-        xs_start = batch["R"][:, :, :2]                # (B, 3, 2)
-        xs_start = xs_start.permute(0, 2, 1)           # (B, 2, 3)  (cols first)
-        xs_start = xs_start.contiguous().view(xr_start.shape[0], 6, 1) # (B, 6, 1)
-
+        #xs_start = batch["R"][:, :, :2]                # (B, 3, 2)
+        #xs_start = xs_start.permute(0, 2, 1)           # (B, 2, 3)  (cols first)
+        #xs_start = xs_start.contiguous().view(xr_start.shape[0], 6, 1) # (B, 6, 1)
+        xs_start = batch["R"][:, :, :2]
 
         loss_dict = self.diffusion.training_losses(
             model=self.network,
@@ -294,7 +294,8 @@ class TAX3Dv2RigidBaseModule(L.LightningModule):
         pc_action_expanded = expand_pcd(pc_action_expanded, num_samples)
 
         # generating latents and running diffusion
-        z_s = torch.randn(bs * num_samples, 6, 1, device=self.device)
+        #z_s = torch.randn(bs * num_samples, 6, 1, device=self.device)
+        z_s = torch.randn(bs * num_samples, 3, 2, device=self.device)
         if self.zero_shape:
             z_s = z_s - z_s.mean(dim=2, keepdim=True)
             
@@ -326,9 +327,9 @@ class TAX3Dv2RigidBaseModule(L.LightningModule):
         pred_s = final_dict["sample_s"]
 
         gt_clone = batch["R"].clone()
-        gt_clone = gt_clone[:, :, :2].reshape(batch["R"].shape[0], 6).unsqueeze(-1)
-        print("Ground Truth: ", gt_clone[0].squeeze(-1))
-        print("Predicted: ", pred_s[0].squeeze(-1))
+        gt_clone = gt_clone[:, :, :2]
+        print("Ground Truth: ", gt_clone[0])
+        print("Predicted: ", pred_s[0])
 
         #pred = pred_s + pred_r        
         pred = compute_transformed_pointcloud_from_diffusion(pred_r=pred_r, pred_s=pred_s, pc_action=pc_action_expanded)

@@ -1221,6 +1221,7 @@ class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
 
         return xr_out, xs_out
 '''
+'''
 class _PooledHead(nn.Module):
     """z -> concatenated [mu, logvar] with size 2*D."""
     def __init__(self, in_dim: int, hidden: int, out_dim_d: int, learn_sigma=True):
@@ -1380,6 +1381,173 @@ class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
         # heads -> concatenated [mu | logvar]
         xr_out = self.r_head(z)                                        # (B, 6, 1)
         xs_out = self.s_head(z)                                        # (B, 12, 1)
+
+        return xr_out, xs_out
+'''
+
+
+class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
+    def __init__(
+            self,
+            in_channels=3,
+            hidden_size=1152,
+            depth=28,
+            num_heads=16,
+            mlp_ratio=4.0,
+            learn_sigma=True,
+            model_cfg=None,
+    ):
+        super().__init__()
+        self.learn_sigma = learn_sigma
+        self.in_channels = in_channels
+        self.num_heads = num_heads
+        self.model_cfg = model_cfg
+        self.hidden_size = hidden_size
+
+        # Point cloud feature encoder.
+        if self.model_cfg.joint_encode:
+            self.feature_encoder = JointFeatureEncoder(in_channels, hidden_size, model_cfg)
+        else:
+            self.feature_encoder = DisjointFeatureEncoder(in_channels, hidden_size, model_cfg)
+
+        # Timestamp embedding.
+        self.t_embedder = TimestepEmbedder(hidden_size)
+
+        # Relative position embedding, if enabled.
+        if self.model_cfg.rel_pos:
+            self.rel_pos_embedder = nn.Sequential(
+                nn.Linear(in_channels, hidden_size, bias=True),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size, bias=True),
+            )
+        else:
+            self.rel_pos_embedder = None
+
+        # DiT blocks.
+        self.blocks = nn.ModuleList(
+            [
+                DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio)
+                for _ in range(depth)
+            ]
+        )
+
+        # Pooling layer to aggregate point features
+
+        #self.pool = nn.AdaptiveAvgPool1d(1)  # Mean pooling
+        self.pool = nn.AdaptiveMaxPool1d(1)  # Max pooling
+
+        
+        # Prediction heads - directly output epsilon for diffusion
+        # Translation head: outputs 3 or 6 channels (mean + var if learn_sigma)
+        out_dim = 6 if self.learn_sigma else 3
+        
+        self.out_trans = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2), 
+            nn.ReLU(), 
+            nn.Linear(hidden_size // 2, out_dim)
+        )
+        
+        self.out_rot_v1 = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2), 
+            nn.ReLU(), 
+            nn.Linear(hidden_size // 2, out_dim)
+        )
+
+        self.out_rot_v2 = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2), 
+            nn.ReLU(), 
+            nn.Linear(hidden_size // 2, out_dim)
+        )
+
+        self.initialize_weights()
+    
+    def initialize_weights(self):
+        # Initialize transformer layers:
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
+        self.apply(_basic_init)
+
+        # Initialize timestep embedding MLP:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+
+        # Initialize relative position embedding MLP, if enabled:
+        if self.rel_pos_embedder is not None:
+            nn.init.normal_(self.rel_pos_embedder[0].weight, std=0.02)
+            nn.init.normal_(self.rel_pos_embedder[2].weight, std=0.02)
+
+        # Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.blocks:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+
+
+    def forward(
+            self,
+            xr_t: torch.Tensor, # bs, 3, 1 (translation)
+            xs_t: torch.Tensor, # bs, 6, 1 (6D rotation representation)
+            t: torch.Tensor,
+            y: torch.Tensor,
+            x0: torch.Tensor,
+            rel_pos: Optional[torch.Tensor] = None,
+    ) -> dict:
+        """
+        Forward pass of DiT with scene cross attention.
+
+        Args:
+            xr_t: (B, 3, 1) tensor of noised translation
+            xs_t: (B, 6, 1) tensor of noised 6D rotation representation
+            t: (B,) tensor of diffusion timesteps
+            y: (B, D, N) tensor of un-noised scene (e.g. anchor) features
+            x0: (B, D, N) tensor of un-noised x (e.g. action) features
+        """
+        # Convert 6D rotation to rotation matrix
+        rot = compute_rotation_matrix_from_ortho6d(xs_t)  # B x 3 x 3
+        trans = xr_t  # B x 3 x 1
+        
+        # Apply transformation to get current state
+        x = torch.bmm(rot, x0) + trans
+
+        # Encode action and anchor features - only keep the 512 point tokens
+        x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0)  # x_enc: B x 512 x hidden_size
+
+        # Timestep embedding
+        t_emb = self.t_embedder(t)
+
+        # Relative position embedding, if enabled
+        if self.model_cfg.rel_pos:
+            assert rel_pos is not None, "Relative position embedding requires rel_pos tensor."
+            rel_pos_emb = self.rel_pos_embedder(rel_pos.squeeze(1))
+            c = t_emb + rel_pos_emb
+        else:
+            c = t_emb
+
+        # Forward pass through DiT blocks
+        for block in self.blocks:
+            x_enc = block(x_enc, y_enc, c)  # B x 512 x hidden_size
+
+        # Pool the 512 point features to get a single global feature
+        # x_enc shape: B x 512 x hidden_size
+        pooled_h = self.pool(x_enc.transpose(1, 2)).squeeze(-1)  # B x hidden_size
+
+        # Directly output epsilon predictions
+        # Get translation epsilon (B x 3 or B x 6 if learn_sigma)
+        trans_epsilon = self.out_trans(pooled_h)  # B x (3 or 6)
+        
+        # Get rotation epsilon (B x 6 or B x 12 if learn_sigma) 
+        rot_v1_epsilon = self.out_rot_v1(pooled_h)  # B x (3 or 6)
+        rot_v2_epsilon = self.out_rot_v2(pooled_h)  # B x (3 or 6)
+
+        # Reshape to match expected output format
+        # For translation: B x (3 or 6) -> B x (3 or 6) x 1
+        xr_out = trans_epsilon.unsqueeze(-1)  # B x (3 or 6) x 1
+        
+        xs_out = torch.stack([rot_v1_epsilon, rot_v2_epsilon], dim=2)  # B x (3 or 6) x 2
 
         return xr_out, xs_out
 
