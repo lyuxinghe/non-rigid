@@ -144,16 +144,44 @@ class DisjointFeatureEncoder(nn.Module):
 
         return x_enc, y_enc
 
+def svd_with_grad(source_points, target_points):
+    # Center
+    src_c = source_points.mean(dim=0, keepdim=True)
+    tgt_c = target_points.mean(dim=0, keepdim=True)
+    X = source_points - src_c
+    Y = target_points - tgt_c
+
+    # Cross-covariance and SVD
+    H = X.T @ Y
+    U, S, Vh = torch.linalg.svd(H, full_matrices=False)
+
+    # Proper rotation (nearest in Frobenius norm)
+    R_ = Vh.T @ U.T
+    s = torch.sign(torch.det(R_))                 # piecewise-constant; fine
+    D = torch.diag(torch.tensor([1., 1., s], 
+                                dtype=H.dtype, device=H.device))
+    R = Vh.T @ D @ U.T
+
+    # Translation
+    t = (tgt_c - (R @ src_c.T).T).squeeze(0)
+
+    # 4x4
+    T = torch.eye(4, dtype=H.dtype, device=H.device)
+    T[:3, :3] = R
+    T[:3, 3] = t
+    return T
+
 class JointFeatureEncoder(nn.Module):
     """
-    TODO: fill this out
+    Enhanced feature encoder that additionally encodes current rotation matrix
+    and relative rotation from x0 to x.
     """
     def __init__(self, in_channels, hidden_size, model_cfg):
         super().__init__()
         self.in_channels = in_channels
         self.hidden_size = hidden_size
         self.model_cfg = model_cfg
-
+        
         # Initializing point cloud encoder wrapper.
         if self.model_cfg.point_encoder == "mlp":
             encoder_fn = partial(mlp_encoder, in_channels=self.in_channels)
@@ -161,25 +189,53 @@ class JointFeatureEncoder(nn.Module):
             encoder_fn = partial(pn2_encoder, in_channels=self.in_channels, model_cfg=self.model_cfg)
         else:
             raise ValueError(f"Invalid point_encoder: {self.model_cfg.point_encoder}")
-
+        
         # Creating base encoders - action-frame, and prediction-frame.
         self.action_encoder = encoder_fn(out_channels=hidden_size)
         if self.model_cfg.one_hot_recon:
             self.pred_encoder = encoder_fn(in_channels=self.in_channels + 1, out_channels=hidden_size)
         else:
             self.pred_encoder = encoder_fn(out_channels=hidden_size)
-
+        
+        # Rotation matrix encoders
+        # Current rotation matrix encoder (3x3 -> hidden_size)
+        self.current_rot_encoder = nn.Sequential(
+            nn.Linear(9, hidden_size // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_size // 2, hidden_size)
+        )
+        
+        # Relative rotation matrix encoder (3x3 -> hidden_size)
+        self.relative_rot_encoder = nn.Sequential(
+            nn.Linear(9, hidden_size // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_size // 2, hidden_size)
+        )
+        
         # Creating extra feature encoders, if necessary.
+        num_feature_channels = 2  # Base: action_enc, action_pred_enc
+        
         if self.model_cfg.feature:
             self.feature_encoder = encoder_fn(in_channels=9, out_channels=hidden_size)
-            self.action_mixer = mlp_encoder(3 * hidden_size, hidden_size)
-        else:
-            self.action_mixer = mlp_encoder(2 * hidden_size, hidden_size)
+            num_feature_channels += 1
+        
+        # Add rotation encodings to the feature count
+        num_feature_channels += 2  # current_rot_enc, relative_rot_enc
+        
+        self.action_mixer = mlp_encoder(num_feature_channels * hidden_size, hidden_size)
     
-    def forward(self, x, y, x0):
+    def forward(self, x, y, x0, xs_t=None):
         """
-        TODO: fill this out
+        Enhanced forward pass that includes rotation encodings.
+        
+        Args:
+            x: (B, 3, N) current transformed points
+            y: (B, 3, M) anchor points
+            x0: (B, 3, N) original points
+            xs_t: (B, 3, 3) rotation representation (optional, computed if not provided)
         """
+        batch_size = x.shape[0]
+        
         if self.model_cfg.type == "flow":
             x_flow = x
             x_recon = x + x0
@@ -190,28 +246,55 @@ class JointFeatureEncoder(nn.Module):
         # Encode base features - action-frame, and prediction frame.
         action_size = x0.shape[-1]
         action_enc = self.action_encoder(x0)
+        
         if self.model_cfg.one_hot_recon:
             x_recon_one_hot = torch.cat([x_recon, torch.ones_like(x_recon[:, :1, :])], dim=1)
             y_one_hot = torch.cat([y, torch.zeros_like(y[:, :1, :])], dim=1)
             pred_enc = self.pred_encoder(torch.cat([x_recon_one_hot, y_one_hot], dim=-1))
         else:
             pred_enc = self.pred_encoder(torch.cat([x_recon, y], dim=-1))
+            
         action_pred_enc, anchor_pred_enc = pred_enc[:, :, :action_size], pred_enc[:, :, action_size:]
         anchor_pred_enc = anchor_pred_enc.permute(0, 2, 1)
-
+        
+        # Rotation encodings
+        if xs_t is not None:
+            # Current rotation matrix from 6D representation
+            current_rot_matrix = xs_t  # B x 3 x 3
+        else:
+            # If xs_t not provided, compute relative rotation using SVD
+            current_rot_matrix = torch.eye(3, device=x.device, dtype=x.dtype).unsqueeze(0).repeat(batch_size, 1, 1)
+        
+        # Compute relative rotation from x0 to x using SVD transformation
+        relative_rot_matrices = []
+        for b in range(batch_size):
+            # Use SVD to find rotation from x0[b] to x[b]
+            T = svd_with_grad(x0[b].T, x[b].T)  # 4x4 transformation matrix
+            rel_rot = T[:3, :3]  # Extract 3x3 rotation part
+            relative_rot_matrices.append(rel_rot)
+        
+        relative_rot_matrix = torch.stack(relative_rot_matrices, dim=0)  # B x 3 x 3
+        
+        # Flatten rotation matrices and encode them
+        current_rot_flat = current_rot_matrix.view(batch_size, -1)  # B x 9
+        relative_rot_flat = relative_rot_matrix.view(batch_size, -1)  # B x 9
+        
+        current_rot_enc = self.current_rot_encoder(current_rot_flat).unsqueeze(-1).repeat(1, 1, action_size)  # B x hidden_size x N
+        relative_rot_enc = self.relative_rot_encoder(relative_rot_flat).unsqueeze(-1).repeat(1, 1, action_size)  # B x hidden_size x N
+        
         # Encode extra features, if necessary.
+        action_features = [action_enc, action_pred_enc, current_rot_enc, relative_rot_enc]
+        
         if self.model_cfg.feature:
             shape = x_recon - torch.mean(x_recon, dim=2, keepdim=True)
             flow_zeromean = x_flow - torch.mean(x_flow, dim=2, keepdim=True)
             feature_enc = self.feature_encoder(
                 torch.cat([shape, x_flow, flow_zeromean], dim=1)
             )
-            action_features = [action_enc, action_pred_enc, feature_enc]
-        else:
-            action_features = [action_enc, action_pred_enc]
+            action_features.append(feature_enc)
         
         # Compress action features to hidden size through action mixer.
         x_enc = torch.cat(action_features, dim=1)
         x_enc = self.action_mixer(x_enc).permute(0, 2, 1)
-
+        
         return x_enc, anchor_pred_enc

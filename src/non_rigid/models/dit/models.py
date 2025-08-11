@@ -1221,7 +1221,7 @@ class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
 
         return xr_out, xs_out
 '''
-'''
+
 class _PooledHead(nn.Module):
     """z -> concatenated [mu, logvar] with size 2*D."""
     def __init__(self, in_dim: int, hidden: int, out_dim_d: int, learn_sigma=True):
@@ -1299,12 +1299,13 @@ class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
             [DiTCrossBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)]
         )
 
-        # pooled descriptor: [mean(x)|max(x)|mean(y)|max(y)|cond] -> dim = 5*hidden
-        self.z_dim = 5 * hidden_size
+        # pooled descriptor: [mean(x)|max(x)|cond] -> dim = 3*hidden
+        self.z_dim = 3 * hidden_size
 
         # heads: r (3D) -> 6, s (6D) -> 12
         self.r_head = _PooledHead(self.z_dim, hidden_size, out_dim_d=3, learn_sigma=learn_sigma)
-        self.s_head = _PooledHead(self.z_dim, hidden_size, out_dim_d=6, learn_sigma=learn_sigma)
+        self.s_v1_head = _PooledHead(self.z_dim, hidden_size, out_dim_d=3, learn_sigma=learn_sigma)
+        self.s_v2_head = _PooledHead(self.z_dim, hidden_size, out_dim_d=3, learn_sigma=learn_sigma)
 
         self._init_weights()
 
@@ -1373,19 +1374,20 @@ class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
 
         # global pooling
         x_pool = self._pool(x_enc)                                     # (B,2C)
-        y_pool = self._pool(y_enc)                                     # (B,2C)
 
         # fused scene descriptor
-        z = torch.cat([x_pool, y_pool, cond], dim=-1)                  # (B,5C)
+        z = torch.cat([x_pool, cond], dim=-1)                  # (B,3C)
 
         # heads -> concatenated [mu | logvar]
         xr_out = self.r_head(z)                                        # (B, 6, 1)
-        xs_out = self.s_head(z)                                        # (B, 12, 1)
+        xs_v1_out = self.s_v1_head(z)                                        # (B, 6, 1)
+        xs_v2_out = self.s_v2_head(z)                                        # (B, 6, 1)
+        xs_out = torch.cat([xs_v1_out, xs_v2_out], dim=2)
 
         return xr_out, xs_out
+
+
 '''
-
-
 class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
     def __init__(
             self,
@@ -1514,7 +1516,7 @@ class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
         x = torch.bmm(rot, x0) + trans
 
         # Encode action and anchor features - only keep the 512 point tokens
-        x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0)  # x_enc: B x 512 x hidden_size
+        x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0, xs_t=rot)  # x_enc: B x 512 x hidden_size
 
         # Timestep embedding
         t_emb = self.t_embedder(t)
@@ -1550,7 +1552,7 @@ class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
         xs_out = torch.stack([rot_v1_epsilon, rot_v2_epsilon], dim=2)  # B x (3 or 6) x 2
 
         return xr_out, xs_out
-
+'''
 class TAX3Dv2_FixedFrame_Dual_DiT(nn.Module):
     """
     Diffusion Transformer adapted for point cloud inputs. Uses object-centric cross attention, 
