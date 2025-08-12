@@ -1356,7 +1356,7 @@ class TAX3Dv2Rigid_FixedFrame_Token_DiT(nn.Module):
         x = torch.bmm(R_t, x0) + xr_t                                 # (B,3,512)
 
         # encode to tokens
-        x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0)          # (B,Nx,C),(B,Ny,C)
+        x_enc, y_enc = self.feature_encoder(x=x, y=y, x0=x0, xs_t=xs_t)          # (B,Nx,C),(B,Ny,C)
 
         # conditioning vector
         t_emb = self.t_embedder(t)                                    # (B,C)

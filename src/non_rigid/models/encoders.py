@@ -200,14 +200,7 @@ class JointFeatureEncoder(nn.Module):
         # Rotation matrix encoders
         # Current rotation matrix encoder (3x3 -> hidden_size)
         self.current_rot_encoder = nn.Sequential(
-            nn.Linear(9, hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_size // 2, hidden_size)
-        )
-        
-        # Relative rotation matrix encoder (3x3 -> hidden_size)
-        self.relative_rot_encoder = nn.Sequential(
-            nn.Linear(9, hidden_size // 2),
+            nn.Linear(6, hidden_size // 2),
             nn.ReLU(),
             nn.Linear(hidden_size // 2, hidden_size)
         )
@@ -220,7 +213,7 @@ class JointFeatureEncoder(nn.Module):
             num_feature_channels += 1
         
         # Add rotation encodings to the feature count
-        num_feature_channels += 2  # current_rot_enc, relative_rot_enc
+        num_feature_channels += 1  # current_rot_enc, relative_rot_enc
         
         self.action_mixer = mlp_encoder(num_feature_channels * hidden_size, hidden_size)
     
@@ -256,34 +249,15 @@ class JointFeatureEncoder(nn.Module):
             
         action_pred_enc, anchor_pred_enc = pred_enc[:, :, :action_size], pred_enc[:, :, action_size:]
         anchor_pred_enc = anchor_pred_enc.permute(0, 2, 1)
-        
-        # Rotation encodings
-        if xs_t is not None:
-            # Current rotation matrix from 6D representation
-            current_rot_matrix = xs_t  # B x 3 x 3
-        else:
-            # If xs_t not provided, compute relative rotation using SVD
-            current_rot_matrix = torch.eye(3, device=x.device, dtype=x.dtype).unsqueeze(0).repeat(batch_size, 1, 1)
-        
-        # Compute relative rotation from x0 to x using SVD transformation
-        relative_rot_matrices = []
-        for b in range(batch_size):
-            # Use SVD to find rotation from x0[b] to x[b]
-            T = svd_with_grad(x0[b].T, x[b].T)  # 4x4 transformation matrix
-            rel_rot = T[:3, :3]  # Extract 3x3 rotation part
-            relative_rot_matrices.append(rel_rot)
-        
-        relative_rot_matrix = torch.stack(relative_rot_matrices, dim=0)  # B x 3 x 3
-        
+
+
         # Flatten rotation matrices and encode them
-        current_rot_flat = current_rot_matrix.view(batch_size, -1)  # B x 9
-        relative_rot_flat = relative_rot_matrix.view(batch_size, -1)  # B x 9
+        current_rot_flat = xs_t.view(batch_size, -1)  # B x 9
         
         current_rot_enc = self.current_rot_encoder(current_rot_flat).unsqueeze(-1).repeat(1, 1, action_size)  # B x hidden_size x N
-        relative_rot_enc = self.relative_rot_encoder(relative_rot_flat).unsqueeze(-1).repeat(1, 1, action_size)  # B x hidden_size x N
         
         # Encode extra features, if necessary.
-        action_features = [action_enc, action_pred_enc, current_rot_enc, relative_rot_enc]
+        action_features = [action_enc, action_pred_enc, current_rot_enc]
         
         if self.model_cfg.feature:
             shape = x_recon - torch.mean(x_recon, dim=2, keepdim=True)
