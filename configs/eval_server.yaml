@@ -41,7 +41,7 @@ checkpoint:
   alias: v0 # (v0, monitor); v0 is the last checkpoint, monitor is best monitor-specific checkpoint
   monitor_name: val_rmse_0
   reference: ${wandb.entity}/${wandb.project}/model-${checkpoint.run_id}:${checkpoint.alias}
-  #reference: /home/lyuxing/Desktop/tax3d_upgrade/last.ckpt
+  #reference: /home/lyuxing/Desktop/tax3dv2/scripts/ckpts/MugMultiMedRack_noRecon_emldsvjc.ckpt
 resources:
   num_workers: 4
   gpus:

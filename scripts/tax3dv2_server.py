@@ -354,7 +354,7 @@ def infer(payload: dict):
         raise HTTPException(400, "missing fname")
     work_dir = STATE["work_dir"]
     in_f  = work_dir / "data" / fname
-    out_f = in_f.with_stem(in_f.stem + "_pred")
+    out_f = in_f.with_stem(in_f.stem + "_pred_tax3dv2")
     if not in_f.is_file():
         raise HTTPException(404, f"{fname} not found")
 
