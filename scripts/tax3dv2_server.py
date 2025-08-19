@@ -298,6 +298,8 @@ def main(cfg):
     network.eval()
     model.eval()
     model.to(device)
+    gmm_model.eval()
+    gmm_model.to(device)
 
     val_dataloader, test_dataloader = datamodule.val_dataloader()
 
@@ -365,7 +367,8 @@ def infer(payload: dict):
     model  = STATE["model"]
     gmm_model  = STATE["gmm_model"]
     cfg = STATE["cfg"]
-
+    device = STATE["device"]
+    
     if infer_name == "datamodule":
         log_str = f"Inference begin : infer method using datamodule"
         log(log_str)
@@ -376,10 +379,12 @@ def infer(payload: dict):
 
         with torch.no_grad():
             for batch in tqdm(dataloader):
+
                 # Generate predictions.
                 if gmm_model is not None:
                     # Yucky hack for GMM; need to expand point clouds first for WTA GMM samples.
                     pred_batch = model.update_batch_frames(batch, update_labels=True, gmm_model=gmm_model, num_gmm_trials=cfg.inference.num_gmm_trials)
+                    pred_batch = {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
                     pred_dict = model.predict(pred_batch, cfg.inference.num_trials, progress=True, full_prediction=True)
                 else:
                     pred_batch = model.update_batch_frames(batch, update_labels=True)
